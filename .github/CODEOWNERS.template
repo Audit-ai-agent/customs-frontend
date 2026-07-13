@@ -1,0 +1,5 @@
+# Replace <ORG_SLUG> after the organization slug and team are confirmed,
+# then rename this file to CODEOWNERS.
+* @<ORG_SLUG>/frontend
+/.github/ @<ORG_SLUG>/maintainers
+

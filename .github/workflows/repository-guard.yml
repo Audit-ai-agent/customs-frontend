@@ -1,0 +1,27 @@
+name: repository-guard
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  boundary:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify repository foundation
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f README.md
+          test -f ARCHITECTURE.md
+          test -f SECURITY.md
+          if find . -type f \( -name 'agent_webui.html' -o -name '*.env' \) -print -quit | grep -q .; then
+            echo 'Forbidden local-agent UI or environment file found.' >&2
+            exit 1
+          fi
+
