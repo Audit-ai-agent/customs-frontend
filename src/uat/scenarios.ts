@@ -184,52 +184,83 @@ const invoice = (
 ): string => `COMMERCIAL INVOICE
 Invoice No: CI-2026-0001
 Invoice Date: 2026-07-01
+Departure Date: 2026-07-03
 Seller: Nordic Seafood AS
+Buyer: Busan Trading Co., Ltd.
 Consignee: Busan Trading Co., Ltd.
+Currency: USD
 Country of Origin: ${origin}
-HSK: ${product.hsk}
-Item: ${product.item}
-Quantity: ${quantity} KG
-Unit Price: USD 10.00 / KG
-Total Amount: USD ${total}
+Shipping Marks: ${product.marks}
+Packages: ${product.packages}
 Vessel: MV NORTH STAR
+Voyage No: NS071
 Port of Loading: OSLO
-Port of Discharge: BUSAN`;
+Port of Discharge: BUSAN
+LINE ITEM 1
+Item No: 1
+Description: ${product.item}
+HS Code: ${product.hsk}
+Quantity: ${quantity} KG
+Unit: KG
+Unit Price: USD 10.00 / KG
+Amount: USD ${total}.00
+Origin Country: ${origin}
+Total Amount: USD ${total}.00`;
 
 const packingList = (quantity = "1200", product: ProductSpec = MACKEREL): string => `PACKING LIST
+Packing No: PL-2026-0001
 Invoice No: CI-2026-0001
+Invoice Date: 2026-07-01
+B/L No: BL-2026-0001
+Departure Date: 2026-07-03
 Seller: Nordic Seafood AS
+Buyer: Busan Trading Co., Ltd.
 Consignee: Busan Trading Co., Ltd.
-Item: ${product.item}
-HSK: ${product.hsk}
-Quantity: ${quantity} KG
+Country of Origin: NORWAY
+Vessel: MV NORTH STAR
+Voyage No: NS071
+Port of Loading: OSLO
+Port of Discharge: BUSAN
+Shipping Marks: ${product.marks}
+Container Numbers: MSCU1234566
+Seal Numbers: SEAL-2026-01
 Packages: ${product.packages}
+Total Net Weight: ${quantity} KG
+Total Gross Weight: 1260 KG
+Total Measurement: 8.40 CBM
+LINE ITEM 1
+Item No: 1
+Description: ${product.item}
+Quantity: ${quantity} KG
+Unit: KG
+Net Weight: ${quantity} KG
 Gross Weight: 1260 KG
-Measurement: 8.40 CBM
-Marks: ${product.marks}
-Container No: MSCU1234566
-Seal No: SEAL-2026-01`;
+Package Count: 120
+Package Type: CARTONS
+Measurement: 8.40 CBM`;
 
 const billOfLading = `BILL OF LADING
 B/L No: BL-2026-0001
 Shipper: Nordic Seafood AS
 Consignee: Busan Trading Co., Ltd.
-Vessel/Voyage: MV NORTH STAR / NS071
+Vessel: MV NORTH STAR
+Voyage No: NS071
 Port of Loading: OSLO
 Port of Discharge: BUSAN
-Container No: MSCU1234566
-Seal No: SEAL-2026-01
+Container Numbers: MSCU1234566
+Seal Numbers: SEAL-2026-01
 Packages: 120 CARTONS
 Gross Weight: 1260 KG
-Measurement: 8.40 CBM`;
+Measurement: 8.40 CBM
+Freight Terms: PREPAID`;
 
 const certificate = (origin = "NORWAY", product: ProductSpec = MACKEREL): string => `CERTIFICATE OF ORIGIN
 Certificate No: CO-2026-0001
 Exporter: Nordic Seafood AS
 Importer: Busan Trading Co., Ltd.
 Country of Origin: ${origin}
-HSK: ${product.hsk}
-Invoice No: CI-2026-0001
+HS Codes: ${product.hsk}
+Goods Description: ${product.item}
 Issue Date: 2026-07-02`;
 
 const docs = (

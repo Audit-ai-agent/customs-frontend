@@ -588,8 +588,18 @@ describe("review workbench", () => {
     const clean = UAT_SCENARIOS.find((item) => item.scenario_id === "clean_text_no_requirement_uat")!;
     expect(clean.documents).toHaveLength(4);
     expect(clean.documents.every((document) => document.document_type !== "SUPPORTING")).toBe(true);
-    expect(clean.documents.filter((document) => document.document_type === "CI" || document.document_type === "PL" || document.document_type === "CO")
+    expect(clean.documents.filter((document) => document.document_type === "CI" || document.document_type === "CO")
       .every((document) => document.content_text.includes("7318151000"))).toBe(true);
+    expect(clean.documents.find((document) => document.document_type === "CI")?.content_text)
+      .toContain("Origin Country: NORWAY");
+    expect(clean.documents.find((document) => document.document_type === "PL")?.content_text)
+      .toContain("Packing No: PL-2026-0001");
+    expect(clean.documents.find((document) => document.document_type === "PL")?.content_text)
+      .toContain("LINE ITEM 1");
+    expect(clean.documents.find((document) => document.document_type === "BL")?.content_text)
+      .toContain("Freight Terms: PREPAID");
+    expect(clean.documents.find((document) => document.document_type === "CO")?.content_text)
+      .toContain("HS Codes: 7318151000");
     expect(clean.expected.semantic).toEqual(expect.objectContaining({
       issues: { count: 0 },
       findings: { count: 0 },
