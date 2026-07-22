@@ -1,0 +1,2513 @@
+import { ApiClient, ApiError } from "./api/v1/client";
+import type {
+  AddDocumentRequest,
+  ActionTrace,
+  AuditEvent,
+  CaseDetail,
+  CaseDocument,
+  CaseSummary,
+  ChatRecord,
+  CorrectionProposal,
+  CorrectionProposalDecisionResponse,
+  CorrectionOperation,
+  EvidenceItem,
+  ExtractedField,
+  GroundedAnswer,
+  HumanDecisionRecord,
+  JobRecord,
+  NarrativeClaim,
+  RequiredAction,
+  ReviewIssue,
+  ReviewRun,
+  ReviewStageEvent,
+  RevisionAction,
+  RevisionProposalCreate,
+  RunSummary,
+  Session,
+  SupportingDocumentCreate,
+  SupportingDocumentRecord,
+} from "./api/v1/types";
+import type { OidcSession } from "./auth";
+import { badge, button, el, empty, formatDate, humanize, labeledControl } from "./dom";
+import { UAT_SCENARIOS, type LocalUatScenario } from "./uat/scenarios";
+
+const MAX_PRIMARY_DOCUMENTS = 6;
+const MAX_SUPPORTING_DOCUMENTS = 100;
+const MAX_PRIMARY_TEXT_CHARACTERS = 500_000;
+const MAX_DOCUMENT_TEXT_CHARACTERS = 200_000;
+const REVIEW_RECOVERY_STORAGE_PREFIX = "customs.workbench.review-recovery.v2";
+const PROPOSAL_DECISION_RECOVERY_STORAGE_PREFIX = "customs.workbench.proposal-decision-recovery.v1";
+const DELIVERY_RECONCILIATION_RECOVERY_STORAGE_PREFIX = "customs.workbench.delivery-reconciliation-recovery.v1";
+const MAX_RECOVERY_RECORDS = 50;
+const MAX_TRANSIENT_POLL_FAILURES = 8;
+const MAX_POLL_DELAY_MS = 15_000;
+
+interface ReviewRecoveryRecord {
+  org_id: string;
+  subject: string;
+  case_id: string;
+  case_revision: number;
+  job_id: string | null;
+  idempotency_key: string;
+}
+
+interface ProposalDecisionRecoveryRecord {
+  org_id: string;
+  subject: string;
+  case_id: string;
+  case_revision: number;
+  review_run_id: string;
+  proposal_id: string;
+  decision: "approve" | "reject";
+  parent_result_digest: string;
+  request_sha256: string;
+  idempotency_key: string;
+}
+
+interface DeliveryReconciliationRecoveryRecord {
+  org_id: string;
+  subject: string;
+  case_id: string;
+  job_id: string;
+  request_sha256: string;
+  attempted_at: string;
+}
+
+export interface WorkbenchAuth {
+  login(): Promise<void>;
+  logout(): Promise<void>;
+  isAuthenticated(): boolean;
+  clear(): Promise<void>;
+}
+
+type WorkbenchApi = Pick<
+  ApiClient,
+  | "getSession"
+  | "listCases"
+  | "createCase"
+  | "getCase"
+  | "listDocuments"
+  | "getDocumentContent"
+  | "addDocument"
+  | "listSupportingDocuments"
+  | "addSupportingDocument"
+  | "addSupportingAssertion"
+  | "enqueueReview"
+  | "getJob"
+  | "reconcileDeliveryUncertain"
+  | "listJobEvents"
+  | "streamJobEvents"
+  | "listReviewRuns"
+  | "getReviewRun"
+  | "listRevisionProposals"
+  | "createRevisionProposal"
+  | "decideRevisionProposal"
+  | "listDecisions"
+  | "answerCaseQuestion"
+  | "listChat"
+  | "getAuditEvents"
+>;
+
+interface WorkbenchState {
+  session: Session | undefined;
+  cases: CaseSummary[];
+  selectedCase: CaseDetail | undefined;
+  documents: CaseDocument[];
+  supportingDocuments: SupportingDocumentRecord[];
+  runs: RunSummary[];
+  selectedRun: ReviewRun | undefined;
+  job: JobRecord | undefined;
+  chat: Array<ChatRecord | GroundedAnswer>;
+  audit: AuditEvent[];
+  decisions: HumanDecisionRecord[];
+  proposals: CorrectionProposal[];
+  liveStages: ReviewStageEvent[];
+  selectedDocumentId: string | undefined;
+  busy: boolean;
+  error: string | undefined;
+  notice: string | undefined;
+}
+
+export class WorkbenchApp {
+  private state: WorkbenchState = {
+    cases: [],
+    documents: [],
+    supportingDocuments: [],
+    runs: [],
+    chat: [],
+    audit: [],
+    decisions: [],
+    proposals: [],
+    liveStages: [],
+    session: undefined,
+    selectedCase: undefined,
+    selectedRun: undefined,
+    job: undefined,
+    selectedDocumentId: undefined,
+    error: undefined,
+    notice: undefined,
+    busy: false,
+  };
+  private pollTimer: number | undefined;
+  private pollAttempts = 0;
+  private transientPollFailures = 0;
+  private streamAbort: AbortController | undefined;
+  private readonly idempotencyKeys = new Map<string, string>();
+  private readonly jobIntentById = new Map<string, string>();
+  private readonly recoveryByCase = new Map<string, ReviewRecoveryRecord>();
+  private readonly proposalDecisionRecovery = new Map<string, ProposalDecisionRecoveryRecord>();
+  private readonly deliveryReconciliationRecovery = new Map<string, DeliveryReconciliationRecoveryRecord>();
+  private readonly scenarioByCase = new Map<string, LocalUatScenario>();
+
+  constructor(
+    private readonly root: HTMLElement,
+    private readonly api: WorkbenchApi,
+    private readonly auth: WorkbenchAuth,
+  ) {
+  }
+
+  async start(): Promise<void> {
+    if (!this.auth.isAuthenticated()) {
+      this.renderLogin();
+      return;
+    }
+    await this.act(async () => {
+      this.state.session = await this.api.getSession();
+      for (const record of readReviewRecoveries(this.state.session)) {
+        this.recoveryByCase.set(record.case_id, record);
+        this.idempotencyKeys.set(`review:${record.case_id}`, record.idempotency_key);
+      }
+      for (const record of readProposalDecisionRecoveries(this.state.session)) {
+        this.proposalDecisionRecovery.set(record.proposal_id, record);
+        this.idempotencyKeys.set(`proposal:${record.proposal_id}:${record.decision}`, record.idempotency_key);
+      }
+      for (const record of readDeliveryReconciliationRecoveries(this.state.session)) {
+        this.deliveryReconciliationRecovery.set(record.job_id, record);
+      }
+      await this.refreshCases();
+    });
+  }
+
+  destroy(): void {
+    if (this.pollTimer !== undefined) window.clearTimeout(this.pollTimer);
+    this.streamAbort?.abort();
+  }
+
+  private renderLogin(): void {
+    this.root.replaceChildren(
+      el(
+        "main",
+        { className: "login-shell", attrs: { id: "main-content" } },
+        el(
+          "section",
+          { className: "login-card", attrs: { "aria-labelledby": "login-title" } },
+          el("p", { className: "eyebrow", text: "INTERNAL REVIEW WORKBENCH" }),
+          el("h1", { text: "통관 AI 사전심사 작업대", attrs: { id: "login-title" } }),
+          el("p", {
+            className: "lead",
+            text: "문서 정합성, 적용 근거, 사람 검토 이력을 한 Case 안에서 확인합니다.",
+          }),
+          this.state.error ? el("div", { className: "notice notice--danger", text: this.state.error, attrs: { role: "alert", tabindex: "-1" } }) : null,
+          el("div", { className: "notice notice--warning", text: "Text-only Production candidate · PDF/이미지/OCR 입력은 아직 지원하지 않습니다." }),
+          button("조직 계정으로 로그인", () => void this.auth.login(), "primary"),
+          el("p", {
+            className: "fine-print",
+            text: "Authorization Code + PKCE를 사용하며 access token은 브라우저 메모리에만 유지합니다.",
+          }),
+        ),
+      ),
+    );
+    if (this.state.error) queueMicrotask(() => this.root.querySelector<HTMLElement>('[role="alert"]')?.focus());
+  }
+
+  private render(): void {
+    if (!this.state.session) {
+      this.renderLogin();
+      return;
+    }
+    this.root.replaceChildren(
+      this.renderHeader(),
+      el(
+        "div",
+        { className: "app-shell" },
+        this.renderSidebar(),
+        el(
+          "main",
+          { className: "main", attrs: { id: "main-content", tabindex: "-1", "aria-busy": this.state.busy ? "true" : "false" } },
+          this.state.error ? el("div", { className: "notice notice--danger", text: this.state.error, attrs: { role: "alert", tabindex: "-1" } }) : null,
+          this.state.notice ? el("div", { className: "notice notice--success", text: this.state.notice, attrs: { role: "status" } }) : null,
+          this.state.busy ? el("div", { className: "loading-bar", attrs: { role: "progressbar", "aria-label": "요청 처리 중" } }) : null,
+          this.state.selectedCase ? this.renderCase() : this.renderWelcome(),
+        ),
+      ),
+    );
+    if (this.state.error) queueMicrotask(() => this.root.querySelector<HTMLElement>('[role="alert"]')?.focus());
+  }
+
+  private renderHeader(): HTMLElement {
+    const session = this.state.session;
+    return el(
+      "header",
+      { className: "topbar" },
+      el(
+        "div",
+        {},
+        el("p", { className: "eyebrow", text: "CUSTOMS REVIEW" }),
+        el("strong", { className: "brand", text: "AI 사전심사 작업대" }),
+      ),
+      el("div", { className: "release-flag", text: "TEXT-ONLY · PRODUCTION CANDIDATE" }),
+      el(
+        "div",
+        { className: "user-block" },
+        el("span", { text: session?.subject ?? "—" }),
+        el("small", { text: session ? `${session.org_id} · ${session.roles.join(", ")}` : "" }),
+        button("로그아웃", () => void this.auth.logout(), "quiet"),
+      ),
+    );
+  }
+
+  private hasRole(...roles: Session["roles"]): boolean {
+    return roles.some((role) => this.state.session?.roles.includes(role));
+  }
+
+  private requireSession(): Session {
+    if (!this.state.session) throw new Error("인증 세션이 없어 요청 식별자를 결박할 수 없습니다.");
+    return this.state.session;
+  }
+
+  private canWrite(): boolean {
+    return this.hasRole("reviewer", "approver", "admin");
+  }
+
+  private canApprove(): boolean {
+    return this.hasRole("approver", "admin");
+  }
+
+  private canDecideProposal(proposal: CorrectionProposal): boolean {
+    return this.canApprove() && proposal.created_by !== this.state.session?.subject;
+  }
+
+  private canChat(): boolean {
+    return this.hasRole("reviewer", "approver", "admin");
+  }
+
+  private renderSidebar(): HTMLElement {
+    const createForm = el(
+      "form",
+      {
+        className: "compact-form",
+        on: { submit: (event) => void this.handleCreateCase(event) },
+      },
+      labeledControl("Case 제목", el("input", { attrs: { name: "title", required: "", maxlength: "200", ...disabledUnless(this.canWrite() && !this.state.busy) } })),
+      labeledControl("외부 참조", el("input", { attrs: { name: "reference", maxlength: "200", ...disabledUnless(this.canWrite() && !this.state.busy) } })),
+      el("button", { className: "button button--primary", text: "Case 생성", attrs: { type: "submit", ...disabledUnless(this.canWrite() && !this.state.busy) } }),
+    );
+    const scenarioSelect = el(
+      "select",
+      { attrs: { name: "scenario", "aria-label": "UAT 시나리오", ...disabledUnless(this.canWrite() && !this.state.busy) } },
+      ...UAT_SCENARIOS.map((scenario) => el("option", {
+        text: `${scenario.title}${scenario.requires_approver ? " · 별도 approver 검증 필요" : ""}`,
+        attrs: { value: scenario.scenario_id },
+      })),
+    );
+    const scenarioForm = el(
+      "form",
+      { className: "compact-form", on: { submit: (event) => void this.handleScenario(event) } },
+      el("p", { className: "section-help", text: "합성 텍스트를 실제 Case·Document API로 등록합니다." }),
+      labeledControl("시나리오", scenarioSelect),
+      el("button", { className: "button button--secondary", text: "시나리오 Case 생성", attrs: { type: "submit", ...disabledUnless(this.canWrite() && !this.state.busy) } }),
+    );
+    return el(
+      "aside",
+      { className: "sidebar", attrs: { "aria-label": "Case 탐색" } },
+      el("h2", { text: "Cases" }),
+      el(
+        "nav",
+        { className: "case-list", attrs: { "aria-label": "Case 목록" } },
+        ...this.state.cases.map((item) =>
+          el(
+            "button",
+            {
+              className: `case-card${this.state.selectedCase?.case_id === item.case_id ? " is-selected" : ""}`,
+              attrs: {
+                type: "button",
+                "aria-current": this.state.selectedCase?.case_id === item.case_id ? "page" : "false",
+                ...disabledUnless(!this.state.busy),
+              },
+              on: { click: () => void this.openCase(item.case_id) },
+            },
+            el("strong", { text: item.title }),
+            el("span", { text: item.external_reference ?? item.case_id }),
+            el("small", { text: `${humanize(item.status)} · ${formatDate(item.updated_at)}` }),
+          ),
+        ),
+      ),
+      el("details", {}, el("summary", { text: "새 Case" }), createForm),
+      el("details", {}, el("summary", { text: "UAT 시나리오" }), scenarioForm),
+      el("p", { className: "diagnostic-label", text: "UAT 데이터는 합성 자료이며 법적 판단 자료가 아닙니다." }),
+      !this.canWrite() ? el("p", { className: "section-help", text: "현재 역할은 읽기 전용이므로 Case나 심사를 생성할 수 없습니다." }) : null,
+    );
+  }
+
+  private renderWelcome(): HTMLElement {
+    return el(
+      "section",
+      { className: "welcome" },
+      el("p", { className: "eyebrow", text: "SELECT A CASE" }),
+      el("h1", { text: "Case를 선택하거나 새로 생성하세요." }),
+      el("p", { text: "원문, 추출값, 문서 불일치, Evidence와 사람 결정을 하나의 변경 불가능한 Run 이력으로 검토합니다." }),
+    );
+  }
+
+  private renderCase(): HTMLElement {
+    const caseItem = this.state.selectedCase;
+    if (!caseItem) return empty("Case가 선택되지 않았습니다.");
+    return el(
+      "div",
+      { className: "case-workspace" },
+      el(
+        "section",
+        { className: "case-heading" },
+        el("div", {}, el("p", { className: "eyebrow", text: caseItem.external_reference ?? caseItem.case_id }), el("h1", { text: caseItem.title })),
+        el("div", { className: "case-meta", text: `revision ${caseItem.revision} · ${humanize(caseItem.status)}` }),
+      ),
+      el("div", { className: "text-only-boundary", text: "현재 Release는 텍스트 문서만 처리합니다. PDF·이미지·OCR 업로드는 차단되어 있습니다." }),
+      this.renderInputAndRun(),
+      this.state.selectedRun ? this.renderReview(this.state.selectedRun) : this.renderNoRun(),
+    );
+  }
+
+  private renderInputAndRun(): HTMLElement {
+    const typeSelect = el(
+      "select",
+      { attrs: { name: "document_type", required: "", ...disabledUnless(this.canWrite() && !this.state.busy) } },
+      ...["CI", "PL", "BL", "CO", "SUPPORTING", "UNKNOWN"].map((value) => el("option", { text: value, attrs: { value } })),
+    );
+    const primaryDocuments = this.state.documents.filter((document) => document.document_type !== "SUPPORTING");
+    const primaryTextCharacters = primaryDocuments.reduce((total, document) => total + document.character_count, 0);
+    const form = el(
+      "form",
+      { className: "document-form", on: { submit: (event) => void this.handleAddDocument(event) } },
+      labeledControl("문서 유형", typeSelect),
+      labeledControl(
+        "파일명",
+        el("input", { attrs: { name: "filename", required: "", maxlength: "255", pattern: ".*\\.txt$", placeholder: "commercial-invoice.txt", ...disabledUnless(this.canWrite() && !this.state.busy) } }),
+        ".txt 이름만 허용",
+      ),
+      labeledControl(
+        "문서 원문",
+        el("textarea", { attrs: { name: "content_text", required: "", maxlength: String(MAX_DOCUMENT_TEXT_CHARACTERS), rows: "8", placeholder: "추출된 텍스트를 입력하세요.", ...disabledUnless(this.canWrite() && !this.state.busy) } }),
+        `문서당 최대 ${MAX_DOCUMENT_TEXT_CHARACTERS.toLocaleString()}자`,
+      ),
+      el("button", { className: "button button--secondary", text: "텍스트 문서 등록", attrs: { type: "submit", ...disabledUnless(this.canWrite() && !this.state.busy) } }),
+    );
+    const runList = el(
+      "div",
+      { className: "run-list" },
+      ...this.state.runs.map((run) =>
+        el(
+          "button",
+          {
+            className: `run-chip${this.state.selectedRun?.review_run_id === run.review_run_id ? " is-selected" : ""}`,
+            text: `${run.review_run_id.slice(0, 10)} · ${humanize(run.execution_status)}`,
+            attrs: { type: "button", ...disabledUnless(!this.state.busy) },
+            on: { click: () => void this.openRun(run.review_run_id) },
+          },
+        ),
+      ),
+    );
+    return el(
+      "section",
+      { className: "input-panel", attrs: { "aria-labelledby": "case-input-title" } },
+      el("div", { className: "section-title-row" }, el("h2", { text: "문서와 실행", attrs: { id: "case-input-title" } }), el("button", { className: "button button--primary", text: "새 심사 실행", attrs: { type: "button", ...disabledUnless(this.canWrite() && !this.state.busy && !this.jobIsActive()) }, on: { click: () => void this.enqueueReview() } })),
+      el("p", { className: "section-help", text: `심사 입력 ${primaryDocuments.length}/${MAX_PRIMARY_DOCUMENTS}문서 · ${primaryTextCharacters.toLocaleString()}/${MAX_PRIMARY_TEXT_CHARACTERS.toLocaleString()}자 (SUPPORTING 원문 제외)` }),
+      el("details", {}, el("summary", { text: `텍스트 문서 등록 (${this.state.documents.length})` }), form),
+      this.renderSupportingDocuments(),
+      this.state.job ? this.renderJob(this.state.job) : null,
+      this.shouldRenderPendingRecovery() ? this.renderPendingRecovery() : null,
+      runList.childElementCount > 0 ? runList : empty("아직 심사 Run이 없습니다."),
+    );
+  }
+
+  private renderSupportingDocuments(): HTMLElement {
+    const sourceDocuments = this.state.documents.filter((document) => document.document_type === "SUPPORTING");
+    const sourceSelect = el(
+      "select",
+      { attrs: { name: "document_id", required: "", ...disabledUnless(this.canWrite() && !this.state.busy && sourceDocuments.length > 0) } },
+      ...sourceDocuments.map((document) => el("option", { text: `${document.filename} · ${document.content_sha256.slice(0, 12)}…`, attrs: { value: document.document_id } })),
+    );
+    const form = el(
+      "form",
+      { className: "supporting-form", on: { submit: (event) => void this.handleSupportingDocument(event) } },
+      labeledControl("원문 SUPPORTING 문서", sourceSelect),
+      labeledControl("문서 코드", el("input", { attrs: { name: "document_code", required: "", maxlength: "128", ...disabledUnless(this.canWrite() && !this.state.busy) } })),
+      labeledControl("발급기관", el("input", { attrs: { name: "issuer", required: "", maxlength: "512", ...disabledUnless(this.canWrite() && !this.state.busy) } })),
+      labeledControl("문서번호", el("input", { attrs: { name: "document_number", required: "", maxlength: "256", ...disabledUnless(this.canWrite() && !this.state.busy) } })),
+      labeledControl("발급일", el("input", { attrs: { name: "issued_on", type: "date", required: "", ...disabledUnless(this.canWrite() && !this.state.busy) } })),
+      labeledControl("유효기간", el("input", { attrs: { name: "valid_until", type: "date", ...disabledUnless(this.canWrite() && !this.state.busy) } })),
+      labeledControl("대상품목 ID", el("input", { attrs: { name: "subject_item_ids", required: "", placeholder: "item-1, item-2", ...disabledUnless(this.canWrite() && !this.state.busy) } }), "쉼표로 구분"),
+      labeledControl("HSK", el("input", { attrs: { name: "hs_codes", placeholder: "0303540000", ...disabledUnless(this.canWrite() && !this.state.busy) } }), "쉼표로 구분"),
+      el("button", { className: "button button--secondary", text: "요건서류 메타데이터 등록", attrs: { type: "submit", ...disabledUnless(this.canWrite() && !this.state.busy && sourceDocuments.length > 0) } }),
+    );
+    return el(
+      "details",
+      { className: "supporting-documents" },
+      el("summary", { text: `요건서류 검증 (${this.state.supportingDocuments.length})` }),
+      el("p", { className: "section-help", text: "텍스트 원문의 SHA-256과 발급·유효기간·대상품목·HSK를 결박합니다. 문서 코드만 선언한 것은 검증 assertion이 아닙니다." }),
+      sourceDocuments.length > 0 ? form : empty("먼저 문서 유형 SUPPORTING으로 원문 텍스트를 등록하세요."),
+      ...this.state.supportingDocuments.map((document) => this.renderSupportingDocument(document)),
+    );
+  }
+
+  private renderSupportingDocument(document: SupportingDocumentRecord): HTMLElement {
+    const canAssert = this.canApprove() && document.created_by !== this.state.session?.subject;
+    const assertionForm = el(
+      "form",
+      { className: "assertion-form", on: { submit: (event) => void this.handleSupportingAssertion(event, document.document_id) } },
+      el("p", { className: "section-help", text: "검증 출처 hash·승인자·정책 버전은 Backend가 로그인 주체와 SUPPORTING 원문에서 생성합니다." }),
+      el("button", { className: "button button--primary", text: "human_approver assertion 기록", attrs: { type: "submit", ...disabledUnless(canAssert && !this.state.busy) } }),
+    );
+    return el(
+      "article",
+      { className: "supporting-record" },
+      el("strong", { text: `${document.document_code} · ${document.document_number}` }),
+      el("p", { text: `${document.issuer} · ${document.issued_on} ~ ${document.valid_until ?? "만료일 없음"}` }),
+      el("small", { text: `HSK ${document.hs_codes.join(", ") || "미지정"} · source ${document.source_sha256.slice(0, 12)}…` }),
+      document.verification_assertions.length > 0
+        ? el("ul", { className: "assertion-list" }, ...document.verification_assertions.map((assertion) =>
+            el(
+              "li",
+              {},
+              el("strong", { text: `${assertion.method} · ${assertion.receipt ? "Backend가 제공한 signed receipt" : "서명 없는 진단 기록"}` }),
+              el("span", { text: `${assertion.asserted_by} · ${assertion.authority_id}@${assertion.authority_release}` }),
+              el("small", { text: `source ${assertion.source_reference_sha256.slice(0, 12)}… · ${formatDate(assertion.asserted_at)}` }),
+              assertion.receipt
+                ? el(
+                    "small",
+                    { className: "signed-receipt" },
+                    `receipt ${assertion.receipt.key_id} · policy ${assertion.receipt.policy_release} · signed ${formatDate(assertion.receipt.signed_at)} · expires ${formatDate(assertion.receipt.expires_at)} · 브라우저는 서명을 직접 검증하지 않음`,
+                  )
+                : el("small", { className: "danger-text", text: "Agent trust root에 검증할 receipt가 없으므로 자동완료 근거가 아닙니다." }),
+            )))
+        : el("p", { className: "notice notice--warning", text: "검증 assertion이 없어 자동완료에 사용할 수 없습니다." }),
+      canAssert
+        ? assertionForm
+        : el("p", { className: "section-help", text: this.canApprove() ? "작성자와 다른 approver가 검증해야 합니다(maker-checker)." : "검증 assertion은 작성자와 다른 approver만 기록할 수 있습니다." }),
+    );
+  }
+
+  private renderJob(job: JobRecord): HTMLElement {
+    const uncertain = job.status === "delivery_uncertain";
+    const canReconcile = uncertain && this.canApprove() && this.isTrackedJobForCurrentCase(job);
+    return el(
+      "div",
+      { className: `job-status${uncertain ? " job-status--uncertain" : ""}`, attrs: { role: "status", "aria-live": "polite" } },
+      el("strong", { text: `Job ${job.job_id.slice(0, 12)}` }),
+      el("span", { text: humanize(job.status) }),
+      el("small", { text: `Agent call: ${humanize(job.agent_call_state)}` }),
+      job.error_code ? el("span", { className: "danger-text", text: job.error_code }) : null,
+      uncertain
+        ? el("p", { className: "notice notice--warning", text: "Agent 전달 결과를 확정할 수 없어 이 Case의 새 심사를 차단했습니다. 재조회로 다른 운영자가 이미 종결했는지 확인하거나, 독립 증거가 있는 Approver/Admin만 미처리를 확정할 수 있습니다." })
+        : null,
+      uncertain
+        ? el("button", {
+            className: "button button--secondary",
+            text: "저장된 Job 상태 다시 확인",
+            attrs: { type: "button", ...disabledUnless(!this.state.busy) },
+            on: { click: () => void this.reconcileTrackedJob(job.job_id) },
+          })
+        : null,
+      canReconcile
+        ? el(
+            "form",
+            {
+              className: "reconciliation-form",
+              attrs: { "aria-label": "Agent 전달 불확실성 운영 대조" },
+              on: { submit: (event) => void this.handleDeliveryReconciliation(event, job) },
+            },
+            el("p", { className: "section-help", text: "Agent가 이 요청을 처리하지 않았다는 독립 운영 증거가 있을 때만 해소할 수 있습니다." }),
+            labeledControl(
+              "운영 증거 SHA-256",
+              el("input", {
+                attrs: {
+                  name: "evidence_reference_sha256",
+                  required: "",
+                  minlength: "64",
+                  maxlength: "64",
+                  pattern: "[a-f0-9]{64}",
+                  autocomplete: "off",
+                  ...disabledUnless(!this.state.busy),
+                },
+              }),
+            ),
+            labeledControl(
+              "대조 사유",
+              el("textarea", {
+                attrs: {
+                  name: "reason",
+                  required: "",
+                  minlength: "10",
+                  maxlength: "2000",
+                  rows: "3",
+                  ...disabledUnless(!this.state.busy),
+                },
+              }),
+            ),
+            labeledControl(
+              "차단 해제 확인",
+              el("input", {
+                attrs: {
+                  name: "confirmed_not_processed",
+                  type: "checkbox",
+                  value: "confirmed",
+                  required: "",
+                  ...disabledUnless(!this.state.busy),
+                },
+              }),
+              "단순 timeout이 아니라 Agent 미수신을 입증하는 증거임을 확인",
+            ),
+            el("button", {
+              className: "button button--danger",
+              text: "미처리 증거로 차단 해소",
+              attrs: { type: "submit", ...disabledUnless(!this.state.busy) },
+            }),
+          )
+        : uncertain
+          ? el("p", { className: "section-help", text: this.canApprove()
+            ? "현재 화면의 Job·Case·복구 식별자가 정확히 결박되지 않아 차단 해소를 거절했습니다. 저장된 Job을 다시 불러오세요."
+            : "Approver 또는 Admin 권한이 독립 운영 증거를 확인한 뒤에만 차단을 해소할 수 있습니다." })
+          : null,
+      this.state.liveStages.length > 0
+        ? el(
+            "ol",
+            { className: "live-stages", attrs: { "aria-label": "실시간 심사 진행 단계" } },
+            ...this.state.liveStages.map((stage) =>
+              el("li", {}, el("strong", { text: humanize(stage.stage) }), el("span", { text: `${humanize(stage.status)} · ${humanize(stage.message)}` })),
+            ),
+          )
+        : el("span", { className: "section-help", text: "실행 단계 이벤트를 기다리는 중입니다." }),
+    );
+  }
+
+  private jobIsActive(): boolean {
+    const caseId = this.state.selectedCase?.case_id;
+    return this.state.job?.status === "queued"
+      || this.state.job?.status === "running"
+      || this.state.job?.status === "delivery_uncertain"
+      || (caseId !== undefined && this.recoveryByCase.has(caseId));
+  }
+
+  private jobNeedsPolling(): boolean {
+    return this.state.job?.status === "queued" || this.state.job?.status === "running";
+  }
+
+  private renderPendingRecovery(): HTMLElement | null {
+    const current = this.state.selectedCase;
+    if (!current) return null;
+    const recovery = this.recoveryByCase.get(current.case_id);
+    if (!recovery) return null;
+    const revisionMatches = recovery.case_revision === current.revision;
+    const hasJob = recovery.job_id !== null;
+    return el(
+      "div",
+      { className: "job-status job-status--uncertain", attrs: { role: "status" } },
+      el("strong", { text: hasJob ? `저장된 Job ${recovery.job_id!.slice(0, 12)} 재연결 필요` : "심사 요청 응답 확인 필요" }),
+      el("span", { text: `Case revision ${recovery.case_revision}` }),
+      el("p", { className: "notice notice--warning", text: revisionMatches
+        ? hasJob
+          ? "저장된 Job에 일시적으로 재연결하지 못했습니다. 새 Agent 호출은 계속 차단됩니다."
+          : "Job ID 수신 전 연결이 끊겼을 수 있습니다. 새 호출을 만들지 않고 기존 Idempotency-Key로만 응답을 재조회합니다."
+        : "Case revision이 변경되어 저장된 요청을 자동 재조회할 수 없습니다. 운영 대조가 필요합니다." }),
+      el("button", {
+        className: "button button--secondary",
+        text: hasJob ? "저장된 Job 상태 다시 확인" : "동일 요청 키로 안전하게 재조회",
+        attrs: { type: "button", ...disabledUnless(revisionMatches && this.canWrite() && !this.state.busy) },
+        on: { click: () => void (hasJob ? this.reconcileTrackedJob(recovery.job_id!) : this.resumePendingReview(recovery)) },
+      }),
+    );
+  }
+
+  private shouldRenderPendingRecovery(): boolean {
+    const caseId = this.state.selectedCase?.case_id;
+    if (!caseId) return false;
+    const recovery = this.recoveryByCase.get(caseId);
+    return recovery !== undefined && recovery.job_id !== this.state.job?.job_id;
+  }
+
+  private renderNoRun(): HTMLElement {
+    return el(
+      "section",
+      { className: "empty-review" },
+      el("h2", { text: "심사 결과 없음" }),
+      el("p", { text: "필요한 텍스트 문서를 등록한 뒤 심사를 실행하세요. 실행 결과와 업무 판정은 별도로 표시됩니다." }),
+    );
+  }
+
+  private renderReview(run: ReviewRun): HTMLElement {
+    return el(
+      "div",
+      { className: "review-stack" },
+      this.renderStatus(run),
+      this.renderUatAssertion(run),
+      this.renderRequiredActions(run.required_actions),
+      this.renderActionTimeline(run),
+      this.renderThreePane(run),
+      this.renderNarrative(run),
+      this.renderHitl(run),
+      this.renderChat(run),
+      this.renderHistory(run),
+    );
+  }
+
+  private renderRequiredActions(actions: RequiredAction[]): HTMLElement {
+    return el(
+      "section",
+      { className: "card required-actions", attrs: { "aria-labelledby": "required-actions-title" } },
+      el("h2", { text: `필수 후속 조치 ${actions.length}건`, attrs: { id: "required-actions-title" } }),
+      ...(actions.length === 0
+        ? [el("p", { className: "positive-text", text: "현재 Run에 등록된 필수 후속 조치가 없습니다." })]
+        : actions.map((action) =>
+            el(
+              "article",
+              { className: `required-action required-action--${action.severity ?? "medium"}`, attrs: { "data-source-id": action.action_id, tabindex: "-1" } },
+              el("strong", { text: `${action.code} · ${humanize(action.status ?? "required")}` }),
+              el("p", { text: action.description }),
+              this.renderCitationButtons(action.source_ids),
+            ),
+          )),
+    );
+  }
+
+  private renderStatus(run: ReviewRun): HTMLElement {
+    const tone = (value: string | undefined): string => {
+      if (value === "succeeded" || value === "no_issue_detected" || value === "auto_review_complete" || value === "production") return "positive";
+      if (value === "failed" || value === "blocked" || value === "issues_detected") return "negative";
+      return "caution";
+    };
+    return el(
+      "section",
+      { className: "status-grid", attrs: { "aria-label": "분리된 심사 상태" } },
+      badge("실행", run.execution_status, tone(run.execution_status)),
+      badge("문서·규정 평가", run.assessment, tone(run.assessment)),
+      badge("업무 처리", run.review_disposition, tone(run.review_disposition)),
+      badge("보증 수준", run.assurance_level, tone(run.assurance_level)),
+      el(
+        "div",
+        { className: "eligibility" },
+        el("strong", { text: run.completion_eligibility?.eligible ? "자동 사전심사 가능" : "자동 사전심사 보류" }),
+        el("span", { text: run.completion_eligibility?.unmet_reason_codes.map(humanize).join(" · ") || "차단 사유 없음" }),
+      ),
+    );
+  }
+
+  private renderUatAssertion(run: ReviewRun): HTMLElement | null {
+    const caseId = this.state.selectedCase?.case_id;
+    const scenario = caseId ? this.scenarioByCase.get(caseId) : undefined;
+    if (!scenario) return null;
+    const checks = [
+      { label: "실행", expected: "succeeded", actual: run.execution_status },
+      { label: "평가", expected: scenario.expected.assessment, actual: run.assessment ?? "not_available" },
+      { label: "업무 처리", expected: scenario.expected.disposition, actual: run.review_disposition ?? "not_available" },
+      ...(scenario.expected.unmet_reason_codes ?? []).map((code) => ({
+        label: `차단 ${code}`,
+        expected: "present",
+        actual: run.completion_eligibility?.unmet_reason_codes.includes(code) ? "present" : "missing",
+      })),
+    ];
+    const pass = checks.every((check) => check.expected === check.actual);
+    return el(
+      "section",
+      { className: `uat-assertion uat-assertion--${pass ? "pass" : "fail"}`, attrs: { role: "status" } },
+      el("div", {}, el("span", { className: "eyebrow", text: "MACHINE ASSERTION" }), el("strong", { text: `${scenario.title}: ${pass ? "PASS" : "FAIL"}` })),
+      el("div", { className: "uat-checks" }, ...checks.map((check) => el("span", { text: `${check.label} ${humanize(check.actual)} / expected ${humanize(check.expected)}` }))),
+      el("p", { text: scenario.description }),
+      scenario.production_blocked_reason ? el("p", { className: "notice notice--warning", text: `PRODUCTION BLOCKED: ${scenario.production_blocked_reason}` }) : null,
+      el("small", { text: "합성 시나리오 assertion은 기능 회귀용이며 실제 법적·Production 품질 승인이 아닙니다." }),
+    );
+  }
+
+  private renderActionTimeline(run: ReviewRun): HTMLElement {
+    const actions: ActionTrace[] = run.action_trace.length > 0 ? run.action_trace : run.stages.map((stage) => ({
+      action_id: stage.event_id,
+      cycle: 0,
+      tool: stage.stage,
+      status: stage.status === "pending" ? "planned" : stage.status,
+      reason_code: stage.message,
+      input_source_ids: [],
+      started_at: stage.occurred_at,
+      ...(stage.status === "succeeded" ? { finished_at: stage.occurred_at } : {}),
+    }));
+    return el(
+      "section",
+      { className: "card", attrs: { "aria-labelledby": "timeline-title" } },
+      el("h2", { text: "Agent 실행 과정", attrs: { id: "timeline-title" } }),
+      actions.length === 0
+        ? empty("공개 가능한 실행 단계가 없습니다. 숨은 사고과정은 표시하지 않습니다.")
+        : el(
+            "ol",
+            { className: "timeline" },
+            ...actions.map((action) =>
+              el(
+                "li",
+                { className: `timeline__item timeline__item--${action.status}` },
+                el("strong", { text: action.tool }),
+                el("span", { text: humanize(action.reason_code) }),
+                el("small", { text: `cycle ${action.cycle} · ${formatDate(action.started_at)}` }),
+                action.observation ? el("p", { text: action.observation }) : null,
+              ),
+            ),
+          ),
+    );
+  }
+
+  private renderThreePane(run: ReviewRun): HTMLElement {
+    const selected = this.state.documents.find((document) => document.document_id === this.state.selectedDocumentId) ?? this.state.documents[0];
+    const docTabs = el(
+      "div",
+      { className: "tab-list", attrs: { role: "tablist", "aria-label": "원문 문서" } },
+      ...this.state.documents.map((document, index) =>
+        el("button", {
+          className: `tab${document.document_id === selected?.document_id ? " is-selected" : ""}`,
+          text: document.document_type,
+          attrs: {
+            id: `document-tab-${document.document_id}`,
+            type: "button",
+            role: "tab",
+            "aria-selected": document.document_id === selected?.document_id ? "true" : "false",
+            "aria-controls": `document-panel-${document.document_id}`,
+            tabindex: document.document_id === selected?.document_id ? "0" : "-1",
+          },
+          on: {
+            click: () => { this.state.selectedDocumentId = document.document_id; this.render(); },
+            keydown: (event) => this.handleDocumentTabKey(event, index),
+          },
+        }),
+      ),
+    );
+    return el(
+      "section",
+      { className: "three-pane", attrs: { "aria-label": "통합 심사 화면" } },
+      el(
+        "article",
+        { className: "review-pane" },
+        el("h2", { text: "1. 문서 원문" }),
+        docTabs,
+        ...(this.state.documents.length > 0
+          ? this.state.documents.map((document) =>
+              el(
+                "div",
+                {
+                  attrs: {
+                    id: `document-panel-${document.document_id}`,
+                    role: "tabpanel",
+                    "aria-labelledby": `document-tab-${document.document_id}`,
+                    ...(document.document_id === selected?.document_id ? {} : { hidden: "" }),
+                  },
+                },
+                el("p", { className: "document-name", text: `${document.filename} · SHA-256 ${document.content_sha256.slice(0, 12)}…` }),
+                el("pre", { className: "source-text", text: document.content_text ?? "Backend가 원문 content endpoint를 제공하지 않았습니다." }),
+              ),
+            )
+          : [empty("등록된 텍스트 문서가 없습니다.")]),
+        this.renderSourceLedger(run),
+      ),
+      el(
+        "article",
+        { className: "review-pane" },
+        el("h2", { text: "2. 추출값·불일치" }),
+        this.renderFields(run.fields, selected?.document_id),
+        this.renderIssues(run.issues),
+      ),
+      el(
+        "article",
+        { className: "review-pane" },
+        el("h2", { text: "3. 법령 Evidence" }),
+        this.renderEvidence(run.evidence),
+        run.findings.length > 0 ? el("h3", { text: "규정 Finding" }) : null,
+        ...run.findings.map((finding) =>
+          el(
+            "div",
+            { className: `finding finding--${finding.severity}`, attrs: { "data-source-id": finding.finding_id, tabindex: "-1" } },
+            el("strong", { text: finding.title }),
+            el("p", { text: finding.detail }),
+            this.renderCitationButtons([...finding.evidence_ids, ...finding.source_ids]),
+          ),
+        ),
+      ),
+    );
+  }
+
+  private handleDocumentTabKey(event: Event, currentIndex: number): void {
+    if (!(event instanceof KeyboardEvent)) return;
+    const count = this.state.documents.length;
+    if (count === 0) return;
+    let nextIndex: number | undefined;
+    if (event.key === "ArrowRight") nextIndex = (currentIndex + 1) % count;
+    if (event.key === "ArrowLeft") nextIndex = (currentIndex - 1 + count) % count;
+    if (event.key === "Home") nextIndex = 0;
+    if (event.key === "End") nextIndex = count - 1;
+    if (nextIndex === undefined) return;
+    event.preventDefault();
+    this.state.selectedDocumentId = this.state.documents[nextIndex]?.document_id;
+    this.render();
+    this.root.querySelector<HTMLElement>(`#document-tab-${CSS.escape(this.state.selectedDocumentId ?? "")}`)?.focus();
+  }
+
+  private renderSourceLedger(run: ReviewRun): HTMLElement {
+    return el(
+      "section",
+      { className: "source-ledger", attrs: { "aria-labelledby": "source-ledger-title" } },
+      el("h3", { text: "검증된 원문 근거", attrs: { id: "source-ledger-title" } }),
+      ...(run.sources.length === 0
+        ? [empty("이 Run에 결박된 원문 Source ID가 없습니다.")]
+        : run.sources.map((source) =>
+            el(
+              "article",
+              {
+                className: "source-ledger__item",
+                attrs: {
+                  "data-source-id": source.source_id,
+                  ...(source.document_id ? { "data-document-id": source.document_id } : {}),
+                  tabindex: "-1",
+                },
+              },
+              el("strong", { text: source.label }),
+              source.quote ? el("blockquote", { text: source.quote }) : empty("원문 인용문이 제공되지 않았습니다."),
+              el("small", {
+                text: [source.document_id, source.page === undefined ? undefined : `page ${source.page}`, source.start_offset === undefined ? undefined : `offset ${source.start_offset}-${source.end_offset ?? "?"}`]
+                  .filter(Boolean)
+                  .join(" · ") || "Source 위치 메타데이터 미제공",
+              }),
+            ),
+          )),
+    );
+  }
+
+  private renderFields(fields: ExtractedField[], documentId?: string): HTMLElement {
+    const visible = documentId ? fields.filter((field) => field.document_id === documentId || field.document_id === "unbound-document") : fields;
+    if (visible.length === 0) return empty("선택한 문서의 추출값이 없습니다.");
+    return el(
+      "dl",
+      { className: "field-list" },
+      ...visible.flatMap((field) => [
+        el("dt", { text: field.name, attrs: { "data-source-id": field.field_id, tabindex: "-1" } }),
+        el(
+          "dd",
+          {},
+          el("span", { text: field.value === null ? "null" : String(field.value) }),
+          field.confidence === undefined ? null : el("small", { text: `confidence ${Math.round(field.confidence * 100)}%` }),
+          this.renderCitationButtons(field.source_ids),
+        ),
+      ]),
+    );
+  }
+
+  private renderIssues(issues: ReviewIssue[]): HTMLElement {
+    return el(
+      "div",
+      { className: "issue-list" },
+      el("h3", { text: `문서 불일치 ${issues.length}건` }),
+      ...(issues.length === 0
+        ? [el("p", { className: "positive-text", text: "현재 검증 범위에서 문서 불일치가 발견되지 않았습니다." })]
+        : issues.map((issue) =>
+            el(
+              "div",
+              { className: `issue issue--${issue.severity}`, attrs: { "data-source-id": issue.issue_id, tabindex: "-1" } },
+              el("strong", { text: `${issue.code} · ${humanize(issue.severity)}` }),
+              el("p", { text: issue.message }),
+              this.renderCitationButtons(issue.source_ids),
+            ),
+          )),
+    );
+  }
+
+  private renderEvidence(items: EvidenceItem[]): HTMLElement {
+    if (items.length === 0) return empty("검증된 Evidence가 없습니다. 자동완료 근거로 사용할 수 없습니다.");
+    return el(
+      "div",
+      { className: "evidence-list" },
+      ...items.map((item) =>
+        el(
+          "article",
+          { className: "evidence", attrs: { "data-source-id": item.evidence_id, tabindex: "-1" } },
+          el("span", { className: "evidence__law", text: `${item.law_id}${item.article ? ` · ${item.article}` : ""}` }),
+          el("strong", { text: item.title }),
+          el("p", { text: item.excerpt }),
+          el("small", { text: `source hash ${item.source_hash.slice(0, 12)}… · ${item.effective_date ?? "시행일 미표시"}` }),
+        ),
+      ),
+    );
+  }
+
+  private renderNarrative(run: ReviewRun): HTMLElement {
+    const report = run.narrative_report;
+    if (!report) return el("section", { className: "card" }, el("h2", { text: "사용자용 XAI 보고서" }), empty("근거 결박 보고서가 생성되지 않았습니다."));
+    const section = (title: string, claims: NarrativeClaim[] | undefined): HTMLElement =>
+      el(
+        "section",
+        { className: "report-section" },
+        el("h3", { text: title }),
+        ...(claims?.length ? claims.map((claim) => el("div", { className: "claim" }, el("p", { text: claim.text }), this.renderCitationButtons(claim.citation_ids))) : [empty("해당 내용 없음")]),
+      );
+    return el(
+      "section",
+      { className: "card report", attrs: { "aria-labelledby": "report-title" } },
+      el("div", { className: "section-title-row" }, el("h2", { text: report.title || "사용자용 XAI 보고서", attrs: { id: "report-title" } }), el("span", { className: "generator-label", text: report.generated_by === "claude" ? "Claude 표현 · 코드 검증" : "안전 템플릿" })),
+      section("심사 요약", report.summary),
+      section("문서 정합성", report.document_consistency),
+      section("적용 규정", report.regulatory_review),
+      section("영향", report.impact),
+      section("권장 조치", report.recommended_actions),
+    );
+  }
+
+  private renderCitationButtons(ids: string[]): HTMLElement {
+    return el(
+      "span",
+      { className: "citations", attrs: { "aria-label": "근거 인용" } },
+      ...ids.map((id) =>
+        el("button", {
+          className: "citation",
+          text: `[${id}]`,
+          attrs: { type: "button", title: `${id} 근거로 이동` },
+          on: { click: () => this.focusCitation(id) },
+        }),
+      ),
+    );
+  }
+
+  private focusCitation(id: string): void {
+    const target = [...this.root.querySelectorAll<HTMLElement>("[data-source-id]")].find((item) => item.dataset.sourceId === id);
+    if (!target) {
+      this.state.error = `현재 결과에서 인용 근거 ${id}를 찾을 수 없습니다.`;
+      this.render();
+      return;
+    }
+    target.focus();
+    target.scrollIntoView({ behavior: "smooth", block: "center" });
+  }
+
+  private renderHitl(run: ReviewRun): HTMLElement {
+    const correctableFields = run.fields.filter((field) => field.document_id !== "unbound-document");
+    const confirmableSourceIds = [...new Set(run.fields.flatMap((field) => field.source_ids))]
+      .filter((sourceId) => run.sources.some((source) => source.source_id === sourceId));
+    const revisionForm = (decision: RevisionAction["decision"]): HTMLElement => {
+      const enabled = this.canWrite() && !this.state.busy && !this.jobIsActive()
+        && (decision !== "correct_field" || correctableFields.length > 0)
+        && (decision !== "confirm_field" || confirmableSourceIds.length > 0)
+        && (decision !== "add_supporting_document" || this.state.supportingDocuments.length > 0);
+      const labels: Record<RevisionAction["decision"], string> = {
+        confirm_field: "원문 대조 확인 제안",
+        correct_field: "추출값 수정 제안",
+        add_supporting_document: "요건서류 추가 제안",
+        approve_review: "심사 승인 제안",
+        reject_review: "심사 거절 제안",
+      };
+      const controls: HTMLElement[] = [];
+      if (decision === "correct_field") {
+        controls.push(
+          labeledControl(
+            "수정 대상",
+            el(
+              "select",
+              { attrs: { name: "field", required: "", ...disabledUnless(enabled) } },
+              ...correctableFields.map((field) => el("option", { text: `${field.name}: ${String(field.value)}`, attrs: { value: field.field_id } })),
+            ),
+          ),
+          labeledControl("제안값", el("input", { attrs: { name: "new_value", required: "", maxlength: "1000", ...disabledUnless(enabled) } })),
+        );
+      }
+      if (decision === "confirm_field") {
+        controls.push(labeledControl(
+          "FactLedger 원문 근거",
+          el(
+            "select",
+            { attrs: { name: "confirmed_reference_id", required: "", ...disabledUnless(enabled) } },
+            ...confirmableSourceIds.map((sourceId) => {
+              const source = run.sources.find((candidate) => candidate.source_id === sourceId);
+              return el("option", { text: `${source?.label ?? sourceId} · ${sourceId}`, attrs: { value: sourceId } });
+            }),
+          ),
+        ));
+      }
+      if (decision === "add_supporting_document") {
+        controls.push(labeledControl(
+          "추가할 요건서류",
+          el(
+            "select",
+            { attrs: { name: "supporting_document_id", required: "", ...disabledUnless(enabled) } },
+            ...this.state.supportingDocuments.map((document) => el("option", {
+              text: `${document.document_code} · ${document.document_number}`,
+              attrs: { value: document.document_id },
+            })),
+          ),
+          "현재 Run에 이미 포함된 서류는 Backend가 거절합니다.",
+        ));
+      }
+      controls.push(labeledControl(
+        "제안 이유",
+        el("textarea", { attrs: { name: "reason", required: "", maxlength: "2000", rows: "3", ...disabledUnless(enabled) } }),
+      ));
+      controls.push(el("button", {
+        className: `button button--${decision === "reject_review" ? "danger" : "secondary"}`,
+        text: labels[decision],
+        attrs: { type: "submit", ...disabledUnless(enabled) },
+      }));
+      return el(
+        "details",
+        { className: "revision-action" },
+        el("summary", { text: labels[decision] }),
+        el("form", {
+          className: "hitl-form",
+          on: { submit: (event) => void this.handleRevisionProposal(event, run, decision) },
+        }, ...controls),
+      );
+    };
+    return el(
+      "section",
+      { className: "card", attrs: { "aria-labelledby": "hitl-title" } },
+      el("h2", { text: "사람 검토 · 수정 · 재심사", attrs: { id: "hitl-title" } }),
+      el("p", { className: "section-help", text: "원본 Run은 변경하지 않습니다. Reviewer는 확인·수정·서류추가·승인/거절을 typed proposal로만 제안하고, 다른 Approver가 parent digest와 Case revision을 재검증해야 child Run이 생성됩니다." }),
+      el(
+        "div",
+        { className: "revision-action-list" },
+        revisionForm("confirm_field"),
+        revisionForm("correct_field"),
+        revisionForm("add_supporting_document"),
+        revisionForm("approve_review"),
+        revisionForm("reject_review"),
+      ),
+      el("h3", { text: `Revision Proposals ${this.state.proposals.length}건` }),
+      ...(this.state.proposals.length === 0 ? [empty("등록된 revision 제안이 없습니다.")] : this.state.proposals.map((proposal) => this.renderRevisionProposal(proposal, run))),
+      el("p", {
+        className: "section-help",
+        text: this.canApprove()
+          ? "Approver는 위 pending proposal을 제안자와 독립적으로 승인하거나 거절합니다. 승인/거절 자체도 typed action으로만 새 child Run에 적용됩니다."
+          : "제안 승인·거절은 제안자와 다른 approver 또는 admin만 수행할 수 있습니다.",
+      }),
+    );
+  }
+
+  private renderRevisionProposal(proposal: CorrectionProposal, run: ReviewRun): HTMLElement {
+    const canDecide = this.canDecideProposal(proposal);
+    const decisionForm = (decision: "approve" | "reject"): HTMLFormElement =>
+      el(
+        "form",
+        { className: "proposal-decision-form", on: { submit: (event) => void this.handleRevisionProposalDecision(event, proposal, run, decision) } },
+        labeledControl("결정 사유", el("input", { attrs: { name: "reason", required: "", maxlength: "2000", ...disabledUnless(canDecide && !this.state.busy) } })),
+        el("button", { className: `button button--${decision === "approve" ? "primary" : "danger"}`, text: decision === "approve" ? "제안 승인·재심사" : "제안 거절", attrs: { type: "submit", ...disabledUnless(canDecide && !this.state.busy && !this.jobIsActive()) } }),
+      );
+    return el(
+      "article",
+      { className: `correction-proposal correction-proposal--${proposal.status}` },
+      el("strong", { text: `${proposal.proposal_id} · ${humanize(proposal.status)}` }),
+      ...proposal.corrections.map((correction) => el("p", { text: `${correction.document_id} / ${correction.field_path} → ${String(correction.new_value)} · ${correction.reason}` })),
+      ...proposal.actions.map((action) => el("p", {
+        text: [
+          humanize(action.decision),
+          action.confirmed_reference_id,
+          action.correction ? `${action.correction.document_id} / ${action.correction.field_path} → ${String(action.correction.new_value)}` : undefined,
+          action.supporting_document_id,
+          action.reason,
+        ].filter(Boolean).join(" · "),
+      })),
+      el("small", { text: `parent ${proposal.parent_result_digest.slice(0, 12)}… · manifest ${proposal.parent_input_manifest_sha256.slice(0, 12)}… · revision ${proposal.case_revision}` }),
+      proposal.status === "pending" && canDecide ? el("div", { className: "decision-grid" }, decisionForm("approve"), decisionForm("reject")) : null,
+      proposal.status === "pending" && this.canApprove() && !canDecide
+        ? el("p", { className: "notice notice--warning", text: "자신이 만든 revision 제안은 승인하거나 거절할 수 없습니다. 다른 승인자가 검토해야 합니다." })
+        : null,
+      proposal.decision_reason ? el("p", { className: "section-help", text: `결정: ${proposal.decision_reason}` }) : null,
+    );
+  }
+
+  private renderChat(run: ReviewRun): HTMLElement {
+    const canChat = this.canChat();
+    const form = el(
+      "form",
+      { className: "chat-form", on: { submit: (event) => void this.handleChat(event, run) } },
+      labeledControl("Case에 대해 질문", el("textarea", { attrs: { name: "question", required: "", maxlength: "2000", rows: "3", placeholder: "왜 사람 검토가 필요한가요?", ...disabledUnless(canChat && !this.state.busy) } })),
+      el("button", { className: "button button--primary", text: "근거 기반 답변 요청", attrs: { type: "submit", ...disabledUnless(canChat && !this.state.busy) } }),
+    );
+    return el(
+      "section",
+      { className: "card", attrs: { "aria-labelledby": "chat-title" } },
+      el("h2", { text: "Evidence-bound Case Chat", attrs: { id: "chat-title" } }),
+      el("p", { className: "section-help", text: "현재 Run과 Knowledge snapshot 밖의 질문은 거절됩니다. 답변은 심사 결과를 변경하지 않습니다." }),
+      el(
+        "div",
+        { className: "chat-log", attrs: { "aria-live": "polite" } },
+        ...this.state.chat.map((message) => this.renderChatMessage(message)),
+      ),
+      canChat
+        ? form
+        : el("p", { className: "section-help", text: "Auditor는 저장된 Chat 이력을 읽을 수 있지만 새 질문을 생성할 수 없습니다." }),
+    );
+  }
+
+  private renderChatMessage(message: ChatRecord | GroundedAnswer): HTMLElement {
+    if ("message_id" in message) {
+      return el("article", { className: "chat-message" }, el("p", { className: "chat-question", text: message.question }), el("p", { text: message.answer }), el("span", { className: "chat-status", text: humanize(message.answer_status) }), this.renderCitationButtons(message.citations.map((citation) => citation.citation_id ?? citation.evidence_id ?? citation.source_id ?? citation.reference_id ?? "unbound-citation")));
+    }
+    return el("article", { className: "chat-message" }, el("span", { className: "chat-status", text: humanize(message.status) }), ...message.claims.map((claim) => el("div", {}, el("p", { text: claim.text }), this.renderCitationButtons(claim.citation_ids))));
+  }
+
+  private renderHistory(run: ReviewRun): HTMLElement {
+    return el(
+      "section",
+      { className: "history-grid" },
+      el(
+        "article",
+        { className: "card" },
+        el("h2", { text: "Run lineage" }),
+        el("p", { text: `현재: ${run.review_run_id}` }),
+        el("p", { text: `부모: ${run.parent_run_id ?? "최초 Run"}` }),
+        el("p", { text: `결과 digest: ${run.result_digest ?? "미제공"}` }),
+        el("p", { text: `입력 manifest: ${run.input_manifest_digest ?? "미제공"}` }),
+        el("p", { text: `Agent 입력 manifest: ${run.agent_input_manifest_sha256 ?? "미제공"}` }),
+        el("p", { text: `Provider 결과 SHA-256: ${run.provider_result_sha256 ?? "미제공"}` }),
+        run.release_identity
+          ? el("dl", { className: "identity-list" }, ...Object.entries(run.release_identity)
+              .sort(([left], [right]) => left.localeCompare(right))
+              .flatMap(([key, identityValue]) => [el("dt", { text: key }), el("dd", { text: formatIdentityValue(identityValue) })]))
+          : empty("Release identity가 제공되지 않았습니다."),
+        el("h3", { text: "사람 결정 이력" }),
+        ...(this.state.decisions.length === 0
+          ? [empty("이 Run에 기록된 승인·거절 결정이 없습니다.")]
+          : this.state.decisions.map((decision) =>
+              el("p", {
+                text: [
+                  humanize(decision.decision),
+                  decision.reason,
+                  decision.decided_by,
+                  decision.proposal_id ? `proposal ${decision.proposal_id}` : undefined,
+                  decision.target_revision_id ? `target child ${decision.target_revision_id}` : undefined,
+                ].filter(Boolean).join(" · "),
+              }),
+            )),
+      ),
+      el(
+        "article",
+        { className: "card" },
+        el("h2", { text: "변경 불가능한 Audit" }),
+        this.state.audit.length === 0
+          ? empty("Audit event가 없습니다.")
+          : el("ol", { className: "audit-list" }, ...this.state.audit.map((event) => el("li", {}, el("strong", { text: event.event_type }), el("span", { text: event.summary }), el("small", { text: `${event.actor_display} · ${formatDate(event.occurred_at)}` })))),
+      ),
+    );
+  }
+
+  private async handleCreateCase(event: Event): Promise<void> {
+    event.preventDefault();
+    if (!this.canWrite() || this.state.busy) return;
+    const form = event.currentTarget as HTMLFormElement;
+    const data = new FormData(form);
+    const title = value(data, "title");
+    const reference = value(data, "reference");
+    await this.act(async () => {
+      const created = await this.api.createCase({ title, ...(reference ? { external_reference: reference } : {}) });
+      if (created.org_id !== this.requireSession().org_id) throw new Error("생성된 Case가 현재 조직에 결박되지 않았습니다.");
+      await this.refreshCases();
+      await this.selectCase(created.case_id);
+      this.state.notice = "Case가 생성되었습니다.";
+    });
+  }
+
+  private async handleScenario(event: Event): Promise<void> {
+    event.preventDefault();
+    if (!this.canWrite() || this.state.busy) return;
+    const data = new FormData(event.currentTarget as HTMLFormElement);
+    const scenario = UAT_SCENARIOS.find((item) => item.scenario_id === value(data, "scenario"));
+    if (!scenario) return;
+    await this.createScenarioCase(scenario);
+  }
+
+  private async createScenarioCase(scenario: LocalUatScenario): Promise<void> {
+    await this.act(async () => {
+      const created = await this.api.createCase({
+        title: `[UAT] ${scenario.title}`,
+        external_reference: `UAT-${scenario.scenario_id}-${Date.now()}`,
+      });
+      if (created.org_id !== this.requireSession().org_id) throw new Error("생성된 UAT Case가 현재 조직에 결박되지 않았습니다.");
+      const createdDocuments: CaseDocument[] = [];
+      for (const document of scenario.documents) {
+        const createdDocument = await this.api.addDocument(created.case_id, document);
+        if (createdDocument.case_id !== created.case_id) throw new Error("생성된 UAT 문서가 요청 Case와 일치하지 않습니다.");
+        createdDocuments.push(createdDocument);
+      }
+      if (scenario.supporting_document) {
+        const source = createdDocuments.find((document) => document.filename === scenario.supporting_document?.filename);
+        const invoice = createdDocuments.find((document) => document.document_type === "CI");
+        if (!source || !invoice) throw new Error("Production UAT supporting-document source mapping failed");
+        await this.api.addSupportingDocument(created.case_id, {
+          document_id: source.document_id,
+          document_code: scenario.supporting_document.document_code,
+          issuer: scenario.supporting_document.issuer,
+          document_number: scenario.supporting_document.document_number,
+          issued_on: scenario.supporting_document.issued_on,
+          valid_until: scenario.supporting_document.valid_until,
+          subject_item_ids: [`${invoice.document_id}_line_1`],
+          hs_codes: scenario.supporting_document.hs_codes,
+          source_sha256: source.content_sha256,
+        });
+      }
+      this.scenarioByCase.set(created.case_id, scenario);
+      await this.refreshCases();
+      await this.selectCase(created.case_id);
+      this.state.notice = scenario.supporting_document
+        ? `합성 시나리오를 등록했습니다. 작성자와 다른 approver가 요건서류를 검증한 뒤 실행하세요. 기대 평가: ${humanize(scenario.expected.assessment)} / ${humanize(scenario.expected.disposition)}`
+        : `합성 시나리오를 등록했습니다. 기대 평가: ${humanize(scenario.expected.assessment)} / ${humanize(scenario.expected.disposition)}`;
+    });
+  }
+
+  private async handleAddDocument(event: Event): Promise<void> {
+    event.preventDefault();
+    if (!this.canWrite() || this.state.busy) return;
+    const current = this.state.selectedCase;
+    if (!current) return;
+    const form = event.currentTarget as HTMLFormElement;
+    const data = new FormData(form);
+    const payload: AddDocumentRequest = {
+      document_type: value(data, "document_type") as AddDocumentRequest["document_type"],
+      filename: value(data, "filename"),
+      media_type: "text/plain",
+      content_text: rawValue(data, "content_text"),
+    };
+    if (payload.content_text.trim().length === 0) {
+      this.state.error = "공백만 있는 문서는 등록할 수 없습니다.";
+      this.render();
+      return;
+    }
+    if (payload.document_type !== "SUPPORTING") {
+      const primaryDocuments = this.state.documents.filter((document) => document.document_type !== "SUPPORTING");
+      const primaryCharacters = primaryDocuments.reduce((total, document) => total + document.character_count, 0);
+      if (primaryDocuments.length >= MAX_PRIMARY_DOCUMENTS) {
+        this.state.error = `한 심사에는 최대 ${MAX_PRIMARY_DOCUMENTS}개의 일반 문서만 사용할 수 있습니다.`;
+        this.render();
+        return;
+      }
+      if (primaryCharacters + payload.content_text.length > MAX_PRIMARY_TEXT_CHARACTERS) {
+        this.state.error = `일반 문서 원문 합계는 최대 ${MAX_PRIMARY_TEXT_CHARACTERS.toLocaleString()}자입니다.`;
+        this.render();
+        return;
+      }
+    }
+    await this.act(async () => {
+      await this.api.addDocument(current.case_id, payload);
+      await this.selectCase(current.case_id);
+      form.reset();
+      this.state.notice = "텍스트 문서를 등록했습니다.";
+    });
+  }
+
+  private async handleSupportingDocument(event: Event): Promise<void> {
+    event.preventDefault();
+    if (!this.canWrite() || this.state.busy) return;
+    const current = this.state.selectedCase;
+    if (!current) return;
+    const form = event.currentTarget as HTMLFormElement;
+    const data = new FormData(form);
+    const documentId = value(data, "document_id");
+    const source = this.state.documents.find((document) => document.document_id === documentId && document.document_type === "SUPPORTING");
+    if (!source) {
+      this.state.error = "등록된 SUPPORTING 원문을 선택해야 합니다.";
+      this.render();
+      return;
+    }
+    if (this.state.supportingDocuments.length >= MAX_SUPPORTING_DOCUMENTS) {
+      this.state.error = `요건서류 metadata는 한 심사에 최대 ${MAX_SUPPORTING_DOCUMENTS}개까지 등록할 수 있습니다.`;
+      this.render();
+      return;
+    }
+    const payload: SupportingDocumentCreate = {
+      document_id: documentId,
+      document_code: value(data, "document_code"),
+      issuer: value(data, "issuer"),
+      document_number: value(data, "document_number"),
+      issued_on: value(data, "issued_on"),
+      ...(value(data, "valid_until") ? { valid_until: value(data, "valid_until") } : {}),
+      subject_item_ids: listValue(data, "subject_item_ids"),
+      hs_codes: listValue(data, "hs_codes"),
+      source_sha256: source.content_sha256,
+    };
+    await this.act(async () => {
+      await this.api.addSupportingDocument(current.case_id, payload);
+      this.state.supportingDocuments = await this.api.listSupportingDocuments(current.case_id);
+      form.reset();
+      this.state.notice = "원문 hash에 결박된 요건서류 메타데이터를 등록했습니다.";
+    });
+  }
+
+  private async handleSupportingAssertion(event: Event, supportingDocumentId: string): Promise<void> {
+    event.preventDefault();
+    if (!this.canApprove() || this.state.busy) return;
+    const current = this.state.selectedCase;
+    if (!current) return;
+    const supportingDocument = this.state.supportingDocuments.find((document) => document.document_id === supportingDocumentId);
+    if (!supportingDocument || supportingDocument.created_by === this.state.session?.subject) {
+      this.state.error = "요건서류 작성자와 다른 approver만 검증 assertion을 기록할 수 있습니다.";
+      this.render();
+      return;
+    }
+    const form = event.currentTarget as HTMLFormElement;
+    await this.act(async () => {
+      await this.api.addSupportingAssertion(current.case_id, supportingDocumentId, {
+        method: "human_approver",
+      });
+      this.state.supportingDocuments = await this.api.listSupportingDocuments(current.case_id);
+      form.reset();
+      this.state.notice = "승인자 검증 assertion을 변경 불가능한 감사 기록으로 추가했습니다.";
+    });
+  }
+
+  private async enqueueReview(): Promise<void> {
+    const current = this.state.selectedCase;
+    if (!current || !this.canWrite() || this.state.busy || this.jobIsActive()) return;
+    const primaryDocuments = this.state.documents.filter((document) => document.document_type !== "SUPPORTING");
+    const primaryCharacters = primaryDocuments.reduce((total, document) => total + document.character_count, 0);
+    if (primaryDocuments.length === 0) {
+      this.state.error = "심사할 텍스트 문서를 먼저 등록하세요.";
+      this.render();
+      return;
+    }
+    if (primaryDocuments.some((document) => document.character_count < 1 || document.byte_size < 1)) {
+      this.state.error = "일반 문서의 권위 크기 metadata를 확인할 수 없어 심사를 시작할 수 없습니다.";
+      this.render();
+      return;
+    }
+    if (primaryDocuments.length > MAX_PRIMARY_DOCUMENTS || primaryCharacters > MAX_PRIMARY_TEXT_CHARACTERS) {
+      this.state.error = `심사 입력 한도(${MAX_PRIMARY_DOCUMENTS}문서, ${MAX_PRIMARY_TEXT_CHARACTERS.toLocaleString()}자)를 초과했습니다.`;
+      this.render();
+      return;
+    }
+    await this.act(async () => {
+      const intent = `review:${current.case_id}`;
+      const session = this.requireSession();
+      const recovery: ReviewRecoveryRecord = {
+        org_id: session.org_id,
+        subject: session.subject,
+        case_id: current.case_id,
+        case_revision: current.revision,
+        job_id: null,
+        idempotency_key: this.idempotencyKey(intent),
+      };
+      this.saveRecovery(recovery);
+      await this.submitReviewIntent(recovery);
+    });
+  }
+
+  private async resumePendingReview(recovery: ReviewRecoveryRecord): Promise<void> {
+    const current = this.state.selectedCase;
+    if (!current || recovery.case_id !== current.case_id || recovery.case_revision !== current.revision || recovery.job_id !== null) return;
+    await this.act(async () => this.submitReviewIntent(recovery));
+  }
+
+  private async submitReviewIntent(recovery: ReviewRecoveryRecord): Promise<void> {
+    try {
+      const job = await this.api.enqueueReview(
+        recovery.case_id,
+        { trade_type: "import", submitted_document_codes: [] },
+        recovery.idempotency_key,
+      );
+      if (job.case_id !== recovery.case_id) throw new Error("Backend Job이 요청한 Case와 일치하지 않습니다.");
+      this.saveRecovery({ ...recovery, job_id: job.job_id });
+      const intent = `review:${recovery.case_id}`;
+      this.jobIntentById.set(job.job_id, intent);
+      this.state.job = job;
+      this.pollAttempts = 0;
+      this.transientPollFailures = 0;
+      if (job.status === "queued" || job.status === "running") await this.startJobTracking(job.job_id);
+      else await this.handleTerminalJob(job);
+    } catch (error) {
+      if (isDefinitiveRequestRejection(error)) this.removeRecovery(recovery.case_id);
+      throw error;
+    }
+  }
+
+  private schedulePoll(jobId: string, delayMs = 1_000): void {
+    if (this.pollTimer !== undefined) window.clearTimeout(this.pollTimer);
+    this.pollTimer = window.setTimeout(() => void this.pollJob(jobId), delayMs);
+  }
+
+  private idempotencyKey(intent: string): string {
+    const existing = this.idempotencyKeys.get(intent);
+    if (existing) return existing;
+    const created = crypto.randomUUID();
+    this.idempotencyKeys.set(intent, created);
+    return created;
+  }
+
+  private saveRecovery(record: ReviewRecoveryRecord): void {
+    const session = this.requireSession();
+    if (record.org_id !== session.org_id || record.subject !== session.subject) {
+      throw new Error("Job 복구 상태가 현재 세션과 일치하지 않습니다.");
+    }
+    const next = new Map(this.recoveryByCase);
+    next.set(record.case_id, record);
+    writeReviewRecoveries(session, [...next.values()]);
+    this.recoveryByCase.set(record.case_id, record);
+    if (record.job_id === null) this.idempotencyKeys.set(`review:${record.case_id}`, record.idempotency_key);
+  }
+
+  private saveProposalDecisionRecovery(record: ProposalDecisionRecoveryRecord): void {
+    const session = this.requireSession();
+    if (record.org_id !== session.org_id || record.subject !== session.subject) {
+      throw new Error("제안 결정 복구 상태가 현재 세션과 일치하지 않습니다.");
+    }
+    const next = new Map(this.proposalDecisionRecovery);
+    next.set(record.proposal_id, record);
+    writeProposalDecisionRecoveries(session, [...next.values()]);
+    this.proposalDecisionRecovery.set(record.proposal_id, record);
+  }
+
+  private removeProposalDecisionRecovery(proposalId: string): void {
+    if (!this.proposalDecisionRecovery.has(proposalId)) return;
+    const next = new Map(this.proposalDecisionRecovery);
+    next.delete(proposalId);
+    writeProposalDecisionRecoveries(this.requireSession(), [...next.values()]);
+    this.proposalDecisionRecovery.delete(proposalId);
+    for (const intent of [`proposal:${proposalId}:approve`, `proposal:${proposalId}:reject`]) {
+      this.idempotencyKeys.delete(intent);
+    }
+  }
+
+  private saveDeliveryReconciliationRecovery(record: DeliveryReconciliationRecoveryRecord): void {
+    const session = this.requireSession();
+    if (record.org_id !== session.org_id || record.subject !== session.subject) {
+      throw new Error("전달 대조 복구 상태가 현재 세션과 일치하지 않습니다.");
+    }
+    const next = new Map(this.deliveryReconciliationRecovery);
+    next.set(record.job_id, record);
+    writeDeliveryReconciliationRecoveries(session, [...next.values()]);
+    this.deliveryReconciliationRecovery.set(record.job_id, record);
+  }
+
+  private removeDeliveryReconciliationRecovery(jobId: string): void {
+    if (!this.deliveryReconciliationRecovery.has(jobId)) return;
+    const next = new Map(this.deliveryReconciliationRecovery);
+    next.delete(jobId);
+    writeDeliveryReconciliationRecoveries(this.requireSession(), [...next.values()]);
+    this.deliveryReconciliationRecovery.delete(jobId);
+  }
+
+  private assertProposalDecisionResponse(
+    response: CorrectionProposalDecisionResponse,
+    proposal: CorrectionProposal,
+    run: ReviewRun,
+    current: CaseDetail,
+  ): void {
+    const session = this.requireSession();
+    if (
+      response.proposal.proposal_id !== proposal.proposal_id
+      || response.proposal.review_run_id !== run.review_run_id
+      || response.proposal.case_id !== current.case_id
+      || response.proposal.org_id !== session.org_id
+      || response.decision.proposal_id !== proposal.proposal_id
+      || response.decision.review_run_id !== run.review_run_id
+      || response.decision.case_id !== current.case_id
+      || response.decision.org_id !== session.org_id
+      || (response.job !== undefined && response.job !== null && (
+        response.job.case_id !== current.case_id || response.job.kind !== "revision"
+      ))
+    ) {
+      throw new Error("Backend 제안 결정 응답이 현재 Case·Run·조직·Proposal 계보와 일치하지 않습니다.");
+    }
+  }
+
+  private assertChatBinding(answer: GroundedAnswer, run: ReviewRun): void {
+    const current = this.state.selectedCase;
+    const session = this.requireSession();
+    if (
+      !current
+      || answer.review_run_id !== run.review_run_id
+      || answer.case_id !== current.case_id
+      || answer.org_id !== session.org_id
+      || answer.bound_result_digest !== run.result_digest
+      || answer.snapshot_id !== run.result_digest
+    ) {
+      throw new Error("Backend Chat 응답이 현재 Case·Run·결과 digest와 결박되지 않았습니다.");
+    }
+  }
+
+  private removeRecovery(caseId: string, expectedJobId?: string): void {
+    const existing = this.recoveryByCase.get(caseId);
+    if (!existing || (expectedJobId !== undefined && existing.job_id !== expectedJobId)) return;
+    const next = new Map(this.recoveryByCase);
+    next.delete(caseId);
+    writeReviewRecoveries(this.requireSession(), [...next.values()]);
+    this.recoveryByCase.delete(caseId);
+    for (const [intent, key] of this.idempotencyKeys) {
+      if (key === existing.idempotency_key) this.idempotencyKeys.delete(intent);
+    }
+  }
+
+  private clearIdempotencyKeysForJob(job: JobRecord): void {
+    if (job.status !== "succeeded" && job.status !== "failed") return;
+    const intent = this.jobIntentById.get(job.job_id);
+    if (intent) this.idempotencyKeys.delete(intent);
+    this.jobIntentById.delete(job.job_id);
+    this.removeRecovery(job.case_id, job.job_id);
+    this.removeDeliveryReconciliationRecovery(job.job_id);
+  }
+
+  private mergeStageEvent(event: ReviewStageEvent): void {
+    const existing = this.state.liveStages.findIndex((item) => item.event_id === event.event_id);
+    if (existing >= 0) this.state.liveStages[existing] = event;
+    else this.state.liveStages.push(event);
+    this.state.liveStages.sort((left, right) => left.occurred_at.localeCompare(right.occurred_at));
+    this.render();
+  }
+
+  private async startJobTracking(jobId: string): Promise<void> {
+    this.streamAbort?.abort();
+    this.streamAbort = new AbortController();
+    try {
+      this.state.liveStages = await this.api.listJobEvents(jobId);
+    } catch (error) {
+      // Stage events are an observability channel. A transient event-endpoint
+      // failure must not hide or cancel the authoritative Job state machine.
+      if (error instanceof ApiError && error.status === 401) throw error;
+      this.state.liveStages = [];
+    }
+    void this.consumeStageStream(jobId, this.streamAbort.signal);
+    this.schedulePoll(jobId);
+  }
+
+  private async consumeStageStream(jobId: string, signal: AbortSignal): Promise<void> {
+    while (!signal.aborted && this.state.job?.job_id === jobId && this.jobNeedsPolling()) {
+      try {
+        await this.api.streamJobEvents(jobId, (event) => this.mergeStageEvent(event), signal);
+      } catch (error) {
+        if (signal.aborted) return;
+        if (error instanceof ApiError && error.status === 401) {
+          this.showError(error);
+          return;
+        }
+      }
+      if (!signal.aborted && this.jobNeedsPolling()) await new Promise((resolve) => window.setTimeout(resolve, 750));
+    }
+  }
+
+  private async pollJob(jobId: string): Promise<void> {
+    const selectedCaseId = this.state.selectedCase?.case_id;
+    const selectedRecovery = selectedCaseId ? this.recoveryByCase.get(selectedCaseId) : undefined;
+    const trackedJobId = this.state.job?.job_id ?? selectedRecovery?.job_id;
+    if (!selectedCaseId || trackedJobId !== jobId) return;
+    this.pollAttempts += 1;
+    try {
+      const job = await this.api.getJob(jobId);
+      if (job.job_id !== jobId || job.case_id !== selectedCaseId) {
+        throw new Error("Backend Job이 현재 Case의 추적 대상과 일치하지 않습니다.");
+      }
+      const recovery = this.recoveryByCase.get(selectedCaseId);
+      if (recovery && recovery.job_id !== null && recovery.job_id !== job.job_id) {
+        throw new Error("Backend Job이 저장된 Case 복구 상태와 일치하지 않습니다.");
+      }
+      this.state.job = job;
+      this.transientPollFailures = 0;
+      try {
+        this.state.liveStages = await this.api.listJobEvents(jobId);
+      } catch (error) {
+        if (error instanceof ApiError && error.status === 401) throw error;
+        // Polling Job status remains authoritative when the optional event
+        // ledger is temporarily unavailable.
+      }
+      if (job.status === "succeeded") {
+        if (!job.review_run_id) {
+          this.streamAbort?.abort();
+          this.state.error = "완료된 Job에 child Review Run ID가 없어 새 심사를 차단합니다.";
+          this.render();
+          return;
+        }
+        await this.handleTerminalJob(job);
+        return;
+      }
+      if (job.status === "failed" || job.status === "delivery_uncertain") {
+        await this.handleTerminalJob(job);
+        return;
+      }
+      if (this.pollAttempts >= 180) {
+        this.state.error = "3분 안에 심사가 완료되지 않았습니다. Job 상태를 다시 확인하세요.";
+        this.render();
+        return;
+      }
+      this.render();
+      this.schedulePoll(jobId);
+    } catch (error) {
+      if (isTransientJobPollingError(error) && this.transientPollFailures < MAX_TRANSIENT_POLL_FAILURES && this.pollAttempts < 180) {
+        this.transientPollFailures += 1;
+        const delay = Math.min(2 ** (this.transientPollFailures - 1) * 1_000, MAX_POLL_DELAY_MS);
+        this.state.notice = `Job 상태 조회가 일시적으로 실패했습니다. ${Math.ceil(delay / 1_000)}초 후 저장된 Job에 재연결합니다 (${this.transientPollFailures}/${MAX_TRANSIENT_POLL_FAILURES}).`;
+        this.render();
+        this.schedulePoll(jobId, delay);
+        return;
+      }
+      if (isTransientJobPollingError(error)) {
+        this.state.error = "Job 자동 재연결 한도를 소진했습니다. 새 심사는 계속 차단되며, 저장된 Job 상태를 다시 확인해야 합니다.";
+        this.render();
+        return;
+      }
+      this.showError(error);
+    }
+  }
+
+  private async handleTerminalJob(job: JobRecord): Promise<void> {
+    this.streamAbort?.abort();
+    if (job.status === "succeeded") {
+      this.clearIdempotencyKeysForJob(job);
+      if (job.review_run_id) {
+        await this.selectRun(job.review_run_id);
+        if (this.state.selectedCase) await this.selectCase(this.state.selectedCase.case_id, job.review_run_id);
+      }
+      return;
+    }
+    if (job.status === "failed") {
+      this.clearIdempotencyKeysForJob(job);
+      if (job.agent_call_state === "delivery_reconciled") {
+        this.state.error = undefined;
+        this.state.notice = "Backend 감사 원장에서 Agent 미처리가 운영 증거로 확정되었습니다. 기존 Job은 실패로 종결되었고 새 심사를 시작할 수 있습니다.";
+        this.render();
+        return;
+      }
+      this.state.error = `심사 Job이 실패했습니다: ${job.error_code ?? "원인 코드 없음"}`;
+      this.render();
+      return;
+    }
+    if (job.status === "delivery_uncertain") {
+      let existing = this.recoveryByCase.get(job.case_id);
+      if (!existing) {
+        const intent = this.jobIntentById.get(job.job_id);
+        const idempotencyKey = intent ? this.idempotencyKeys.get(intent) : undefined;
+        const current = this.state.selectedCase;
+        if (idempotencyKey && current?.case_id === job.case_id) {
+          const session = this.requireSession();
+          existing = { org_id: session.org_id, subject: session.subject, case_id: job.case_id, case_revision: current.revision, job_id: job.job_id, idempotency_key: idempotencyKey };
+        }
+      }
+      if (existing?.job_id === job.job_id) this.saveRecovery(existing);
+      this.state.error = "Agent 호출 결과 수신 여부를 확정할 수 없습니다. Job과 Idempotency-Key를 보존했으며 운영 대조 전까지 이 Case의 새 Agent 호출을 차단합니다.";
+      this.render();
+    }
+  }
+
+  private async reconcileTrackedJob(jobId: string): Promise<void> {
+    if (this.state.busy) return;
+    const current = this.state.selectedCase;
+    const recovery = current ? this.recoveryByCase.get(current.case_id) : undefined;
+    if (!current || (this.state.job?.job_id !== jobId && recovery?.job_id !== jobId)) {
+      this.state.error = "현재 Case에 결박되지 않은 Job은 재조회할 수 없습니다.";
+      this.render();
+      return;
+    }
+    await this.act(async () => this.pollJob(jobId));
+  }
+
+  private async handleDeliveryReconciliation(event: Event, job: JobRecord): Promise<void> {
+    event.preventDefault();
+    if (!this.canApprove() || this.state.busy || job.status !== "delivery_uncertain") return;
+    const current = this.state.selectedCase;
+    const recovery = current ? this.recoveryByCase.get(current.case_id) : undefined;
+    if (
+      !current
+      || job.case_id !== current.case_id
+      || this.state.job?.job_id !== job.job_id
+      || recovery?.job_id !== job.job_id
+    ) {
+      this.state.error = "현재 Case·Job·복구 식별자가 정확히 일치하지 않아 차단 해소를 거절했습니다.";
+      this.render();
+      return;
+    }
+    const data = new FormData(event.currentTarget as HTMLFormElement);
+    const evidenceReference = value(data, "evidence_reference_sha256");
+    const reason = value(data, "reason");
+    if (
+      data.get("confirmed_not_processed") !== "confirmed"
+      || !/^[a-f0-9]{64}$/.test(evidenceReference)
+      || reason.length < 10
+      || reason.length > 2_000
+    ) {
+      this.state.error = "Agent 미처리를 입증하는 SHA-256 증거와 10자 이상의 대조 사유를 확인해야 합니다.";
+      this.render();
+      return;
+    }
+    const request = {
+      resolution: "confirmed_not_processed" as const,
+      evidence_reference_sha256: evidenceReference,
+      reason,
+    };
+    const requestSha256 = await sha256CanonicalJson(request);
+    const session = this.requireSession();
+    const previousAttempt = this.deliveryReconciliationRecovery.get(job.job_id);
+    if (previousAttempt && previousAttempt.request_sha256 !== requestSha256) {
+      this.state.error = "응답이 확정되지 않은 기존 대조 요청과 다른 내용은 재전송할 수 없습니다. 먼저 같은 증거와 사유로 Backend 상태를 대조하세요.";
+      this.render();
+      return;
+    }
+    if (!previousAttempt) {
+      try {
+        this.saveDeliveryReconciliationRecovery({
+          org_id: session.org_id,
+          subject: session.subject,
+          case_id: current.case_id,
+          job_id: job.job_id,
+          request_sha256: requestSha256,
+          attempted_at: new Date().toISOString(),
+        });
+      } catch (error) {
+        this.showError(error);
+        return;
+      }
+    }
+    await this.act(async () => {
+      if (previousAttempt) {
+        const authoritative = await this.api.getJob(job.job_id);
+        if (authoritative.job_id !== job.job_id || authoritative.case_id !== current.case_id) {
+          throw new Error("Backend 권위 Job이 저장된 전달 대조 시도의 Case·Job과 일치하지 않습니다.");
+        }
+        this.state.job = authoritative;
+        if (authoritative.status !== "delivery_uncertain") {
+          if (authoritative.status === "succeeded" || authoritative.status === "failed") {
+            await this.handleTerminalJob(authoritative);
+            return;
+          }
+          throw new Error("Backend 권위 Job이 대조 재전송을 허용할 수 없는 상태로 변경되었습니다.");
+        }
+      }
+      let reconciled: JobRecord;
+      try {
+        reconciled = await this.api.reconcileDeliveryUncertain(job.job_id, request);
+      } catch (error) {
+        if (isDefinitiveRequestRejection(error)) this.removeDeliveryReconciliationRecovery(job.job_id);
+        throw error;
+      }
+      if (reconciled.case_id !== current.case_id || reconciled.job_id !== job.job_id) {
+        throw new Error("Backend 대조 결과가 현재 Case·Job과 일치하지 않아 적용하지 않았습니다.");
+      }
+      this.state.job = reconciled;
+      if (reconciled.status === "succeeded" || reconciled.status === "failed") {
+        await this.handleTerminalJob(reconciled);
+      } else if (reconciled.status === "delivery_uncertain") {
+        await this.handleTerminalJob(reconciled);
+      } else {
+        throw new Error("Backend 대조 결과가 허용되지 않은 Job 상태입니다.");
+      }
+    });
+  }
+
+  private isTrackedJobForCurrentCase(job: JobRecord): boolean {
+    const current = this.state.selectedCase;
+    if (!current || job.case_id !== current.case_id || this.state.job?.job_id !== job.job_id) return false;
+    return this.recoveryByCase.get(current.case_id)?.job_id === job.job_id;
+  }
+
+  private async handleRevisionProposal(
+    event: Event,
+    run: ReviewRun,
+    decision: RevisionAction["decision"],
+  ): Promise<void> {
+    event.preventDefault();
+    if (!this.canWrite() || this.state.busy || this.jobIsActive()) return;
+    const form = event.currentTarget as HTMLFormElement;
+    const current = this.state.selectedCase;
+    if (!current || !run.result_digest || !run.agent_input_manifest_sha256) {
+      this.state.error = "결과·입력 digest가 없어 안전한 Revision Proposal을 만들 수 없습니다.";
+      this.render();
+      return;
+    }
+    const data = new FormData(form);
+    const reason = value(data, "reason");
+    let action: RevisionAction;
+    if (decision === "correct_field") {
+      const field = run.fields.find((item) => item.field_id === value(data, "field"));
+      if (!field || field.document_id === "unbound-document") return;
+      const correction: CorrectionOperation = {
+        document_id: field.document_id,
+        field_path: field.field_path,
+        new_value: value(data, "new_value"),
+        reason,
+        confidence: 1,
+      };
+      action = { decision, reason, correction };
+    } else if (decision === "confirm_field") {
+      const confirmedReferenceId = value(data, "confirmed_reference_id");
+      const permitted = run.fields.some((field) => field.source_ids.includes(confirmedReferenceId))
+        && run.sources.some((source) => source.source_id === confirmedReferenceId);
+      if (!permitted) {
+        this.state.error = "현재 Run의 FactLedger 필드 근거만 확인할 수 있습니다.";
+        this.render();
+        return;
+      }
+      action = { decision, reason, confirmed_reference_id: confirmedReferenceId };
+    } else if (decision === "add_supporting_document") {
+      const supportingDocumentId = value(data, "supporting_document_id");
+      if (!this.state.supportingDocuments.some((document) => document.document_id === supportingDocumentId)) {
+        this.state.error = "현재 Case에 등록된 요건서류만 추가할 수 있습니다.";
+        this.render();
+        return;
+      }
+      action = { decision, reason, supporting_document_id: supportingDocumentId };
+    } else {
+      action = { decision, reason };
+    }
+    const payload: RevisionProposalCreate = {
+      parent_result_digest: run.result_digest,
+      parent_input_manifest_sha256: run.agent_input_manifest_sha256,
+      case_revision: current.revision,
+      actions: [action],
+    };
+    const proposalIdempotencyKey = `proposal_${await sha256CanonicalJson({ review_run_id: run.review_run_id, payload })}`;
+    await this.act(async () => {
+      await this.api.createRevisionProposal(run.review_run_id, payload, proposalIdempotencyKey);
+      this.state.proposals = await this.api.listRevisionProposals(run.review_run_id);
+      form.reset();
+      this.state.notice = `${humanize(decision)} 제안을 저장했습니다. 독립 Approver 승인 전에는 원문이나 결과에 적용되지 않습니다.`;
+    });
+  }
+
+  private async handleRevisionProposalDecision(
+    event: Event,
+    proposal: CorrectionProposal,
+    run: ReviewRun,
+    decision: "approve" | "reject",
+  ): Promise<void> {
+    event.preventDefault();
+    if (!this.canDecideProposal(proposal) || this.state.busy || this.jobIsActive() || proposal.status !== "pending") return;
+    const current = this.state.selectedCase;
+    if (!current || !run.result_digest) return;
+    const data = new FormData(event.currentTarget as HTMLFormElement);
+    const intent = `proposal:${proposal.proposal_id}:${decision}`;
+    const idempotencyKey = this.idempotencyKey(intent);
+    const payload = {
+      decision,
+      reason: value(data, "reason"),
+      parent_result_digest: run.result_digest,
+      case_revision: current.revision,
+    };
+    const session = this.requireSession();
+    const recovery: ProposalDecisionRecoveryRecord = {
+      org_id: session.org_id,
+      subject: session.subject,
+      case_id: current.case_id,
+      case_revision: current.revision,
+      review_run_id: run.review_run_id,
+      proposal_id: proposal.proposal_id,
+      decision,
+      parent_result_digest: run.result_digest,
+      request_sha256: await sha256CanonicalJson(payload),
+      idempotency_key: idempotencyKey,
+    };
+    const previous = this.proposalDecisionRecovery.get(proposal.proposal_id);
+    if (previous !== undefined && (
+      previous.request_sha256 !== recovery.request_sha256
+      || previous.idempotency_key !== recovery.idempotency_key
+    )) {
+      this.state.error = "응답이 확정되지 않은 이전 제안 결정과 다른 내용을 같은 요청으로 재전송할 수 없습니다.";
+      this.render();
+      return;
+    }
+    this.saveProposalDecisionRecovery(recovery);
+    await this.act(async () => {
+      const response = await this.api.decideRevisionProposal(
+        proposal.proposal_id,
+        payload,
+        idempotencyKey,
+      );
+      this.assertProposalDecisionResponse(response, proposal, run, current);
+      this.state.proposals = await this.api.listRevisionProposals(run.review_run_id);
+      const authoritative = this.state.proposals.find((item) => item.proposal_id === proposal.proposal_id);
+      if (!authoritative || authoritative.status === "pending") {
+        throw new Error("Backend 제안 상태가 결정 응답을 확정하지 않아 복구 기록을 유지합니다.");
+      }
+      if (response.job) {
+        this.saveRecovery({ org_id: session.org_id, subject: session.subject, case_id: current.case_id, case_revision: current.revision, job_id: response.job.job_id, idempotency_key: idempotencyKey });
+        this.jobIntentById.set(response.job.job_id, intent);
+        this.state.job = response.job;
+        this.pollAttempts = 0;
+        this.transientPollFailures = 0;
+        if (response.job.status === "queued" || response.job.status === "running") await this.startJobTracking(response.job.job_id);
+        else await this.handleTerminalJob(response.job);
+      } else {
+        this.idempotencyKeys.delete(intent);
+      }
+      this.removeProposalDecisionRecovery(proposal.proposal_id);
+      this.state.notice = decision === "approve" ? "승인된 제안으로 child 재심사 Job을 생성했습니다." : "Revision 제안을 거절했습니다. 원본 Run은 변경되지 않았습니다.";
+    });
+  }
+
+  private async handleChat(event: Event, run: ReviewRun): Promise<void> {
+    event.preventDefault();
+    if (!this.canChat() || this.state.busy) return;
+    const form = event.currentTarget as HTMLFormElement;
+    if (!run.result_digest) {
+      this.state.error = "결과 digest가 없어 현재 snapshot에 질문을 결박할 수 없습니다.";
+      this.render();
+      return;
+    }
+    const data = new FormData(form);
+    const question = value(data, "question");
+    const chatIdempotencyKey = `chat_${await sha256CanonicalJson({
+      org_id: this.requireSession().org_id,
+      subject: this.requireSession().subject,
+      review_run_id: run.review_run_id,
+      bound_result_digest: run.result_digest,
+      question,
+    })}`;
+    await this.act(async () => {
+      const answer = await this.api.answerCaseQuestion(run.review_run_id, {
+        question,
+        bound_result_digest: run.result_digest!,
+      }, chatIdempotencyKey);
+      this.assertChatBinding(answer, run);
+      const known = new Set([
+        ...run.fields.map((item) => item.field_id),
+        ...run.issues.map((item) => item.issue_id),
+        ...run.evidence.map((item) => item.evidence_id),
+        ...run.findings.map((item) => item.finding_id),
+        ...run.sources.map((item) => item.source_id),
+      ]);
+      for (const claim of answer.claims) {
+        if (answer.status === "answered" && claim.citation_ids.length === 0) throw new Error("Backend가 근거 없는 Chat 답변을 반환했습니다.");
+        if (claim.citation_ids.some((citationId) => !known.has(citationId))) throw new Error("Backend Chat 답변이 현재 Run 밖의 근거를 인용했습니다.");
+      }
+      this.state.chat.push(answer);
+      form.reset();
+    });
+  }
+
+  private async refreshCases(): Promise<void> {
+    this.state.cases = (await this.api.listCases()).items;
+    const session = this.requireSession();
+    if (this.state.cases.some((item) => item.org_id !== session.org_id)) {
+      throw new Error("Backend Case 목록에 다른 조직의 항목이 포함되었습니다.");
+    }
+    for (const item of this.state.cases) this.restoreScenarioMetadata(item);
+  }
+
+  private async openCase(caseId: string): Promise<void> {
+    if (this.state.busy) return;
+    await this.act(async () => this.selectCase(caseId));
+  }
+
+  private async openRun(runId: string): Promise<void> {
+    if (this.state.busy) return;
+    await this.act(async () => this.selectRun(runId));
+  }
+
+  private restoreScenarioMetadata(item: CaseSummary): void {
+    const reference = item.external_reference ?? "";
+    const scenario = UAT_SCENARIOS.find((candidate) => reference.startsWith(`UAT-${candidate.scenario_id}-`));
+    if (!scenario) return;
+    this.scenarioByCase.set(item.case_id, scenario);
+  }
+
+  private async selectCase(caseId: string, preferredRunId?: string): Promise<void> {
+    if (this.pollTimer !== undefined) window.clearTimeout(this.pollTimer);
+    this.streamAbort?.abort();
+    this.state.job = undefined;
+    this.state.liveStages = [];
+    this.pollAttempts = 0;
+    this.transientPollFailures = 0;
+    const [caseDetail, documentRecords, supportingDocuments, runs, audit] = await Promise.all([
+      this.api.getCase(caseId),
+      this.api.listDocuments(caseId),
+      this.api.listSupportingDocuments(caseId),
+      this.api.listReviewRuns(caseId),
+      this.api.getAuditEvents(caseId),
+    ]);
+    const documents = await Promise.all(documentRecords.map(async (record) => {
+      if (record.document_type === "SUPPORTING" || record.content_text !== undefined) return record;
+      const hydrated = await this.api.getDocumentContent(caseId, record.document_id);
+      if (
+        hydrated.document_type !== record.document_type
+        || hydrated.filename !== record.filename
+        || hydrated.media_type !== record.media_type
+        || hydrated.content_sha256 !== record.content_sha256
+        || hydrated.byte_size !== record.byte_size
+        || hydrated.character_count !== record.character_count
+        || hydrated.created_by !== record.created_by
+        || hydrated.created_at !== record.created_at
+      ) {
+        throw new Error("Backend 문서 원문이 목록의 권위 metadata와 일치하지 않습니다.");
+      }
+      return hydrated;
+    }));
+    this.assertCaseAggregate(caseId, caseDetail, documents, supportingDocuments, runs, audit);
+    this.state.selectedCase = { ...caseDetail, documents, runs };
+    this.state.documents = documents;
+    this.state.supportingDocuments = supportingDocuments;
+    this.state.runs = runs;
+    this.state.audit = audit;
+    this.state.selectedDocumentId = documents[0]?.document_id;
+    const runId = preferredRunId ?? runs[0]?.review_run_id;
+    if (runId) await this.selectRun(runId);
+    else {
+      this.state.selectedRun = undefined;
+      this.state.chat = [];
+    }
+    await this.restoreCaseRecovery(caseDetail);
+  }
+
+  private async restoreCaseRecovery(caseDetail: CaseDetail): Promise<void> {
+    const recovery = this.recoveryByCase.get(caseDetail.case_id);
+    if (!recovery) return;
+    if (recovery.job_id === null) {
+      this.state.notice = recovery.case_revision === caseDetail.revision
+        ? "이전 심사 요청의 응답이 확정되지 않아 동일 Idempotency-Key로만 재조회할 수 있습니다."
+        : "이전 심사 요청 후 Case revision이 변경되어 운영 대조 전까지 새 심사를 차단합니다.";
+      return;
+    }
+    try {
+      const job = await this.api.getJob(recovery.job_id);
+      if (job.case_id !== caseDetail.case_id) throw new Error("저장된 Job과 Case의 소유 관계가 일치하지 않습니다.");
+      this.state.job = job;
+      if (job.status === "queued" || job.status === "running") await this.startJobTracking(job.job_id);
+      else await this.handleTerminalJob(job);
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 401) throw error;
+      if (isTransientJobPollingError(error)) {
+        this.transientPollFailures = 1;
+        this.state.notice = "저장된 Job에 일시적으로 연결하지 못했습니다. 새 심사는 차단하고 같은 Job을 자동 재조회합니다.";
+        this.schedulePoll(recovery.job_id, 1_000);
+        return;
+      }
+      this.state.error = "저장된 Job 상태를 확인하지 못했습니다. 운영 대조 전까지 이 Case의 새 심사는 차단됩니다.";
+    }
+  }
+
+  private async selectRun(runId: string): Promise<void> {
+    const [run, chat, decisions, proposals] = await Promise.all([
+      this.api.getReviewRun(runId),
+      this.listReadableChat(runId),
+      this.api.listDecisions(runId),
+      this.api.listRevisionProposals(runId),
+    ]);
+    const current = this.state.selectedCase;
+    const session = this.requireSession();
+    if (!current || run.review_run_id !== runId || run.case_id !== current.case_id || run.org_id !== session.org_id) {
+      throw new Error("Backend Review Run이 현재 Case·조직·URL 식별자와 일치하지 않습니다.");
+    }
+    if (run.review_disposition === "auto_review_complete") {
+      const manifest = run.input_document_manifest ?? [];
+      const currentPrimary = this.state.documents.filter((document) => document.document_type !== "SUPPORTING");
+      const currentById = new Map(currentPrimary.map((document) => [document.document_id, document]));
+      if (
+        run.case_revision !== current.revision
+        || manifest.length !== currentPrimary.length
+        || manifest.some((entry) => {
+          const document = currentById.get(entry.document_id);
+          return document === undefined
+            || document.document_type !== entry.document_type
+            || document.content_sha256 !== entry.content_sha256;
+        })
+      ) {
+        throw new Error("자동 사전심사 결과의 입력 manifest가 현재 Case revision·문서 hash와 일치하지 않아 검증된 결과로 표시하지 않습니다.");
+      }
+    }
+    if (decisions.some((item) => item.review_run_id !== runId || item.case_id !== current.case_id || item.org_id !== session.org_id)) {
+      throw new Error("Backend 판정 목록에 다른 Case·Run·조직 계보가 포함되었습니다.");
+    }
+    if (proposals.some((item) => item.review_run_id !== runId || item.case_id !== current.case_id || item.org_id !== session.org_id)) {
+      throw new Error("Backend Revision Proposal 목록에 다른 Case·Run·조직 계보가 포함되었습니다.");
+    }
+    const knownCitationIds = new Set([
+      ...run.fields.map((item) => item.field_id),
+      ...run.issues.map((item) => item.issue_id),
+      ...run.evidence.map((item) => item.evidence_id),
+      ...run.findings.map((item) => item.finding_id),
+      ...run.sources.map((item) => item.source_id),
+    ]);
+    for (const message of chat) {
+      if (
+        message.review_run_id !== runId
+        || message.case_id !== current.case_id
+        || message.org_id !== session.org_id
+        || message.bound_result_digest !== run.result_digest
+      ) {
+        throw new Error("Backend 저장 Chat이 현재 Case·Run·결과 digest와 일치하지 않습니다.");
+      }
+      const status = "message_id" in message ? message.answer_status : message.status;
+      const citations = "message_id" in message
+        ? message.citations.map((citation) => citation.citation_id ?? citation.evidence_id ?? citation.source_id ?? citation.reference_id)
+        : message.claims.flatMap((claim) => claim.citation_ids);
+      if (status === "answered" && citations.length === 0) throw new Error("Backend가 근거 없는 저장 Chat 답변을 반환했습니다.");
+      if (citations.some((citationId) => !citationId || !knownCitationIds.has(citationId))) {
+        throw new Error("Backend 저장 Chat이 현재 Run 밖의 근거를 인용했습니다.");
+      }
+    }
+    this.state.selectedRun = run;
+    this.state.chat = chat;
+    this.state.decisions = decisions;
+    this.state.proposals = proposals;
+    await this.recoverProposalDecisionState(run, proposals);
+    this.render();
+  }
+
+  private assertCaseAggregate(
+    requestedCaseId: string,
+    caseDetail: CaseDetail,
+    documents: CaseDocument[],
+    supportingDocuments: SupportingDocumentRecord[],
+    runs: RunSummary[],
+    audit: AuditEvent[],
+  ): void {
+    const session = this.requireSession();
+    if (caseDetail.case_id !== requestedCaseId || caseDetail.org_id !== session.org_id) {
+      throw new Error("Backend Case 응답이 URL 식별자와 현재 조직에 일치하지 않습니다.");
+    }
+    if (documents.some((item) => item.case_id !== requestedCaseId)) {
+      throw new Error("Backend 문서 목록에 다른 Case의 문서가 포함되었습니다.");
+    }
+    if (supportingDocuments.some((item) => item.case_id !== requestedCaseId || item.org_id !== session.org_id)) {
+      throw new Error("Backend 요건서류 목록에 다른 Case·조직 계보가 포함되었습니다.");
+    }
+    if (runs.some((item) => item.case_id !== requestedCaseId || item.org_id !== session.org_id)) {
+      throw new Error("Backend Run 목록에 다른 Case·조직 계보가 포함되었습니다.");
+    }
+    if (audit.some((item) => item.case_id !== requestedCaseId || item.org_id !== session.org_id)) {
+      throw new Error("Backend 감사 목록에 다른 Case·조직 계보가 포함되었습니다.");
+    }
+  }
+
+  private async recoverProposalDecisionState(run: ReviewRun, proposals: CorrectionProposal[]): Promise<void> {
+    const current = this.state.selectedCase;
+    const session = this.requireSession();
+    if (!current) return;
+    for (const recovery of [...this.proposalDecisionRecovery.values()].filter((item) => item.review_run_id === run.review_run_id)) {
+      if (
+        recovery.org_id !== session.org_id
+        || recovery.subject !== session.subject
+        || recovery.case_id !== current.case_id
+        || recovery.parent_result_digest !== run.result_digest
+      ) {
+        throw new Error("저장된 제안 결정 복구 기록이 현재 Case·Run·조직·결과와 일치하지 않습니다.");
+      }
+      const proposal = proposals.find((item) => item.proposal_id === recovery.proposal_id);
+      if (!proposal) throw new Error("저장된 제안 결정을 Backend 권위 목록에서 찾을 수 없습니다.");
+      if (proposal.status === "pending") {
+        this.state.notice = "이전 Proposal 결정 응답이 확정되지 않았습니다. 같은 내용과 Idempotency-Key로만 재전송하거나 Backend 상태를 확인하세요.";
+        continue;
+      }
+      if ((proposal.status === "approved") !== (recovery.decision === "approve")) {
+        throw new Error("Backend에 확정된 Proposal 결정이 저장된 의도와 다릅니다.");
+      }
+      if (proposal.status === "approved") {
+        if (!proposal.child_job_id) throw new Error("승인된 Proposal에 child Job 계보가 없습니다.");
+        const job = await this.api.getJob(proposal.child_job_id);
+        if (job.case_id !== current.case_id || job.kind !== "revision") {
+          throw new Error("Proposal child Job이 현재 Case의 Revision 계보와 일치하지 않습니다.");
+        }
+        this.saveRecovery({
+          org_id: session.org_id,
+          subject: session.subject,
+          case_id: current.case_id,
+          case_revision: recovery.case_revision,
+          job_id: job.job_id,
+          idempotency_key: recovery.idempotency_key,
+        });
+        this.jobIntentById.set(job.job_id, `proposal:${proposal.proposal_id}:approve`);
+        this.state.job = job;
+        if (job.status === "queued" || job.status === "running") await this.startJobTracking(job.job_id);
+        else await this.handleTerminalJob(job);
+      }
+      this.removeProposalDecisionRecovery(proposal.proposal_id);
+    }
+  }
+
+  private async listReadableChat(runId: string): Promise<Array<ChatRecord | GroundedAnswer>> {
+    try {
+      return await this.api.listChat(runId);
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 403 && this.hasRole("auditor") && !this.canChat()) {
+        this.state.notice = "Chat 이력 권한이 아직 적용되지 않아 나머지 Run 상세만 표시합니다.";
+        return [];
+      }
+      throw error;
+    }
+  }
+
+  private async act(action: () => Promise<void>): Promise<void> {
+    this.state.busy = true;
+    this.state.error = undefined;
+    this.state.notice = undefined;
+    this.render();
+    try {
+      await action();
+    } catch (error) {
+      this.showError(error, false);
+    } finally {
+      this.state.busy = false;
+      this.render();
+    }
+  }
+
+  private showError(error: unknown, render = true): void {
+    if (error instanceof ApiError) {
+      const suffix = error.requestId ? ` (요청 ${error.requestId})` : "";
+      this.state.error = `${error.message}${suffix}`;
+      if (error.status === 401) {
+        this.state.error += " 세션이 만료되었습니다. 다시 로그인하세요.";
+        this.state.session = undefined;
+        this.streamAbort?.abort();
+        void this.auth.clear();
+      }
+      if (error.status === 409) this.state.error += " Case가 변경되었습니다. 최신 Run을 불러온 뒤 다시 시도하세요.";
+      if (error.status === 422) this.state.error += " Evidence·판정 상태는 사용자가 수정할 수 없습니다.";
+    } else {
+      this.state.error = error instanceof Error ? error.message : "알 수 없는 오류가 발생했습니다.";
+    }
+    if (render) this.render();
+  }
+}
+
+function value(data: FormData, key: string): string {
+  const item = data.get(key);
+  return typeof item === "string" ? item.trim() : "";
+}
+
+function rawValue(data: FormData, key: string): string {
+  const item = data.get(key);
+  return typeof item === "string" ? item : "";
+}
+
+function listValue(data: FormData, key: string): string[] {
+  return [...new Set(value(data, key).split(",").map((item) => item.trim()).filter(Boolean))].sort();
+}
+
+function disabledUnless(enabled: boolean): Record<string, string> {
+  return enabled ? {} : { disabled: "", "aria-disabled": "true" };
+}
+
+function formatIdentityValue(value: unknown): string {
+  if (value === null || value === undefined || value === "") return "—";
+  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") return String(value);
+  return JSON.stringify(value);
+}
+
+function readReviewRecoveries(session: Session): ReviewRecoveryRecord[] {
+  const key = recoveryStorageKey(REVIEW_RECOVERY_STORAGE_PREFIX, session);
+  const serialized = window.sessionStorage.getItem(key);
+  if (serialized === null) return [];
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(serialized) as unknown;
+  } catch {
+    throw new Error("저장된 Job 복구 상태가 손상되어 안전하게 심사를 시작할 수 없습니다.");
+  }
+  if (!Array.isArray(parsed) || parsed.length > MAX_RECOVERY_RECORDS) {
+    throw new Error("저장된 Job 복구 상태 형식이 올바르지 않습니다.");
+  }
+  return parsed.map((value, index) => {
+    if (typeof value !== "object" || value === null || Array.isArray(value)) {
+      throw new Error(`Job 복구 상태 ${index + 1}번이 올바르지 않습니다.`);
+    }
+    const raw = value as Record<string, unknown>;
+    const keys = Object.keys(raw).sort();
+    if (keys.join(",") !== "case_id,case_revision,idempotency_key,job_id,org_id,subject") {
+      throw new Error(`Job 복구 상태 ${index + 1}번에 허용되지 않은 필드가 있습니다.`);
+    }
+    if (
+      raw.org_id !== session.org_id
+      || raw.subject !== session.subject
+      || typeof raw.case_id !== "string"
+      || !/^[A-Za-z0-9._:-]{1,160}$/.test(raw.case_id)
+      || !Number.isInteger(raw.case_revision)
+      || Number(raw.case_revision) < 0
+      || (raw.job_id !== null && (typeof raw.job_id !== "string" || !/^[A-Za-z0-9._:-]{1,160}$/.test(raw.job_id)))
+      || typeof raw.idempotency_key !== "string"
+      || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(raw.idempotency_key)
+    ) {
+      throw new Error(`Job 복구 상태 ${index + 1}번의 값이 올바르지 않습니다.`);
+    }
+    return {
+      org_id: session.org_id,
+      subject: session.subject,
+      case_id: raw.case_id,
+      case_revision: Number(raw.case_revision),
+      job_id: raw.job_id,
+      idempotency_key: raw.idempotency_key,
+    };
+  });
+}
+
+function writeReviewRecoveries(session: Session, records: ReviewRecoveryRecord[]): void {
+  if (records.length > MAX_RECOVERY_RECORDS || records.some((item) => item.org_id !== session.org_id || item.subject !== session.subject)) {
+    throw new Error("Job 복구 기록의 세션 범위 또는 개수 한도가 올바르지 않습니다.");
+  }
+  const sorted = [...records].sort((left, right) => left.case_id.localeCompare(right.case_id));
+  const key = recoveryStorageKey(REVIEW_RECOVERY_STORAGE_PREFIX, session);
+  if (sorted.length === 0) window.sessionStorage.removeItem(key);
+  else window.sessionStorage.setItem(key, JSON.stringify(sorted));
+}
+
+function readProposalDecisionRecoveries(session: Session): ProposalDecisionRecoveryRecord[] {
+  const key = recoveryStorageKey(PROPOSAL_DECISION_RECOVERY_STORAGE_PREFIX, session);
+  const serialized = window.sessionStorage.getItem(key);
+  if (serialized === null) return [];
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(serialized) as unknown;
+  } catch {
+    throw new Error("저장된 Proposal 결정 복구 상태가 손상되었습니다.");
+  }
+  if (!Array.isArray(parsed) || parsed.length > MAX_RECOVERY_RECORDS) {
+    throw new Error("저장된 Proposal 결정 복구 상태 형식이 올바르지 않습니다.");
+  }
+  return parsed.map((value, index) => {
+    if (typeof value !== "object" || value === null || Array.isArray(value)) {
+      throw new Error(`Proposal 결정 복구 상태 ${index + 1}번이 올바르지 않습니다.`);
+    }
+    const raw = value as Record<string, unknown>;
+    if (Object.keys(raw).sort().join(",") !== "case_id,case_revision,decision,idempotency_key,org_id,parent_result_digest,proposal_id,request_sha256,review_run_id,subject") {
+      throw new Error(`Proposal 결정 복구 상태 ${index + 1}번에 허용되지 않은 필드가 있습니다.`);
+    }
+    if (
+      raw.org_id !== session.org_id
+      || raw.subject !== session.subject
+      || !validResourceId(raw.case_id)
+      || !validResourceId(raw.review_run_id)
+      || !validResourceId(raw.proposal_id)
+      || !Number.isInteger(raw.case_revision)
+      || Number(raw.case_revision) < 0
+      || (raw.decision !== "approve" && raw.decision !== "reject")
+      || typeof raw.parent_result_digest !== "string"
+      || !/^[a-f0-9]{64}$/.test(raw.parent_result_digest)
+      || typeof raw.request_sha256 !== "string"
+      || !/^[a-f0-9]{64}$/.test(raw.request_sha256)
+      || typeof raw.idempotency_key !== "string"
+      || !/^[0-9a-f-]{36}$/i.test(raw.idempotency_key)
+    ) {
+      throw new Error(`Proposal 결정 복구 상태 ${index + 1}번의 값이 올바르지 않습니다.`);
+    }
+    return {
+      org_id: session.org_id,
+      subject: session.subject,
+      case_id: String(raw.case_id),
+      case_revision: Number(raw.case_revision),
+      review_run_id: String(raw.review_run_id),
+      proposal_id: String(raw.proposal_id),
+      decision: raw.decision,
+      parent_result_digest: raw.parent_result_digest,
+      request_sha256: raw.request_sha256,
+      idempotency_key: raw.idempotency_key,
+    };
+  });
+}
+
+function writeProposalDecisionRecoveries(session: Session, records: ProposalDecisionRecoveryRecord[]): void {
+  if (records.length > MAX_RECOVERY_RECORDS || records.some((item) => item.org_id !== session.org_id || item.subject !== session.subject)) {
+    throw new Error("Proposal 결정 복구 기록의 세션 범위 또는 개수 한도가 올바르지 않습니다.");
+  }
+  const key = recoveryStorageKey(PROPOSAL_DECISION_RECOVERY_STORAGE_PREFIX, session);
+  const sorted = [...records].sort((left, right) => left.proposal_id.localeCompare(right.proposal_id));
+  if (sorted.length === 0) window.sessionStorage.removeItem(key);
+  else window.sessionStorage.setItem(key, JSON.stringify(sorted));
+}
+
+function readDeliveryReconciliationRecoveries(session: Session): DeliveryReconciliationRecoveryRecord[] {
+  const key = recoveryStorageKey(DELIVERY_RECONCILIATION_RECOVERY_STORAGE_PREFIX, session);
+  const serialized = window.sessionStorage.getItem(key);
+  if (serialized === null) return [];
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(serialized) as unknown;
+  } catch {
+    throw new Error("저장된 전달 대조 복구 상태가 손상되었습니다.");
+  }
+  if (!Array.isArray(parsed) || parsed.length > MAX_RECOVERY_RECORDS) {
+    throw new Error("저장된 전달 대조 복구 상태 형식이 올바르지 않습니다.");
+  }
+  return parsed.map((value, index) => {
+    if (typeof value !== "object" || value === null || Array.isArray(value)) {
+      throw new Error(`전달 대조 복구 상태 ${index + 1}번이 올바르지 않습니다.`);
+    }
+    const raw = value as Record<string, unknown>;
+    if (Object.keys(raw).sort().join(",") !== "attempted_at,case_id,job_id,org_id,request_sha256,subject") {
+      throw new Error(`전달 대조 복구 상태 ${index + 1}번에 허용되지 않은 필드가 있습니다.`);
+    }
+    if (
+      raw.org_id !== session.org_id
+      || raw.subject !== session.subject
+      || !validResourceId(raw.case_id)
+      || !validResourceId(raw.job_id)
+      || typeof raw.request_sha256 !== "string"
+      || !/^[a-f0-9]{64}$/.test(raw.request_sha256)
+      || typeof raw.attempted_at !== "string"
+      || !isStrictIsoTimestamp(raw.attempted_at)
+    ) {
+      throw new Error(`전달 대조 복구 상태 ${index + 1}번의 값이 올바르지 않습니다.`);
+    }
+    return {
+      org_id: session.org_id,
+      subject: session.subject,
+      case_id: String(raw.case_id),
+      job_id: String(raw.job_id),
+      request_sha256: raw.request_sha256,
+      attempted_at: raw.attempted_at,
+    };
+  });
+}
+
+function writeDeliveryReconciliationRecoveries(session: Session, records: DeliveryReconciliationRecoveryRecord[]): void {
+  if (
+    records.length > MAX_RECOVERY_RECORDS
+    || records.some((item) => item.org_id !== session.org_id || item.subject !== session.subject)
+    || new Set(records.map((item) => item.job_id)).size !== records.length
+  ) {
+    throw new Error("전달 대조 복구 기록의 세션 범위 또는 개수 한도가 올바르지 않습니다.");
+  }
+  const key = recoveryStorageKey(DELIVERY_RECONCILIATION_RECOVERY_STORAGE_PREFIX, session);
+  const sorted = [...records].sort((left, right) => left.job_id.localeCompare(right.job_id));
+  if (sorted.length === 0) window.sessionStorage.removeItem(key);
+  else window.sessionStorage.setItem(key, JSON.stringify(sorted));
+}
+
+function recoveryStorageKey(prefix: string, session: Session): string {
+  if (!validNamespaceValue(session.org_id) || !validNamespaceValue(session.subject)) {
+    throw new Error("세션 조직/사용자 식별자를 안전한 복구 namespace로 사용할 수 없습니다.");
+  }
+  return `${prefix}:${encodeURIComponent(session.org_id)}:${encodeURIComponent(session.subject)}`;
+}
+
+function validNamespaceValue(value: string): boolean {
+  return value.length >= 1 && value.length <= 256 && !/[\u0000-\u001f\u007f]/.test(value);
+}
+
+function validResourceId(value: unknown): boolean {
+  return typeof value === "string" && /^[A-Za-z0-9._:-]{1,160}$/.test(value);
+}
+
+function isStrictIsoTimestamp(value: string): boolean {
+  return /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(value) && !Number.isNaN(Date.parse(value));
+}
+
+async function sha256CanonicalJson(value: unknown): Promise<string> {
+  const bytes = new TextEncoder().encode(canonicalJson(value));
+  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  return [...new Uint8Array(digest)].map((item) => item.toString(16).padStart(2, "0")).join("");
+}
+
+function canonicalJson(value: unknown): string {
+  if (value === null || typeof value === "string" || typeof value === "boolean") return JSON.stringify(value);
+  if (typeof value === "number" && Number.isFinite(value)) return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  if (typeof value === "object") {
+    const object = value as Record<string, unknown>;
+    return `{${Object.keys(object).sort().map((key) => `${JSON.stringify(key)}:${canonicalJson(object[key])}`).join(",")}}`;
+  }
+  throw new Error("멱등성 식별자에 직렬화할 수 없는 값이 포함되었습니다.");
+}
+
+function isDefinitiveRequestRejection(error: unknown): boolean {
+  return error instanceof ApiError
+    && error.status >= 400
+    && error.status < 500
+    && ![408, 409, 425, 429].includes(error.status);
+}
+
+function isTransientJobPollingError(error: unknown): boolean {
+  return error instanceof TypeError
+    || (error instanceof ApiError && [408, 425, 429, 500, 502, 503, 504].includes(error.status));
+}
+
+export function createWorkbench(root: HTMLElement, api: ApiClient, auth: OidcSession): WorkbenchApp {
+  return new WorkbenchApp(root, api, auth);
+}

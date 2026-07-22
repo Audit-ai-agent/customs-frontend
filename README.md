@@ -1,24 +1,66 @@
-# Customs Frontend
+# Customs Frontend Workbench
 
-통관 문서 심사 서비스의 사용자 작업대를 위한 독립 저장소다. 현재 단계에서는 저장소 경계와 협업·CI 기준만 구축했으며 제품 Frontend 프레임워크와 화면은 아직 구현하지 않았다.
+내부 통관 심사 담당자가 text-only AI 사전심사를 실행하고 근거·수정·승인 이력을 검토하는 최소 제품 작업대다. Vite와 strict TypeScript로 빌드되며 Browser의 제품 데이터 호출은 Backend `/api/v1`로 제한한다.
 
-## 책임
+## 제공 기능
 
-- 문서 업로드와 Case 목록·상세
-- PDF/이미지 원문과 bbox 하이라이트
-- 추출값 수정과 재검증 요청
-- HITL 검토·승인
-- XAI 리포트와 Case-bound Chat
-- Backend OpenAPI에서 생성한 TypeScript client
-- 접근성·단위·브라우저 E2E 테스트
+- OIDC Authorization Code + PKCE 로그인 진입점
+- Case 목록·생성, text-only 문서 등록
+- 인증된 SSE 실행 단계와 Job polling fallback
+- 원문·추출/불일치·법령 Evidence 3-pane 심사
+- `execution / assessment / disposition / assurance` 분리 표시
+- source ledger에 결박된 XAI 보고서와 Case Chat
+- 원문 hash에 결박된 요건서류, 작성자·검증자 분리(maker-checker), signed/unsigned verification receipt 구분
+- parent digest·input manifest·Case revision에 결박된 typed Revision Proposal→독립 Approver 승인→child rerun
+- `confirm_field`, `correct_field`, `add_supporting_document`, `approve_review`, `reject_review` 전체 revision action
+- required action, Run lineage, immutable audit 보기
+- Agent 전달 불확실 상태의 Case별 재실행 차단, 새로고침 복구, 동일 Idempotency-Key 수동 대조
+- Review와 Proposal decision intent의 조직·사용자별 bounded 복구, 응답 유실 시 Backend Proposal·child Job 원장 재조회
+- Approver/Admin이 Agent 미처리를 입증하는 운영 증거 SHA-256을 제출하는 명시적 `delivery_reconciled` 종결
+- 정상/결함/보안 합성 UAT 시나리오 선택기
 
-## 금지된 연결
+V3 text 입력은 일반 문서 최대 6개, 문서당 200,000자/800,000 UTF-8 bytes, 일반 문서 합계 500,000자로 제한한다. 문서 목록은 원문을 합쳐 반환하지 않고 hash·문자·byte metadata만 주며, 일반 문서만 개별 content endpoint로 제한된 범위에서 불러와 목록 metadata와 SHA-256을 재검증한다. `SUPPORTING` 원문은 별도 metadata/hash로 결박하며 Agent 분류 대상에 포함하지 않는다. 요건서류 metadata는 Case당 최대 100개다.
 
-Frontend는 Backend API만 호출한다. AI Agent, Evidence Service, PostgreSQL, Qdrant, Neo4j를 직접 호출하거나 credential을 보유하지 않는다.
+현재 Release는 PDF·이미지·OCR 파일 입력을 제공하지 않는다. 화면은 `Production candidate`이며 도메인 2인 승인과 Agent/Data Release Gate 전에는 Production 완성으로 표현하지 않는다.
 
-현재 프로젝트의 `agent_webui.html`은 Mock Agent와 Live RAG/DB 연결을 보여주는 localhost 개발 도구이며 제품 Frontend가 아니다. 이 저장소로 복사하지 않는다.
+## 로컬 실행
 
-## 현재 상태
+요구사항: exact Node.js `22.23.1`, exact npm `10.9.8`, `/api/v1`을 제공하는 Backend. `.npmrc`의 `engine-strict=true`와 `npm run doctor`가 다른 runtime을 fail-closed한다.
 
-`repository-foundation-only`: 프레임워크 선택 전이며 제품 코드는 없다. 프레임워크 선택은 Backend public API와 UX 요구사항이 확정된 후 별도 ADR에서 결정한다.
+```powershell
+npm ci
+$env:BACKEND_ORIGIN='http://127.0.0.1:8080'
+$env:OIDC_BACKEND_ORIGIN='http://127.0.0.1:8082'
+npm run dev
+```
 
+Backend의 `/api/v1/auth/config`가 OIDC issuer/client/endpoint를 제공해야 한다. Browser에 표시되는 OIDC URL은 Workbench의 same-origin `/oidc/`를 사용하고, Vite/Nginx가 내부 Keycloak로 proxy한다. SPA callback `/auth/callback`과 proxy 경로를 분리해 callback이 Keycloak으로 오라우팅되지 않게 한다. access token은 메모리에만 저장된다. OAuth state·PKCE verifier와 미확정 Review/Proposal decision intent의 식별자·버전·digest·request hash·idempotency key만 `sessionStorage`에 둔다. 모든 복구 레코드는 `org_id`와 OIDC `subject`로 namespace를 분리하고 종류별 최대 50개로 제한한다. Proposal 승인/거절 사유, 문서 원문·결과·token은 저장하지 않으며, 새로고침 뒤 로그인하면 Backend의 Job/Proposal 원장을 재조회해 응답 유실을 대조한다.
+
+합성 UAT Case 생성은 요건서류 원문과 metadata까지만 만든다. 같은 사용자가 즉시 스스로 검증하지 않으며, 다른 `approver` 계정이 assertion을 추가해야 한다. Backend signer가 release-bound trust root와 일치할 때만 signed receipt가 생성되며, unsigned 진단 기록은 자동완료 근거가 아니다. 이 두 사람 절차를 거치더라도 미승인 Agent/Data Release에서는 `auto_review_complete`가 활성화되지 않는다.
+
+`delivery_uncertain`은 실패로 추정하거나 단순 timeout만으로 해제하지 않는다. 저장된 Job을 먼저 재조회하고, 여전히 불확실하면 Backend가 승인한 `approver` 또는 `admin`만 Agent 미수신을 입증하는 독립 운영 증거의 SHA-256·사유·명시적 확인을 제출할 수 있다. 대조 POST 직전에 민감 내용을 제외한 request hash를 `sessionStorage`에 저장한다. 응답을 잃으면 다음 POST 전에 반드시 권위 Job GET을 수행하고, 여전히 `delivery_uncertain`이며 요청 hash가 같을 때만 재전송한다. Backend가 `failed + delivery_reconciled`를 반환해야 브라우저가 복구 레코드를 지우고 새 심사를 허용한다.
+
+## 검증
+
+```powershell
+npm run verify
+
+# Backend exact SHA에서 export한 OpenAPI로 snapshot·TypeScript type·lock 재생성
+$env:BACKEND_OPENAPI_FILE='C:\path\to\openapi.json'
+npm run contract:generate
+
+# 저장소에 고정된 exact OpenAPI/type hash 검증
+$env:BACKEND_OPENAPI_FILE='C:\path\to\openapi.json'
+npm run contract:check
+```
+
+`verify`는 exact runtime doctor, 경계/XSS 정적 검사, 계약 검사, strict typecheck, DOM·접근성 전체 테스트와 coverage gate, production build를 실행한다. 경계 검사는 외부 GitHub Action의 40자리 commit pin과 Docker/Gitleaks/Trivy의 SHA-256 digest pin도 강제한다. GitHub Actions는 여기에 high 이상 dependency audit, dependency·container CycloneDX SBOM과 30일 보존, 고정 digest Gitleaks의 현재 소스·전체 Git history fail-closed 검사, 미수정 취약점을 예외 처리하지 않는 Trivy High/Critical runtime 스캔, read-only/non-root container smoke를 추가한다. Windows linked worktree에서는 `scripts/run-gitleaks.ps1`을 사용한다.
+
+## Production container
+
+```powershell
+docker build -t customs-frontend:task-0020 .
+docker run --rm -p 8081:8080 customs-frontend:task-0020
+```
+
+Nginx는 `/api/v1/`을 `backend:8080`, `/oidc/`를 `keycloak:8080`에 proxy한다. Browser는 자체 origin 밖으로 제품 API·token 요청을 보내지 않는다. 자세한 절차는 `docs/runbook/internal-docker.md`를 따른다.
