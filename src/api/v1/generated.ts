@@ -395,6 +395,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/uat/metadata": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Uat Metadata */
+        get: operations["uat_metadata_api_v1_uat_metadata_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -1190,6 +1207,60 @@ export interface components {
              * @constant
              */
             media_type: "text/plain";
+        };
+        /** UatMetadataResponse */
+        UatMetadataResponse: {
+            /**
+             * Assurance Ceiling
+             * @default diagnostic
+             * @constant
+             */
+            assurance_ceiling: "diagnostic";
+            /**
+             * Auto Completion Enabled
+             * @default false
+             * @constant
+             */
+            auto_completion_enabled: false;
+            /**
+             * Claude Mode
+             * @default actual
+             * @constant
+             */
+            claude_mode: "actual";
+            /**
+             * Evidence Profile
+             * @enum {string}
+             */
+            evidence_profile: "synthetic-v3" | "preserved-3law" | "unknown";
+            /**
+             * Evidence Scope Label
+             * @enum {string}
+             */
+            evidence_scope_label: "TEST_ONLY_V3" | "REAL_3_OF_58" | "UNKNOWN";
+            /**
+             * Mode
+             * @default local_uat
+             * @constant
+             */
+            mode: "local_uat";
+            /**
+             * Planner Mode
+             * @enum {string}
+             */
+            planner_mode: "shadow" | "diagnostic_active";
+            /**
+             * Production Release
+             * @default false
+             * @constant
+             */
+            production_release: false;
+            /**
+             * Text Only
+             * @default true
+             * @constant
+             */
+            text_only: true;
         };
         /** VerificationAssertionCreate */
         VerificationAssertionCreate: {
@@ -4133,6 +4204,107 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SessionResponse"];
+                };
+            };
+            /** @description Problem Details V1 fail-closed response. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetailsV1"];
+                };
+            };
+            /** @description Problem Details V1 fail-closed response. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetailsV1"];
+                };
+            };
+            /** @description Problem Details V1 fail-closed response. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetailsV1"];
+                };
+            };
+            /** @description Problem Details V1 fail-closed response. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetailsV1"];
+                };
+            };
+            /** @description Problem Details V1 fail-closed response. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetailsV1"];
+                };
+            };
+            /** @description Problem Details V1 fail-closed response. */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetailsV1"];
+                };
+            };
+            /** @description Problem Details V1 fail-closed response. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetailsV1"];
+                };
+            };
+            /** @description Problem Details V1 fail-closed response. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetailsV1"];
+                };
+            };
+            /** @description Problem Details V1 fail-closed response. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetailsV1"];
+                };
+            };
+        };
+    };
+    uat_metadata_api_v1_uat_metadata_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UatMetadataResponse"];
                 };
             };
             /** @description Problem Details V1 fail-closed response. */

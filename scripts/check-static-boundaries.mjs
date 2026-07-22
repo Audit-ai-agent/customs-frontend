@@ -83,6 +83,24 @@ for (const match of dockerfile.matchAll(/^FROM\s+([^\s]+)(?:\s+AS\s+\S+)?$/gmi))
   }
 }
 if (!dockerfile.includes("HEALTHCHECK")) violations.push("Runtime image requires a healthcheck");
+const uatDockerfile = await readFile(new URL("../deploy/uat/Dockerfile", import.meta.url), "utf8");
+const uatEntrypoint = await readFile(new URL("../deploy/uat/entrypoint.sh", import.meta.url), "utf8");
+const uatReadme = await readFile(new URL("../deploy/uat/README.md", import.meta.url), "utf8");
+if (!uatDockerfile.includes("node:22.23.1-alpine3.23@sha256:8516dce0483394d5708d4b2ee6cacb79fb1d617ea4e2787c2120bcca92ce372e")) {
+  violations.push("LOCAL UAT image must pin the exact Node 22.23.1 multi-platform digest");
+}
+for (const marker of ['com.customs.runtime="local-user-uat-diagnostic"', 'com.customs.production="false"', 'com.customs.auto-completion="off"']) {
+  if (!uatDockerfile.includes(marker)) violations.push(`LOCAL UAT image boundary marker is missing: ${marker}`);
+}
+if (!uatDockerfile.includes("EXPOSE 5173") || !uatDockerfile.includes("HEALTHCHECK")) {
+  violations.push("LOCAL UAT image must expose and healthcheck only its internal Vite port");
+}
+for (const marker of ["BACKEND_ORIGIN", "OIDC_BACKEND_ORIGIN", "--host 0.0.0.0", "--port 5173", "--strictPort", 'process.version !== "v22.23.1"', 'npm --version)" != "10.9.8"']) {
+  if (!uatEntrypoint.includes(marker)) violations.push(`LOCAL UAT fail-closed entrypoint marker is missing: ${marker}`);
+}
+if (uatDockerfile.includes("18088") || !uatReadme.includes('127.0.0.1:18088:5173')) {
+  violations.push("Host port 18088 must be loopback-published by Compose documentation, never bound by the image");
+}
 const nginx = await readFile(new URL("../deploy/default.conf.template", import.meta.url), "utf8");
 if (!nginx.includes('Cache-Control "no-store, max-age=0"')) violations.push("SPA shell requires no-store cache policy");
 if (!nginx.includes('Content-Security-Policy "default-src')) violations.push("Runtime Nginx must emit a CSP response header");

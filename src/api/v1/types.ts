@@ -27,6 +27,14 @@ export interface Session {
   roles: Array<"reviewer" | "approver" | "auditor" | "admin">;
 }
 
+/**
+ * Safe, display-only LOCAL UAT runtime identity owned by the Backend.
+ *
+ * This intentionally contains no URL, credential, model token accounting, or
+ * provider-internal identifiers.  It is not a release admission contract.
+ */
+export type LocalUatMetadata = BackendSchemas["UatMetadataResponse"];
+
 export interface CaseSummary {
   case_id: string;
   org_id: string;
@@ -253,6 +261,16 @@ export interface ReviewRun extends RunSummary {
   fields: ExtractedField[];
   issues: ReviewIssue[];
   evidence: EvidenceItem[];
+  /**
+   * Backend-attested summary derived from the public Agent result. This is
+   * diagnostic data only; the browser never calls the Evidence service.
+   */
+  evidence_retrieval?: {
+    status: "ok" | "partial" | "failed";
+    coverage: "complete" | "partial" | "unknown";
+    requirements_found: boolean | null;
+    result_count: number;
+  };
   findings: ComplianceFinding[];
   sources: SourceReference[];
   narrative_report?: NarrativeReport;

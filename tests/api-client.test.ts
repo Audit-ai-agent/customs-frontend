@@ -90,6 +90,33 @@ const reviewRunPayload = (overrides: Record<string, unknown> = {}) => {
 };
 
 describe("Backend API v1 client", () => {
+  it("reads only safe LOCAL UAT runtime identity through the Backend boundary", async () => {
+    const metadata = {
+      mode: "local_uat",
+      assurance_ceiling: "diagnostic",
+      text_only: true,
+      auto_completion_enabled: false,
+      claude_mode: "actual",
+      evidence_profile: "preserved-3law",
+      evidence_scope_label: "REAL_3_OF_58",
+      planner_mode: "shadow",
+      production_release: false,
+    };
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(json(metadata));
+
+    await expect(new ApiClient(fetcher, () => "memory-only-token").getUatMetadata()).resolves.toEqual(metadata);
+    expect(fetcher).toHaveBeenCalledWith("/api/v1/uat/metadata", expect.objectContaining({
+      method: "GET",
+      credentials: "same-origin",
+      redirect: "error",
+    }));
+    const headers = new Headers(fetcher.mock.calls[0]?.[1]?.headers);
+    expect(headers.get("Authorization")).toBe("Bearer memory-only-token");
+
+    const attacked = vi.fn<typeof fetch>().mockResolvedValue(json({ ...metadata, provider_token: "must-not-cross" }));
+    await expect(new ApiClient(attacked).getUatMetadata()).rejects.toThrow("unsupported or sensitive field");
+  });
+
   it("accepts the complete Backend 63079af public ReviewRun serialization without provider-private aliases", () => {
     const publicPayload = structuredClone(backendPublicReviewRun) as Record<string, unknown>;
     const detail = publicPayload.result_detail as Record<string, unknown>;
@@ -485,6 +512,41 @@ describe("Backend API v1 client", () => {
     expect(decoded.narrative_report?.summary[0]?.citation_ids).toEqual(["ev-1"]);
     expect(decoded.action_trace[0]?.status).toBe("succeeded");
     expect(decoded.evidence[0]?.evidence_id).toBe("ev-1");
+  });
+
+  it("derives a fail-closed public Evidence retrieval attestation for UAT assertions", () => {
+    const decoded = decodeReviewRun(reviewRunPayload({
+      result_detail: {
+        retrieval_status: "ok",
+        retrieval_coverage: "complete",
+        retrieval_results: [{ item_id: "item-1", requirements_found: false }],
+      },
+    }));
+    expect(decoded.evidence_retrieval).toEqual({
+      status: "ok",
+      coverage: "complete",
+      requirements_found: false,
+      result_count: 1,
+    });
+
+    expect(() => decodeReviewRun(reviewRunPayload({
+      result_detail: {
+        retrieval_status: "failed",
+        retrieval_coverage: "unknown",
+        retrieval_results: [{ item_id: "item-1", requirements_found: "false" }],
+      },
+    }))).toThrow("requirements_found: boolean expected");
+
+    const forgedTopLevel = decodeReviewRun(reviewRunPayload({
+      evidence_retrieval: {
+        status: "ok",
+        coverage: "complete",
+        requirements_found: false,
+        result_count: 1,
+      },
+      result_detail: {},
+    }));
+    expect(forgedTopLevel.evidence_retrieval).toBeUndefined();
   });
 
   it("maps actual V3 document fields and line items to FactLedger-bound correction paths", () => {

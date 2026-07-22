@@ -11,6 +11,7 @@ import type {
   CorrectionProposalDecisionResponse,
   HumanDecisionRecord,
   JobRecord,
+  LocalUatMetadata,
   NarrativeClaim,
   NarrativeReport,
   Paged,
@@ -144,6 +145,44 @@ export function decodeSession(value: unknown): Session {
     if (!allowedRoles.has(decoded)) throw new ContractError(`session.roles[${index}]: unsupported role`);
   });
   return raw as unknown as Session;
+}
+
+export function decodeLocalUatMetadata(value: unknown): LocalUatMetadata {
+  const raw = object(value, "localUatMetadata");
+  const allowedKeys = new Set([
+    "mode",
+    "assurance_ceiling",
+    "text_only",
+    "auto_completion_enabled",
+    "claude_mode",
+    "evidence_profile",
+    "evidence_scope_label",
+    "planner_mode",
+    "production_release",
+  ]);
+  if (Object.keys(raw).some((key) => !allowedKeys.has(key))) {
+    throw new ContractError("localUatMetadata: unsupported or sensitive field");
+  }
+  const exact = <T extends string | boolean>(key: keyof LocalUatMetadata, expected: T): T => {
+    if (raw[key] !== expected) throw new ContractError(`localUatMetadata.${key}: ${String(expected)} required`);
+    return expected;
+  };
+  const oneOf = <T extends string>(key: keyof LocalUatMetadata, allowed: readonly T[]): T => {
+    const decoded = boundedString(raw[key], `localUatMetadata.${key}`, 80);
+    if (!allowed.includes(decoded as T)) throw new ContractError(`localUatMetadata.${key}: unsupported value`);
+    return decoded as T;
+  };
+  return {
+    mode: exact("mode", "local_uat"),
+    assurance_ceiling: exact("assurance_ceiling", "diagnostic"),
+    text_only: exact("text_only", true),
+    auto_completion_enabled: exact("auto_completion_enabled", false),
+    claude_mode: exact("claude_mode", "actual"),
+    evidence_profile: oneOf("evidence_profile", ["synthetic-v3", "preserved-3law", "unknown"] as const),
+    evidence_scope_label: oneOf("evidence_scope_label", ["TEST_ONLY_V3", "REAL_3_OF_58", "UNKNOWN"] as const),
+    planner_mode: oneOf("planner_mode", ["shadow", "diagnostic_active"] as const),
+    production_release: exact("production_release", false),
+  };
 }
 
 export function decodeAuthConfig(value: unknown): AuthConfig {
@@ -292,6 +331,37 @@ export function decodeReviewRun(value: unknown): ReviewRun {
   const issues = rawIssues.map((value) => normalizeIssue(value, ledgerEntries));
   const rawEvidence = pickArray("evidence", "evidence", "evidence_items", "rag_evidence");
   const evidence = rawEvidence.map(normalizeEvidence);
+  const retrievalStatus = result.retrieval_status;
+  const retrievalCoverage = result.retrieval_coverage;
+  const rawRetrievalResults = result.retrieval_results;
+  const hasRetrievalAttestation = retrievalStatus !== undefined
+    || retrievalCoverage !== undefined
+    || rawRetrievalResults !== undefined;
+  let evidenceRetrieval: ReviewRun["evidence_retrieval"];
+  if (hasRetrievalAttestation) {
+    if (retrievalStatus !== "ok" && retrievalStatus !== "partial" && retrievalStatus !== "failed") {
+      throw new ContractError("reviewRun.result_detail.retrieval_status: unsupported status");
+    }
+    if (retrievalCoverage !== "complete" && retrievalCoverage !== "partial" && retrievalCoverage !== "unknown") {
+      throw new ContractError("reviewRun.result_detail.retrieval_coverage: unsupported coverage");
+    }
+    if (!Array.isArray(rawRetrievalResults)) {
+      throw new ContractError("reviewRun.result_detail.retrieval_results: array expected");
+    }
+    const requirements = rawRetrievalResults.map((value, index) => {
+      const item = object(value, `reviewRun.result_detail.retrieval_results[${index}]`);
+      if (typeof item.requirements_found !== "boolean") {
+        throw new ContractError(`reviewRun.result_detail.retrieval_results[${index}].requirements_found: boolean expected`);
+      }
+      return item.requirements_found;
+    });
+    evidenceRetrieval = {
+      status: retrievalStatus,
+      coverage: retrievalCoverage,
+      requirements_found: requirements.length === 0 ? null : requirements.some(Boolean),
+      result_count: requirements.length,
+    };
+  }
   const rawFindings = pickArray("findings", "findings", "compliance_findings", "regulatory_findings");
   const findings = rawFindings.map((value) => normalizeFinding(value, ledgerEntries));
   const sources = deduplicateSources([
@@ -385,12 +455,17 @@ export function decodeReviewRun(value: unknown): ReviewRun {
       throw new ContractError("reviewRun: incoherent automatic completion state");
     }
   }
+  const safeRaw = { ...raw };
+  // A top-level alias is not part of the Backend contract and must never
+  // override the validated public Agent result_detail attestation.
+  delete safeRaw.evidence_retrieval;
   return {
-    ...(raw as unknown as ReviewRun),
+    ...(safeRaw as unknown as ReviewRun),
     stages: pickArray("stages", "stages") as ReviewRun["stages"],
     fields,
     issues,
     evidence,
+    ...(evidenceRetrieval === undefined ? {} : { evidence_retrieval: evidenceRetrieval }),
     findings,
     sources,
     action_trace: actionTrace,

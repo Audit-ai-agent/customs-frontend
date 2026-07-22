@@ -6,6 +6,7 @@ import {
   decodeCorrectionProposalDecision,
   decodeHumanDecision,
   decodeJob,
+  decodeLocalUatMetadata,
   decodeAuditEvent,
   decodeAuthConfig,
   decodeCaseDetail,
@@ -39,6 +40,7 @@ import type {
   GroundedAnswer,
   HumanDecisionRecord,
   JobRecord,
+  LocalUatMetadata,
   Paged,
   ReviewRun,
   ReviewStageEvent,
@@ -88,6 +90,10 @@ export class ApiClient {
     const session = await this.request("/session", { method: "GET" }, decodeSession);
     this.session = session;
     return session;
+  }
+
+  getUatMetadata(): Promise<LocalUatMetadata> {
+    return this.request("/uat/metadata", { method: "GET" }, decodeLocalUatMetadata);
   }
 
   listCases(): Promise<Paged<CaseSummary>> {

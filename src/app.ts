@@ -14,6 +14,7 @@ import type {
   GroundedAnswer,
   HumanDecisionRecord,
   JobRecord,
+  LocalUatMetadata,
   NarrativeClaim,
   RequiredAction,
   ReviewIssue,
@@ -43,6 +44,30 @@ const MAX_POLL_DELAY_MS = 15_000;
 // SHA-256 of canonical JSON {"submitted_document_codes":[],"trade_type":"import"}.
 // The first text-only release exposes no user-controlled Review body fields.
 const DEFAULT_REVIEW_REQUEST_SHA256 = "cc9c10fbfc72c972dd063b063b033f031c43ad17f44556a835ff497b3ea52108";
+
+interface UatRuntimeDisplayMetadata {
+  mode: string;
+  assurance_ceiling: "diagnostic" | "production_candidate" | "production";
+  text_only: boolean;
+  auto_completion_enabled: boolean;
+  claude_mode: string;
+  evidence_profile: string;
+  evidence_scope_label: string;
+  planner_mode: string;
+  production_release: boolean;
+}
+
+const SAFE_UNKNOWN_UAT_METADATA: UatRuntimeDisplayMetadata = Object.freeze({
+  mode: "metadata_unavailable",
+  assurance_ceiling: "diagnostic",
+  text_only: true,
+  auto_completion_enabled: false,
+  claude_mode: "unknown",
+  evidence_profile: "unknown",
+  evidence_scope_label: "UNKNOWN",
+  planner_mode: "unknown",
+  production_release: false,
+});
 
 interface ReviewRecoveryRecord {
   org_id: string;
@@ -111,7 +136,7 @@ type WorkbenchApi = Pick<
   | "answerCaseQuestion"
   | "listChat"
   | "getAuditEvents"
->;
+> & { getUatMetadata?: () => Promise<LocalUatMetadata> };
 
 interface WorkbenchState {
   session: Session | undefined;
@@ -121,6 +146,7 @@ interface WorkbenchState {
   supportingDocuments: SupportingDocumentRecord[];
   runs: RunSummary[];
   selectedRun: ReviewRun | undefined;
+  parentRun: ReviewRun | undefined;
   job: JobRecord | undefined;
   chat: Array<ChatRecord | GroundedAnswer>;
   audit: AuditEvent[];
@@ -131,6 +157,8 @@ interface WorkbenchState {
   busy: boolean;
   error: string | undefined;
   notice: string | undefined;
+  uatMetadata: UatRuntimeDisplayMetadata;
+  uatMetadataVerified: boolean;
 }
 
 export class WorkbenchApp {
@@ -147,11 +175,14 @@ export class WorkbenchApp {
     session: undefined,
     selectedCase: undefined,
     selectedRun: undefined,
+    parentRun: undefined,
     job: undefined,
     selectedDocumentId: undefined,
     error: undefined,
     notice: undefined,
     busy: false,
+    uatMetadata: SAFE_UNKNOWN_UAT_METADATA,
+    uatMetadataVerified: false,
   };
   private pollTimer: number | undefined;
   private pollAttempts = 0;
@@ -178,6 +209,7 @@ export class WorkbenchApp {
     }
     await this.act(async () => {
       this.state.session = await this.api.getSession();
+      await this.loadUatMetadata();
       for (const record of readReviewRecoveries(this.state.session)) {
         this.recoveryByCase.set(record.case_id, record);
         this.idempotencyKeys.set(`review:${record.case_id}`, record.idempotency_key);
@@ -191,6 +223,20 @@ export class WorkbenchApp {
       }
       await this.refreshCases();
     });
+  }
+
+  private async loadUatMetadata(): Promise<void> {
+    this.state.uatMetadata = SAFE_UNKNOWN_UAT_METADATA;
+    this.state.uatMetadataVerified = false;
+    if (!this.api.getUatMetadata) return;
+    try {
+      this.state.uatMetadata = await this.api.getUatMetadata();
+      this.state.uatMetadataVerified = true;
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 401) throw error;
+      // The workbench stays fail-safe and visibly UNKNOWN. A missing optional
+      // diagnostic endpoint must never be inferred as a released runtime.
+    }
   }
 
   destroy(): void {
@@ -212,8 +258,9 @@ export class WorkbenchApp {
             className: "lead",
             text: "문서 정합성, 적용 근거, 사람 검토 이력을 한 Case 안에서 확인합니다.",
           }),
+          this.renderUatRuntimeBanner(),
           this.state.error ? el("div", { className: "notice notice--danger", text: this.state.error, attrs: { role: "alert", tabindex: "-1" } }) : null,
-          el("div", { className: "notice notice--warning", text: "Text-only Production candidate · PDF/이미지/OCR 입력은 아직 지원하지 않습니다." }),
+          el("div", { className: "notice notice--warning", text: "LOCAL UAT는 text-only입니다. PDF/이미지/OCR 입력은 명시적으로 거절됩니다." }),
           button("조직 계정으로 로그인", () => void this.auth.login(), "primary"),
           el("p", {
             className: "fine-print",
@@ -232,6 +279,7 @@ export class WorkbenchApp {
     }
     this.root.replaceChildren(
       this.renderHeader(),
+      this.renderUatRuntimeBanner(),
       el(
         "div",
         { className: "app-shell" },
@@ -260,7 +308,7 @@ export class WorkbenchApp {
         el("p", { className: "eyebrow", text: "CUSTOMS REVIEW" }),
         el("strong", { className: "brand", text: "AI 사전심사 작업대" }),
       ),
-      el("div", { className: "release-flag", text: "TEXT-ONLY · PRODUCTION CANDIDATE" }),
+      el("div", { className: "release-flag", text: "LOCAL UAT · NOT PRODUCTION" }),
       el(
         "div",
         { className: "user-block" },
@@ -268,6 +316,49 @@ export class WorkbenchApp {
         el("small", { text: session ? `${session.org_id} · ${session.roles.join(", ")}` : "" }),
         button("로그아웃", () => void this.auth.logout(), "quiet"),
       ),
+    );
+  }
+
+  private renderUatRuntimeBanner(): HTMLElement {
+    const metadata = this.state.uatMetadata;
+    const modeLabel = this.state.uatMetadataVerified ? humanize(metadata.mode) : "UNKNOWN — METADATA UNAVAILABLE";
+    const evidenceScopeLabel = metadata.evidence_scope_label === "REAL_3_OF_58"
+      ? "REAL 3/58"
+      : metadata.evidence_scope_label === "TEST_ONLY_V3"
+        ? "TEST-ONLY V3"
+        : metadata.evidence_scope_label;
+    const scopeIsPartial = evidenceScopeLabel.includes("3/58");
+    const unsafe = metadata.auto_completion_enabled || metadata.production_release || !metadata.text_only;
+    return el(
+      "section",
+      {
+        className: `uat-runtime-banner${unsafe ? " uat-runtime-banner--unsafe" : ""}`,
+        attrs: {
+          role: unsafe ? "alert" : "status",
+          "aria-label": "LOCAL UAT 실행 경계",
+          "data-uat-metadata": this.state.uatMetadataVerified ? "verified" : "unknown",
+        },
+      },
+      el("strong", { text: "LOCAL UAT / DIAGNOSTIC · TEXT ONLY · NOT PRODUCTION" }),
+      el(
+        "div",
+        { className: "uat-runtime-facts" },
+        el("span", { text: `Runtime: ${modeLabel}` }),
+        el("span", { text: `Claude: ${humanize(metadata.claude_mode)}` }),
+        el("span", {
+          className: scopeIsPartial ? "uat-runtime-fact--warning" : "",
+          text: `Evidence: ${humanize(metadata.evidence_profile)} · ${evidenceScopeLabel}`,
+        }),
+        el("span", { text: `Planner: ${humanize(metadata.planner_mode)}` }),
+        el("span", {
+          className: metadata.auto_completion_enabled ? "uat-runtime-fact--danger" : "",
+          text: `Auto-completion: ${metadata.auto_completion_enabled ? "UNSAFE ON" : "OFF"}`,
+        }),
+        el("span", { text: `Assurance ceiling: ${humanize(metadata.assurance_ceiling)}` }),
+      ),
+      unsafe
+        ? el("p", { text: "UAT 안전 불변식이 깨졌습니다. 이 화면의 결과를 신뢰하거나 Production 근거로 사용하지 마세요." })
+        : el("p", { text: "시나리오 기능 PASS는 업무 disposition 또는 Production 승인과 별개입니다." }),
     );
   }
 
@@ -697,6 +788,7 @@ export class WorkbenchApp {
       this.renderUatAssertion(run),
       this.renderRequiredActions(run.required_actions),
       this.renderActionTimeline(run),
+      this.renderParentChildDiff(run),
       this.renderThreePane(run),
       this.renderNarrative(run),
       this.renderHitl(run),
@@ -750,9 +842,13 @@ export class WorkbenchApp {
     const caseId = this.state.selectedCase?.case_id;
     const scenario = caseId ? this.scenarioByCase.get(caseId) : undefined;
     if (!scenario) return null;
-    const checks = [
+    const functionalChecks = [
+      ...this.uatRuntimeFunctionalChecks(),
       { label: "실행", expected: "succeeded", actual: run.execution_status },
       { label: "평가", expected: scenario.expected.assessment, actual: run.assessment ?? "not_available" },
+      ...this.semanticUatChecks(scenario, run),
+    ];
+    const dispositionChecks = [
       { label: "업무 처리", expected: scenario.expected.disposition, actual: run.review_disposition ?? "not_available" },
       ...(scenario.expected.unmet_reason_codes ?? []).map((code) => ({
         label: `차단 ${code}`,
@@ -760,16 +856,216 @@ export class WorkbenchApp {
         actual: run.completion_eligibility?.unmet_reason_codes.includes(code) ? "present" : "missing",
       })),
     ];
-    const pass = checks.every((check) => check.expected === check.actual);
+    const functionalPass = functionalChecks.every((check) => check.expected === check.actual);
+    const dispositionMatches = dispositionChecks.every((check) => check.expected === check.actual);
     return el(
       "section",
-      { className: `uat-assertion uat-assertion--${pass ? "pass" : "fail"}`, attrs: { role: "status" } },
-      el("div", {}, el("span", { className: "eyebrow", text: "MACHINE ASSERTION" }), el("strong", { text: `${scenario.title}: ${pass ? "PASS" : "FAIL"}` })),
-      el("div", { className: "uat-checks" }, ...checks.map((check) => el("span", { text: `${check.label} ${humanize(check.actual)} / expected ${humanize(check.expected)}` }))),
+      { className: `uat-assertion uat-assertion--${functionalPass ? "pass" : "fail"}`, attrs: { role: "status" } },
+      el(
+        "div",
+        {},
+        el("span", { className: "eyebrow", text: "SCENARIO FUNCTION ASSERTION" }),
+        el("strong", { text: `시나리오 기능: ${functionalPass ? "PASS" : "FAIL"}` }),
+        el("small", { text: scenario.title }),
+      ),
+      el("div", { className: "uat-checks", attrs: { "aria-label": "기능 검증" } }, ...functionalChecks.map((check) => this.renderUatCheck(check))),
+      el(
+        "div",
+        { className: `uat-disposition uat-disposition--${dispositionMatches ? "match" : "mismatch"}` },
+        el("strong", { text: `업무 처리 결과: ${humanize(run.review_disposition ?? "not_available")}` }),
+        el("span", { text: dispositionMatches ? "예상 안전 disposition과 일치" : "예상 안전 disposition과 불일치" }),
+        el("div", { className: "uat-checks", attrs: { "aria-label": "업무 처리·안전 경계" } }, ...dispositionChecks.map((check) => this.renderUatCheck(check))),
+        el("small", { text: "업무 disposition은 기능 PASS/FAIL 계산에 포함되지 않습니다." }),
+      ),
       el("p", { text: scenario.description }),
       scenario.production_blocked_reason ? el("p", { className: "notice notice--warning", text: `PRODUCTION BLOCKED: ${scenario.production_blocked_reason}` }) : null,
       el("small", { text: "합성 시나리오 assertion은 기능 회귀용이며 실제 법적·Production 품질 승인이 아닙니다." }),
     );
+  }
+
+  private uatRuntimeFunctionalChecks(): Array<{ label: string; expected: string; actual: string }> {
+    const metadata = this.state.uatMetadata;
+    const verified = this.state.uatMetadataVerified;
+    const evidenceProfileKnown = metadata.evidence_profile === "synthetic-v3"
+      || metadata.evidence_profile === "preserved-3law";
+    const evidenceScopeKnown = metadata.evidence_scope_label === "TEST_ONLY_V3"
+      || metadata.evidence_scope_label === "REAL_3_OF_58";
+    const plannerConfigured = metadata.planner_mode === "shadow"
+      || metadata.planner_mode === "diagnostic_active";
+    return [
+      { label: "UAT runtime identity", expected: "verified", actual: verified ? "verified" : "unverified" },
+      { label: "Runtime mode", expected: "local_uat", actual: verified ? metadata.mode : "unknown" },
+      { label: "Claude mode", expected: "actual", actual: verified ? metadata.claude_mode : "unknown" },
+      {
+        label: "Evidence runtime",
+        expected: "configured",
+        actual: verified && evidenceProfileKnown && evidenceScopeKnown ? "configured" : "unknown",
+      },
+      {
+        label: "Planner runtime",
+        expected: "configured",
+        actual: verified && plannerConfigured ? "configured" : "unknown",
+      },
+      { label: "Input release", expected: "text_only", actual: verified && metadata.text_only ? "text_only" : "unknown" },
+      {
+        label: "Auto-completion safety",
+        expected: "off",
+        actual: verified ? (metadata.auto_completion_enabled ? "on" : "off") : "unknown",
+      },
+      {
+        label: "Production release",
+        expected: "false",
+        actual: verified ? String(metadata.production_release) : "unknown",
+      },
+    ];
+  }
+
+  private renderUatCheck(check: { label: string; expected: string; actual: string }): HTMLElement {
+    const pass = check.expected === check.actual;
+    return el("span", {
+      className: pass ? "uat-check--pass" : "uat-check--fail",
+      text: `${check.label}: ${humanize(check.actual)} / expected ${humanize(check.expected)}`,
+      attrs: { "data-check-result": pass ? "pass" : "fail" },
+    });
+  }
+
+  private semanticUatChecks(
+    scenario: LocalUatScenario,
+    run: ReviewRun,
+  ): Array<{ label: string; expected: string; actual: string }> {
+    const semantic = scenario.expected.semantic;
+    if (!semantic) return [];
+    const checks: Array<{ label: string; expected: string; actual: string }> = [];
+    const includeCodes = (
+      label: string,
+      expectedCodes: string[] | undefined,
+      actualCodes: string[],
+    ): void => {
+      for (const code of expectedCodes ?? []) {
+        checks.push({
+          label: `${label} ${code}`,
+          expected: "present",
+          actual: actualCodes.includes(code) ? "present" : "missing",
+        });
+      }
+    };
+    if (semantic.issues?.count !== undefined) {
+      checks.push({ label: "Issue 수", expected: String(semantic.issues.count), actual: String(run.issues.length) });
+    }
+    includeCodes("Issue", semantic.issues?.include_codes, run.issues.map((item) => item.code));
+    if (semantic.findings?.count !== undefined) {
+      checks.push({ label: "Finding 수", expected: String(semantic.findings.count), actual: String(run.findings.length) });
+    }
+    includeCodes("Finding", semantic.findings?.include_codes, run.findings.map((item) => item.code));
+    if (semantic.evidence) {
+      if (semantic.evidence.count !== undefined) {
+        checks.push({ label: "Evidence 수", expected: String(semantic.evidence.count), actual: String(run.evidence.length) });
+      }
+      if (semantic.evidence.minimum_count !== undefined) {
+        checks.push({
+          label: "Evidence 최소 수",
+          expected: "satisfied",
+          actual: run.evidence.length >= semantic.evidence.minimum_count ? "satisfied" : `only_${run.evidence.length}`,
+        });
+      }
+      if (semantic.evidence.retrieval_status !== undefined) {
+        checks.push({
+          label: "Evidence 조회 상태",
+          expected: semantic.evidence.retrieval_status,
+          actual: run.evidence_retrieval?.status ?? "not_available",
+        });
+      }
+      if (semantic.evidence.coverage !== undefined) {
+        checks.push({
+          label: "Evidence coverage",
+          expected: semantic.evidence.coverage,
+          actual: run.evidence_retrieval?.coverage ?? "not_available",
+        });
+      }
+      if (semantic.evidence.requirements_found !== undefined) {
+        checks.push({
+          label: "요건 검색 결과",
+          expected: String(semantic.evidence.requirements_found),
+          actual: run.evidence_retrieval?.requirements_found === null
+            || run.evidence_retrieval?.requirements_found === undefined
+            ? "not_available"
+            : String(run.evidence_retrieval.requirements_found),
+        });
+      }
+      if (semantic.evidence.minimum_result_count !== undefined) {
+        const resultCount = run.evidence_retrieval?.result_count ?? 0;
+        checks.push({
+          label: "Evidence 대상 품목",
+          expected: "satisfied",
+          actual: resultCount >= semantic.evidence.minimum_result_count ? "satisfied" : `only_${resultCount}`,
+        });
+      }
+    }
+    includeCodes(
+      "필수 조치",
+      semantic.required_actions?.include_codes,
+      run.required_actions.map((item) => item.code),
+    );
+    for (const tool of semantic.action_trace?.include_succeeded_tools ?? []) {
+      const matchingActions = run.action_trace.filter((item) => item.tool === tool);
+      checks.push({
+        label: `Agent Tool ${tool}`,
+        expected: "succeeded",
+        actual: matchingActions.some((item) => item.status === "succeeded")
+          ? "succeeded"
+          : matchingActions.length > 0
+            ? "not_succeeded"
+            : "missing",
+      });
+    }
+    includeCodes(
+      "기능 차단 사유",
+      semantic.completion?.include_unmet_reason_codes,
+      run.completion_eligibility?.unmet_reason_codes ?? [],
+    );
+    if (semantic.narrative?.material_citations_complete) {
+      checks.push({
+        label: "XAI material citation",
+        expected: "complete",
+        actual: this.materialNarrativeCitationsComplete(run) ? "complete" : "incomplete",
+      });
+    }
+    if (semantic.runtime) {
+      checks.push({
+        label: "Evidence profile",
+        expected: semantic.runtime.evidence_profile,
+        actual: this.state.uatMetadataVerified ? this.state.uatMetadata.evidence_profile : "unknown",
+      });
+      checks.push({
+        label: "Evidence scope",
+        expected: semantic.runtime.evidence_scope_label,
+        actual: this.state.uatMetadataVerified ? this.state.uatMetadata.evidence_scope_label : "UNKNOWN",
+      });
+    }
+    return checks;
+  }
+
+  private materialNarrativeCitationsComplete(run: ReviewRun): boolean {
+    const report = run.narrative_report;
+    if (!report) return false;
+    const knownIds = new Set([
+      ...run.fields.map((item) => item.field_id),
+      ...run.issues.map((item) => item.issue_id),
+      ...run.evidence.map((item) => item.evidence_id),
+      ...run.findings.map((item) => item.finding_id),
+      ...run.sources.map((item) => item.source_id),
+    ]);
+    const claims = [
+      ...report.summary,
+      ...report.document_consistency,
+      ...report.regulatory_review,
+      ...report.impact,
+      ...report.recommended_actions,
+    ].filter((claim) => claim.material !== false);
+    return claims.length > 0 && claims.every((claim) => (
+      claim.citation_ids.length > 0
+      && claim.citation_ids.every((citationId) => knownIds.has(citationId))
+    ));
   }
 
   private renderActionTimeline(run: ReviewRun): HTMLElement {
@@ -803,6 +1099,49 @@ export class WorkbenchApp {
               ),
             ),
           ),
+    );
+  }
+
+  private renderParentChildDiff(run: ReviewRun): HTMLElement | null {
+    if (!run.parent_run_id) return null;
+    const parent = this.state.parentRun;
+    if (!parent || parent.review_run_id !== run.parent_run_id) {
+      return el(
+        "section",
+        { className: "card", attrs: { "aria-labelledby": "run-diff-title" } },
+        el("h2", { text: "부모–자식 Run 변경 비교", attrs: { id: "run-diff-title" } }),
+        empty("Backend에서 결박된 부모 Run을 불러오지 못해 변경 비교를 표시할 수 없습니다."),
+      );
+    }
+    const rows = parentChildDiffRows(parent, run);
+    return el(
+      "section",
+      { className: "card run-diff", attrs: { "aria-labelledby": "run-diff-title" } },
+      el("div", { className: "section-title-row" },
+        el("h2", { text: "부모–자식 Run 변경 비교", attrs: { id: "run-diff-title" } }),
+        el("span", { className: "generator-label", text: "결정론적 비교" }),
+      ),
+      el("p", {
+        className: "section-help",
+        text: `${parent.review_run_id} → ${run.review_run_id}. 원본 Run은 변경하지 않고 직접 부모와 현재 child의 공개 결과만 비교합니다.`,
+      }),
+      el(
+        "div",
+        { className: "run-diff-table-wrap" },
+        el(
+          "table",
+          { className: "run-diff-table" },
+          el("thead", {}, el("tr", {}, el("th", { text: "항목", attrs: { scope: "col" } }), el("th", { text: "부모 Run", attrs: { scope: "col" } }), el("th", { text: "현재 child Run", attrs: { scope: "col" } }), el("th", { text: "변화", attrs: { scope: "col" } }))),
+          el("tbody", {}, ...rows.map((row) => el(
+            "tr",
+            { className: row.changed ? "run-diff-row--changed" : "" },
+            el("th", { text: row.label, attrs: { scope: "row" } }),
+            el("td", { text: row.before }),
+            el("td", { text: row.after }),
+            el("td", { text: row.changed ? "변경" : "동일" }),
+          ))),
+        ),
+      ),
     );
   }
 
@@ -1317,9 +1656,11 @@ export class WorkbenchApp {
       this.scenarioByCase.set(created.case_id, scenario);
       await this.refreshCases();
       await this.selectCase(created.case_id);
-      this.state.notice = scenario.supporting_document
+      this.state.notice = scenario.supporting_document && scenario.requires_approver
         ? `합성 시나리오를 등록했습니다. 작성자와 다른 approver가 요건서류를 검증한 뒤 실행하세요. 기대 평가: ${humanize(scenario.expected.assessment)} / ${humanize(scenario.expected.disposition)}`
-        : `합성 시나리오를 등록했습니다. 기대 평가: ${humanize(scenario.expected.assessment)} / ${humanize(scenario.expected.disposition)}`;
+        : scenario.supporting_document
+          ? `미신뢰 발급자 차단 시나리오를 등록했습니다. Approver assertion 추가 전에 실행하세요. 기대 평가: ${humanize(scenario.expected.assessment)} / ${humanize(scenario.expected.disposition)}`
+          : `합성 시나리오를 등록했습니다. 기대 평가: ${humanize(scenario.expected.assessment)} / ${humanize(scenario.expected.disposition)}`;
     });
   }
 
@@ -2209,6 +2550,7 @@ export class WorkbenchApp {
     if (runId) await this.selectRun(runId);
     else {
       this.state.selectedRun = undefined;
+      this.state.parentRun = undefined;
       this.state.chat = [];
     }
     await this.restoreCaseRecovery(caseDetail);
@@ -2246,16 +2588,34 @@ export class WorkbenchApp {
   }
 
   private async selectRun(runId: string): Promise<void> {
-    const [run, chat, decisions, proposals] = await Promise.all([
-      this.api.getReviewRun(runId),
-      this.listReadableChat(runId),
-      this.api.listDecisions(runId),
-      this.api.listRevisionProposals(runId),
-    ]);
+    const run = await this.api.getReviewRun(runId);
     const current = this.state.selectedCase;
     const session = this.requireSession();
     if (!current || run.review_run_id !== runId || run.case_id !== current.case_id || run.org_id !== session.org_id) {
       throw new Error("Backend Review Run이 현재 Case·조직·URL 식별자와 일치하지 않습니다.");
+    }
+    const [chat, decisions, proposals, parentRun] = await Promise.all([
+      this.listReadableChat(runId),
+      this.api.listDecisions(runId),
+      this.api.listRevisionProposals(runId),
+      run.parent_run_id ? this.api.getReviewRun(run.parent_run_id) : Promise.resolve(undefined),
+    ]);
+    if (run.parent_run_id) {
+      const parentSummary = this.state.runs.find((item) => item.review_run_id === run.parent_run_id);
+      if (
+        !parentRun
+        || parentRun.review_run_id !== run.parent_run_id
+        || parentRun.case_id !== current.case_id
+        || parentRun.org_id !== session.org_id
+        || parentRun.parent_run_id === run.review_run_id
+        || !parentSummary
+        || parentSummary.case_id !== current.case_id
+        || parentSummary.org_id !== session.org_id
+      ) {
+        throw new Error("Backend 부모 Run이 현재 child Run의 직접 Case·조직 계보와 일치하지 않습니다.");
+      }
+    } else if (parentRun !== undefined) {
+      throw new Error("최초 Run 응답에 예기치 않은 부모 Run이 결박되었습니다.");
     }
     if (run.review_disposition === "auto_review_complete") {
       const manifest = run.input_document_manifest ?? [];
@@ -2306,6 +2666,7 @@ export class WorkbenchApp {
       }
     }
     this.state.selectedRun = run;
+    this.state.parentRun = parentRun;
     this.state.chat = chat;
     this.state.decisions = decisions;
     this.state.proposals = proposals;
@@ -2745,6 +3106,60 @@ function isDefinitiveRequestRejection(error: unknown): boolean {
 function isTransientJobPollingError(error: unknown): boolean {
   return error instanceof TypeError
     || (error instanceof ApiError && [408, 425, 429, 500, 502, 503, 504].includes(error.status));
+}
+
+interface ParentChildDiffRow {
+  label: string;
+  before: string;
+  after: string;
+  changed: boolean;
+}
+
+function parentChildDiffRows(parent: ReviewRun, child: ReviewRun): ParentChildDiffRow[] {
+  const rows: ParentChildDiffRow[] = [];
+  const add = (label: string, before: string | undefined, after: string | undefined, humanReadable = false): void => {
+    const safeBefore = before ?? "not_available";
+    const safeAfter = after ?? "not_available";
+    rows.push({
+      label,
+      before: humanReadable ? humanize(safeBefore) : safeBefore,
+      after: humanReadable ? humanize(safeAfter) : safeAfter,
+      changed: safeBefore !== safeAfter,
+    });
+  };
+  add("실행", parent.execution_status, child.execution_status, true);
+  add("문서·규정 평가", parent.assessment, child.assessment, true);
+  add("업무 처리", parent.review_disposition, child.review_disposition, true);
+  add("보증 수준", parent.assurance_level, child.assurance_level, true);
+
+  const summarize = (values: string[]): string => {
+    const sorted = [...new Set(values)].sort();
+    return sorted.length === 0 ? "없음" : sorted.join(", ");
+  };
+  add("Issue 코드", summarize(parent.issues.map((item) => item.code)), summarize(child.issues.map((item) => item.code)));
+  add("Finding 코드", summarize(parent.findings.map((item) => item.code)), summarize(child.findings.map((item) => item.code)));
+  add("Evidence ID", summarize(parent.evidence.map((item) => item.evidence_id)), summarize(child.evidence.map((item) => item.evidence_id)));
+  add("필수 조치", summarize(parent.required_actions.map((item) => item.code)), summarize(child.required_actions.map((item) => item.code)));
+
+  const parentFields = new Map(parent.fields.map((field) => [`${field.document_id}\u0000${field.field_path}`, field]));
+  const childFields = new Map(child.fields.map((field) => [`${field.document_id}\u0000${field.field_path}`, field]));
+  const fieldKeys = [...new Set([...parentFields.keys(), ...childFields.keys()])].sort();
+  for (const key of fieldKeys) {
+    const before = parentFields.get(key);
+    const after = childFields.get(key);
+    const beforeValue = before ? formatDiffValue(before.value) : "필드 없음";
+    const afterValue = after ? formatDiffValue(after.value) : "필드 없음";
+    if (beforeValue === afterValue) continue;
+    const displayPath = (after ?? before)?.field_path ?? key.replace("\u0000", " · ");
+    add(`추출값 · ${displayPath}`, beforeValue, afterValue);
+  }
+  return rows;
+}
+
+function formatDiffValue(value: ExtractedField["value"]): string {
+  if (value === null) return "null";
+  if (typeof value === "string") return value;
+  return String(value);
 }
 
 export function createWorkbench(root: HTMLElement, api: ApiClient, auth: OidcSession): WorkbenchApp {
