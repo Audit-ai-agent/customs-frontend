@@ -176,7 +176,7 @@ describe("Backend API v1 client", () => {
     }
   });
 
-  it("accepts the complete Backend 63079af public ReviewRun serialization without provider-private aliases", () => {
+  it("accepts the complete Backend public ReviewRun projection without provider-private aliases", () => {
     const publicPayload = structuredClone(backendPublicReviewRun) as Record<string, unknown>;
     const detail = publicPayload.result_detail as Record<string, unknown>;
 
@@ -187,7 +187,6 @@ describe("Backend API v1 client", () => {
       "knowledge_snapshot_id",
       "rag_evidence",
       "regulatory_findings",
-      "report",
       "retrieval_coverage",
       "retrieval_results",
       "retrieval_status",
@@ -205,6 +204,7 @@ describe("Backend API v1 client", () => {
       execution_status: "succeeded",
       review_disposition: "human_review_required",
       assurance_level: "production_candidate",
+      narrative_report: { generated_by: "backend_policy_overlay" },
     });
     expect(publicPayload.result_digest).toBe("de7900f91fb5895d2fcd8187c8031b5d3dd898e17c3e90e44173b4979113e31d");
     expect(canonicalSha256(backendEffectiveSummary(publicPayload))).toBe(publicPayload.result_digest);
@@ -221,6 +221,10 @@ describe("Backend API v1 client", () => {
     const repeatedClaim = (narrative.document_consistency as Array<Record<string, unknown>>)[0]!;
     repeatedClaim.text = "같은 claim ID에 다른 의미를 주입했습니다.";
     expect(() => decodeReviewRun(attacked)).toThrow("repeated claim ID has conflicting semantics");
+
+    const legacyReport = structuredClone(publicPayload);
+    (legacyReport.result_detail as Record<string, unknown>).report = {};
+    expect(() => decodeReviewRun(legacyReport)).toThrow("legacy V2 report is not part of the public Backend contract");
   });
 
   it("accepts only the same-origin /oidc/ reverse-proxy configuration", async () => {
@@ -1033,33 +1037,6 @@ describe("Backend API v1 client", () => {
         document_results: documentResults,
         review_stage_trace: mandatoryStageTrace,
         rag_evidence: [ragEvidence],
-        report: {
-          case_id: "case-1",
-          overall_status: "completed",
-          summary: {
-            total_documents: 4,
-            total_issues: 0,
-            critical: 0,
-            high: 0,
-            medium: 0,
-            low: 0,
-            average_extraction_confidence: 1,
-            outcome_reasons: [],
-            retrieval_status: "ok",
-            retrieval_coverage: "complete",
-            knowledge_snapshot_id: "generation-1",
-          },
-          document_summary: documentResults.map((document) => ({
-            document_id: document.document_id,
-            document_type: document.document_type,
-            extraction_status: document.extraction_status,
-            extraction_confidence: document.extraction_confidence,
-          })),
-          issues: [],
-          regulatory_findings: [],
-          rag_evidence: [ragEvidence],
-          disclaimer: "Released pre-clearance review aid.",
-        },
         fact_ledger: {
           ledger_id: `ledger_${"3".repeat(64)}`,
           entries: [...fieldLedgerEntries, {
@@ -1090,11 +1067,9 @@ describe("Backend API v1 client", () => {
     ): void => {
       const detail = value.result_detail as {
         rag_evidence: Array<Record<string, unknown>>;
-        report: { rag_evidence: Array<Record<string, unknown>> };
         retrieval_results: Array<{ evidence: Array<Record<string, unknown>> }>;
       };
       detail.rag_evidence[0]![key] = replacement;
-      detail.report.rag_evidence[0]![key] = replacement;
       detail.retrieval_results[0]!.evidence[0]![key] = replacement;
     };
     const mutations: Array<(value: Record<string, unknown>) => void> = [
@@ -1115,8 +1090,6 @@ describe("Backend API v1 client", () => {
       (value) => { ((value.result_detail as { fact_ledger: { entries: Array<Record<string, unknown>> } }).fact_ledger.entries).push({ fact_id: `fact_${"6".repeat(64)}`, kind: "issue", reference_id: `issue_${"6".repeat(64)}`, label: "MATERIAL_MISMATCH", value: "hidden mismatch", document_id: "doc-ci", source_sha256: "6".repeat(64) }); },
       (value) => { ((value.result_detail as { fact_ledger: { entries: Array<Record<string, unknown>> } }).fact_ledger.entries).push({ fact_id: `fact_${"8".repeat(64)}`, kind: "finding", reference_id: `finding_${"8".repeat(64)}`, label: "HIDDEN_FINDING", value: "hidden finding", document_id: "doc-ci", source_sha256: "8".repeat(64) }); },
       (value) => { ((value.result_detail as { fact_ledger: { entries: Array<Record<string, unknown>> } }).fact_ledger.entries).push({ fact_id: `fact_${"9".repeat(64)}`, kind: "evidence", reference_id: `ev_${"9".repeat(64)}`, label: "hidden evidence", value: "hidden evidence", document_id: null, source_sha256: "9".repeat(64) }); },
-      (value) => { ((value.result_detail as { report: { rag_evidence: Array<Record<string, unknown>> } }).report.rag_evidence).pop(); },
-      (value) => { ((value.result_detail as { report: { rag_evidence: Array<Record<string, unknown>> } }).report.rag_evidence[0]!).text = "contradictory report Evidence"; },
       (value) => { ((value.result_detail as { retrieval_results: Array<{ evidence: Array<Record<string, unknown>> }> }).retrieval_results[0]!.evidence[0]!).text = "contradictory retrieval Evidence"; },
       (value) => { ((value.result_detail as { retrieval_results: Array<Record<string, unknown>> }).retrieval_results[0]!).coverage = "partial"; },
       (value) => { ((value.result_detail as { retrieval_results: Array<Record<string, unknown>> }).retrieval_results[0]!).hs_resolution = "ambiguous"; },
@@ -1129,7 +1102,6 @@ describe("Backend API v1 client", () => {
       (value) => { mutateEveryEvidenceCopy(value, "matched_hs_code", "9999999999"); },
       (value) => { mutateEveryEvidenceCopy(value, "matched_hs_code", "030354"); },
       (value) => { mutateEveryEvidenceCopy(value, "eligibility", "blocked"); },
-      (value) => { ((value.result_detail as { report: { summary: Record<string, unknown> } }).report.summary).outcome_reasons = ["manual_action_required"]; },
       (value) => { (value.narrative_report as Record<string, unknown>).generation_mode = "deterministic_fallback"; (value.narrative_report as Record<string, unknown>).generated_by = "deterministic_fallback"; },
       (value) => { ((value.narrative_report as { summary: Array<Record<string, unknown>> }).summary[0]!).citation_ids = []; },
       (value) => { delete value.input_document_manifest; },

@@ -335,6 +335,7 @@ describe("review workbench", () => {
     expect(caseButton).toBeDefined();
     caseButton!.click();
     await vi.waitFor(() => expect(root.textContent).toContain("문서 정합성 문제가 없습니다."));
+    expect(root.textContent).toContain("Claude 표현 · 코드 검증");
 
     expect(root.querySelector("img")).toBeNull();
     expect(root.textContent).toContain("실행");
@@ -356,6 +357,30 @@ describe("review workbench", () => {
     expect((document.activeElement as HTMLElement | null)?.dataset.sourceId).toBe("source-1");
     const accessibility = await axe.run(root);
     expect(accessibility.violations).toEqual([]);
+  });
+
+  it("labels a Backend policy-overlaid V3 narrative without presenting it as Claude prose", async () => {
+    const root = document.createElement("div");
+    document.body.append(root);
+    const api = fakeApi();
+    const overlaidRun: ReviewRun = {
+      ...run,
+      narrative_report: {
+        ...run.narrative_report!,
+        generated_by: "backend_policy_overlay",
+      },
+    };
+    vi.mocked(api.listReviewRuns).mockResolvedValue([overlaidRun]);
+    vi.mocked(api.getReviewRun).mockResolvedValue(overlaidRun);
+    const app = new WorkbenchApp(root, api, auth(true));
+
+    await app.start();
+    [...root.querySelectorAll<HTMLButtonElement>("button")]
+      .find((item) => item.textContent?.includes("<img src=x"))
+      ?.click();
+
+    await vi.waitFor(() => expect(root.textContent).toContain("Backend 안전 정책 보정"));
+    expect(root.textContent).not.toContain("Claude 표현 · 코드 검증");
   });
 
   it("marks Evidence as release-bound only for a production automatic-completion Run", async () => {

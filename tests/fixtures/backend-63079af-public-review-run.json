@@ -50,9 +50,8 @@
         "text": "결정론적 심사 결과를 확인했습니다."
       }
     ],
-    "generation_mode": "deterministic_fallback",
+    "generated_by": "backend_policy_overlay",
     "language": "ko-KR",
-    "model_call": null,
     "regulatory_review": [
       {
         "citations": [
@@ -66,7 +65,19 @@
         "text": "결정론적 심사 결과를 확인했습니다."
       }
     ],
-    "required_actions": [],
+    "required_actions": [
+      {
+        "citations": [
+          {
+            "kind": "outcome",
+            "reference_id": "outcome_7e29d40db58292088d0db7a8eee3d7c349902a467dfd3f76255b6056b480705e"
+          }
+        ],
+        "claim_id": "claim_7639cabe7b3e9e0dead6ac9a1549cb5ec4d6ce4003b290eb4b13112000216006",
+        "material": true,
+        "text": "Backend의 유효한 Release·입력·자동완료 Gate가 충족되지 않아 담당자 검토가 필요합니다."
+      }
+    ],
     "summary": [
       {
         "citations": [
@@ -215,28 +226,6 @@
     "knowledge_snapshot_id": "generation-1",
     "rag_evidence": [],
     "regulatory_findings": [],
-    "report": {
-      "case_id": "case_bacb7b3f0f6b4e938dca74482547562e",
-      "disclaimer": "Synthetic provider-contract fixture; not a legal determination.",
-      "document_summary": [],
-      "issues": [],
-      "overall_status": "completed",
-      "rag_evidence": [],
-      "regulatory_findings": [],
-      "summary": {
-        "average_extraction_confidence": 1.0,
-        "critical": 0,
-        "high": 0,
-        "knowledge_snapshot_id": "generation-1",
-        "low": 0,
-        "medium": 0,
-        "outcome_reasons": [],
-        "retrieval_coverage": "complete",
-        "retrieval_status": "ok",
-        "total_documents": 1,
-        "total_issues": 0
-      }
-    },
     "retrieval_coverage": "complete",
     "retrieval_results": [],
     "retrieval_status": "ok",

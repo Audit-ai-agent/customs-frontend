@@ -78,7 +78,6 @@ const BACKEND_PUBLIC_RESULT_DETAIL_KEYS = [
   "model_execution_summary",
   "rag_evidence",
   "regulatory_findings",
-  "report",
   "retrieval_coverage",
   "retrieval_results",
   "retrieval_status",
@@ -408,6 +407,9 @@ export function decodeReviewRun(value: unknown): ReviewRun {
   object(raw.result_detail, "reviewRun.result_detail");
   const resultValue = raw.result_detail ?? raw.result;
   const result = typeof resultValue === "object" && resultValue !== null ? (resultValue as JsonObject) : {};
+  if ("report" in result) {
+    throw new ContractError("reviewRun.result_detail.report: legacy V2 report is not part of the public Backend contract");
+  }
   const modelExecutionSummary = result.model_execution_summary === undefined
     ? undefined
     : decodeModelExecutionSummary(
@@ -1367,7 +1369,7 @@ function validateProductionCompletionEnvelope(input: {
     return false;
   }
 
-  if (!validateProductionPublicResultConsistency(raw, result)) return false;
+  if (!validateProductionPublicResultConsistency(result)) return false;
   if (!validateProductionGaps(input.reviewGaps, ledgerReferenceIds)) return false;
   if (!validateProductionActionTrace(input.rawActionTrace, input.actionTrace, ledgerReferenceIds)) return false;
   if (!validateProductionNarrative(raw.narrative_report, input.narrative, input.knownCitationIds)) return false;
@@ -1651,13 +1653,8 @@ function validateProductionGaps(gaps: JsonObject[], knownReferences: ReadonlySet
   });
 }
 
-function validateProductionPublicResultConsistency(raw: JsonObject, result: JsonObject): boolean {
-  const report = asObject(result.report);
-  const summary = asObject(report.summary);
-  const documents = Array.isArray(result.document_results) ? result.document_results.map(asObject) : [];
-  const reportDocuments = Array.isArray(report.document_summary) ? report.document_summary.map(asObject) : [];
+function validateProductionPublicResultConsistency(result: JsonObject): boolean {
   const evidence = Array.isArray(result.rag_evidence) ? result.rag_evidence.map(asObject) : [];
-  const reportEvidence = Array.isArray(report.rag_evidence) ? report.rag_evidence.map(asObject) : [];
   const retrievalResults = Array.isArray(result.retrieval_results) ? result.retrieval_results.map(asObject) : [];
   const retrievalEvidence = retrievalResults.flatMap((item) => (
     Array.isArray(item.evidence) ? item.evidence.map(asObject) : []
@@ -1678,26 +1675,7 @@ function validateProductionPublicResultConsistency(raw: JsonObject, result: Json
           && canonicalJson(actual) === canonicalJson(expectedValue);
       });
   };
-  if (
-    report.case_id !== raw.case_id
-    || report.overall_status !== "completed"
-    || !Array.isArray(report.issues)
-    || report.issues.length !== 0
-    || !Array.isArray(report.regulatory_findings)
-    || report.regulatory_findings.length !== 0
-    || !Array.isArray(report.rag_evidence)
-    || !Array.isArray(report.document_summary)
-    || summary.total_documents !== documents.length
-    || summary.total_issues !== 0
-    || ["critical", "high", "medium", "low"].some((key) => summary[key] !== 0)
-    || !Array.isArray(summary.outcome_reasons)
-    || summary.outcome_reasons.length !== 0
-    || summary.retrieval_status !== result.retrieval_status
-    || summary.retrieval_coverage !== result.retrieval_coverage
-    || summary.knowledge_snapshot_id !== result.knowledge_snapshot_id
-    || !exactUniqueRecords(reportEvidence, "evidence_id", evidence)
-    || !exactUniqueRecords(retrievalEvidence, "evidence_id", evidence)
-  ) return false;
+  if (!exactUniqueRecords(retrievalEvidence, "evidence_id", evidence)) return false;
   const retrievalItemIds = new Set<string>();
   const retrievalItemKeys = [
     "candidate_hsk10s",
@@ -1738,18 +1716,6 @@ function validateProductionPublicResultConsistency(raw: JsonObject, result: Json
       || item.errors.length !== 0
     ) return false;
     retrievalItemIds.add(itemId);
-  }
-  const reportDocumentIds = reportDocuments.map((document) => String(document.document_id ?? ""));
-  const documentIds = documents.map((document) => String(document.document_id ?? ""));
-  if (!sameUniqueSet(reportDocumentIds, documentIds)) return false;
-  for (const document of documents) {
-    const summaryDocument = reportDocuments.find((item) => item.document_id === document.document_id);
-    if (
-      summaryDocument === undefined
-      || summaryDocument.document_type !== document.document_type
-      || summaryDocument.extraction_status !== document.extraction_status
-      || summaryDocument.extraction_confidence !== document.extraction_confidence
-    ) return false;
   }
   return true;
 }
@@ -2047,10 +2013,27 @@ function normalizeNarrative(value: unknown, knownCitationIds: ReadonlySet<string
   if (raw.recommended_actions !== undefined && raw.required_actions !== undefined) {
     throw new ContractError("narrative: recommended_actions and required_actions aliases cannot coexist");
   }
+  const generatedBy = raw.generated_by;
+  const generationMode = raw.generation_mode;
   if (
-    typeof raw.generated_by === "string"
-    && typeof raw.generation_mode === "string"
-    && raw.generated_by !== raw.generation_mode
+    generatedBy !== undefined
+    && generatedBy !== "claude"
+    && generatedBy !== "deterministic_fallback"
+    && generatedBy !== "backend_policy_overlay"
+  ) {
+    throw new ContractError("narrative: unsupported generated_by value");
+  }
+  if (
+    generationMode !== undefined
+    && generationMode !== "claude"
+    && generationMode !== "deterministic_fallback"
+  ) {
+    throw new ContractError("narrative: unsupported generation_mode value");
+  }
+  if (
+    typeof generatedBy === "string"
+    && typeof generationMode === "string"
+    && generatedBy !== generationMode
   ) {
     throw new ContractError("narrative: generation-mode aliases disagree");
   }
@@ -2101,7 +2084,11 @@ function normalizeNarrative(value: unknown, knownCitationIds: ReadonlySet<string
     regulatory_review: claims(raw.regulatory_review, "regulatory-review"),
     impact: claims(raw.impact, "impact"),
     recommended_actions: claims(raw.recommended_actions ?? raw.required_actions, "recommended-action"),
-    generated_by: raw.generated_by === "claude" || raw.generation_mode === "claude" ? "claude" : "deterministic_fallback",
+    generated_by: generatedBy === "backend_policy_overlay"
+      ? "backend_policy_overlay"
+      : generatedBy === "claude" || generationMode === "claude"
+        ? "claude"
+        : "deterministic_fallback",
     citation_verification: "passed",
   };
   if (raw.citation_verification !== "passed") throw new ContractError("narrative: citation verification must be passed");

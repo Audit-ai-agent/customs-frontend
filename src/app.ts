@@ -1599,7 +1599,19 @@ export class WorkbenchApp {
     return el(
       "section",
       { className: "card report", attrs: { "aria-labelledby": "report-title" } },
-      el("div", { className: "section-title-row" }, el("h2", { text: report.title || "사용자용 XAI 보고서", attrs: { id: "report-title" } }), el("span", { className: "generator-label", text: report.generated_by === "claude" ? "Claude 표현 · 코드 검증" : "안전 템플릿" })),
+      el(
+        "div",
+        { className: "section-title-row" },
+        el("h2", { text: report.title || "사용자용 XAI 보고서", attrs: { id: "report-title" } }),
+        el("span", {
+          className: "generator-label",
+          text: report.generated_by === "claude"
+            ? "Claude 표현 · 코드 검증"
+            : report.generated_by === "backend_policy_overlay"
+              ? "Backend 안전 정책 보정"
+              : "안전 템플릿",
+        }),
+      ),
       section("심사 요약", report.summary),
       section("문서 정합성", report.document_consistency),
       section("적용 규정", report.regulatory_review),

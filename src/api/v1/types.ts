@@ -155,7 +155,7 @@ export interface NarrativeReport {
   regulatory_review: NarrativeClaim[];
   impact: NarrativeClaim[];
   recommended_actions: NarrativeClaim[];
-  generated_by: "claude" | "deterministic_fallback";
+  generated_by: "claude" | "deterministic_fallback" | "backend_policy_overlay";
   citation_verification: "passed";
 }
 
