@@ -76,6 +76,7 @@ const BACKEND_PUBLIC_RESULT_DETAIL_KEYS = [
   "jurisdiction",
   "knowledge_snapshot_id",
   "model_execution_summary",
+  "narrative_execution_summary",
   "rag_evidence",
   "regulatory_findings",
   "retrieval_coverage",
@@ -416,7 +417,13 @@ export function decodeReviewRun(value: unknown): ReviewRun {
         result.model_execution_summary,
         "reviewRun.result_detail.model_execution_summary",
       );
-  if (!validateBackendEffectiveResultDigest(raw, modelExecutionSummary)) {
+  const narrativeExecutionSummary = result.narrative_execution_summary === undefined
+    ? undefined
+    : decodeModelExecutionSummary(
+        result.narrative_execution_summary,
+        "reviewRun.result_detail.narrative_execution_summary",
+      );
+  if (!validateBackendEffectiveResultDigest(raw, modelExecutionSummary, narrativeExecutionSummary)) {
     throw new ContractError("reviewRun.result_digest: Backend effective result digest mismatch");
   }
   const pickArray = (top: string, ...nested: string[]): unknown[] => {
@@ -560,6 +567,7 @@ export function decodeReviewRun(value: unknown): ReviewRun {
       || actionTrace.some((action) => action.status !== "succeeded")
       || actionTrace.length === 0
       || modelExecutionSummary?.audit_complete !== true
+      || narrativeExecutionSummary?.audit_complete !== true
       || narrative === undefined
       || narrative.summary.length === 0
       || result.retrieval_status !== "ok"
@@ -585,6 +593,7 @@ export function decodeReviewRun(value: unknown): ReviewRun {
   // override the validated public Agent result_detail attestation.
   delete safeRaw.evidence_retrieval;
   delete safeRaw.model_execution_summary;
+  delete safeRaw.narrative_execution_summary;
   return {
     ...(safeRaw as unknown as ReviewRun),
     stages: pickArray("stages", "stages") as ReviewRun["stages"],
@@ -593,6 +602,9 @@ export function decodeReviewRun(value: unknown): ReviewRun {
     evidence,
     ...(evidenceRetrieval === undefined ? {} : { evidence_retrieval: evidenceRetrieval }),
     ...(modelExecutionSummary === undefined ? {} : { model_execution_summary: modelExecutionSummary }),
+    ...(narrativeExecutionSummary === undefined
+      ? {}
+      : { narrative_execution_summary: narrativeExecutionSummary }),
     findings,
     sources,
     action_trace: actionTrace,
@@ -1379,6 +1391,7 @@ function validateProductionCompletionEnvelope(input: {
 function validateBackendEffectiveResultDigest(
   raw: JsonObject,
   modelExecutionSummary: ModelExecutionSummary | undefined,
+  narrativeExecutionSummary: ModelExecutionSummary | undefined,
 ): boolean {
   if (
     typeof raw.completion_eligibility !== "object"
@@ -1479,6 +1492,9 @@ function validateBackendEffectiveResultDigest(
     ...(modelExecutionSummary === undefined
       ? {}
       : { model_execution_summary: modelExecutionSummary }),
+    ...(narrativeExecutionSummary === undefined
+      ? {}
+      : { narrative_execution_summary: narrativeExecutionSummary }),
   };
   try {
     return raw.result_digest === sha256CanonicalJson(effectiveSummary);

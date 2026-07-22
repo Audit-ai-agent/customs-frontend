@@ -274,6 +274,8 @@ export interface ReviewRun extends RunSummary {
   };
   /** Safe Backend projection of the Agent provider-call audit. */
   model_execution_summary?: ModelExecutionSummary;
+  /** Safe Backend projection of the V3 narrative Claude-call audit. */
+  narrative_execution_summary?: ModelExecutionSummary;
   findings: ComplianceFinding[];
   sources: SourceReference[];
   narrative_report?: NarrativeReport;

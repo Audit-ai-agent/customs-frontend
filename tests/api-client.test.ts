@@ -67,6 +67,13 @@ const CHAT_MODEL_EXECUTION = {
   output_tokens_total: 80,
 } as const;
 
+const NARRATIVE_MODEL_EXECUTION = {
+  ...ACTUAL_MODEL_EXECUTION,
+  call_count: 1,
+  input_tokens_total: 20,
+  output_tokens_total: 10,
+} as const;
+
 const backendEffectiveSummary = (value: Record<string, unknown>): Record<string, unknown> => {
   const resultDetail = value.result_detail as Record<string, unknown> | undefined;
   return {
@@ -89,6 +96,9 @@ const backendEffectiveSummary = (value: Record<string, unknown>): Record<string,
     ...(resultDetail?.model_execution_summary === undefined
       ? {}
       : { model_execution_summary: resultDetail.model_execution_summary }),
+    ...(resultDetail?.narrative_execution_summary === undefined
+      ? {}
+      : { narrative_execution_summary: resultDetail.narrative_execution_summary }),
   };
 };
 
@@ -128,6 +138,7 @@ const reviewRunPayload = (overrides: Record<string, unknown> = {}) => {
     },
     result_detail: {
       model_execution_summary: EMPTY_MODEL_EXECUTION,
+      narrative_execution_summary: EMPTY_MODEL_EXECUTION,
       ...(overrideResultDetail ?? {}),
     },
     ...remainingOverrides,
@@ -185,6 +196,8 @@ describe("Backend API v1 client", () => {
       "fact_ledger",
       "jurisdiction",
       "knowledge_snapshot_id",
+      "model_execution_summary",
+      "narrative_execution_summary",
       "rag_evidence",
       "regulatory_findings",
       "retrieval_coverage",
@@ -205,8 +218,9 @@ describe("Backend API v1 client", () => {
       review_disposition: "human_review_required",
       assurance_level: "production_candidate",
       narrative_report: { generated_by: "backend_policy_overlay" },
+      narrative_execution_summary: { provider: "anthropic", audit_complete: true },
     });
-    expect(publicPayload.result_digest).toBe("de7900f91fb5895d2fcd8187c8031b5d3dd898e17c3e90e44173b4979113e31d");
+    expect(publicPayload.result_digest).toBe("edad2747052f14eab5b304dee902bc4f809455b2575b03e1547391a05662ea67");
     expect(canonicalSha256(backendEffectiveSummary(publicPayload))).toBe(publicPayload.result_digest);
 
     const forgedDigest = structuredClone(publicPayload);
@@ -662,11 +676,15 @@ describe("Backend API v1 client", () => {
     expect(forgedTopLevel.evidence_retrieval).toBeUndefined();
   });
 
-  it("validates and digest-binds the safe Review model execution summary", () => {
+  it("validates and digest-binds safe extraction and narrative execution summaries", () => {
     const decoded = decodeReviewRun(reviewRunPayload({
-      result_detail: { model_execution_summary: ACTUAL_MODEL_EXECUTION },
+      result_detail: {
+        model_execution_summary: ACTUAL_MODEL_EXECUTION,
+        narrative_execution_summary: NARRATIVE_MODEL_EXECUTION,
+      },
     }));
     expect(decoded.model_execution_summary).toEqual(ACTUAL_MODEL_EXECUTION);
+    expect(decoded.narrative_execution_summary).toEqual(NARRATIVE_MODEL_EXECUTION);
 
     const forged = reviewRunPayload({
       result_detail: { model_execution_summary: ACTUAL_MODEL_EXECUTION },
@@ -674,6 +692,15 @@ describe("Backend API v1 client", () => {
     const detail = forged.result_detail as Record<string, unknown>;
     detail.model_execution_summary = { ...ACTUAL_MODEL_EXECUTION, input_tokens_total: 1_201 };
     expect(() => decodeReviewRun(forged)).toThrow("effective result digest mismatch");
+
+    const forgedNarrative = reviewRunPayload({
+      result_detail: { narrative_execution_summary: NARRATIVE_MODEL_EXECUTION },
+    });
+    (forgedNarrative.result_detail as Record<string, unknown>).narrative_execution_summary = {
+      ...NARRATIVE_MODEL_EXECUTION,
+      output_tokens_total: 11,
+    };
+    expect(() => decodeReviewRun(forgedNarrative)).toThrow("effective result digest mismatch");
 
     expect(() => decodeReviewRun(reviewRunPayload({
       result_detail: {
@@ -1014,6 +1041,7 @@ describe("Backend API v1 client", () => {
       review_stage_trace: mandatoryStageTrace,
       result_detail: {
         model_execution_summary: ACTUAL_MODEL_EXECUTION,
+        narrative_execution_summary: NARRATIVE_MODEL_EXECUTION,
         review_as_of: "2026-07-21",
         trade_type: "import",
         jurisdiction: "KR",
@@ -1076,6 +1104,7 @@ describe("Backend API v1 client", () => {
       (value) => { value.release_identity = { ...releaseIdentity, kill_switch_active: true }; },
       (value) => { value.release_identity = { ...releaseIdentity, model_id: "claude-sonnet-5", model_revision: "claude-sonnet-5" }; },
       (value) => { value.action_trace = []; },
+      (value) => { ((value.result_detail as Record<string, unknown>).narrative_execution_summary as Record<string, unknown>).call_count = 2; },
       (value) => { (value.result_detail as Record<string, unknown>).rag_evidence = [{}]; },
       (value) => { ((value.result_detail as { rag_evidence: Array<Record<string, unknown>> }).rag_evidence[0]!).source_uri = "about:blank"; },
       (value) => { ((value.result_detail as { fact_ledger: { entries: Array<Record<string, unknown>> } }).fact_ledger.entries[0]!).label = "forged label"; },

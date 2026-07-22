@@ -224,6 +224,34 @@
     },
     "jurisdiction": "KR",
     "knowledge_snapshot_id": "generation-1",
+    "model_execution_summary": {
+      "audit_complete": false,
+      "call_count": 0,
+      "input_tokens_total": 0,
+      "model_id": null,
+      "output_tokens_total": 0,
+      "prompt_hashes_complete": false,
+      "provider": null,
+      "runtime_identity_match": false,
+      "schema_hashes_complete": false,
+      "text_only": false,
+      "unmet_reason_codes": [
+        "no_model_calls"
+      ]
+    },
+    "narrative_execution_summary": {
+      "audit_complete": true,
+      "call_count": 1,
+      "input_tokens_total": 20,
+      "model_id": "claude-test",
+      "output_tokens_total": 10,
+      "prompt_hashes_complete": true,
+      "provider": "anthropic",
+      "runtime_identity_match": true,
+      "schema_hashes_complete": true,
+      "text_only": true,
+      "unmet_reason_codes": []
+    },
     "rag_evidence": [],
     "regulatory_findings": [],
     "retrieval_coverage": "complete",
@@ -315,7 +343,7 @@
     "trade_type": "import",
     "validation_issues": []
   },
-  "result_digest": "de7900f91fb5895d2fcd8187c8031b5d3dd898e17c3e90e44173b4979113e31d",
+  "result_digest": "edad2747052f14eab5b304dee902bc4f809455b2575b03e1547391a05662ea67",
   "review_as_of": "2026-07-22",
   "review_disposition": "human_review_required",
   "review_run_id": "run_dd808482c097439f9099abc7c2d61f1d",
