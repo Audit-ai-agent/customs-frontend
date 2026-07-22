@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { ApiClient } from "../src/api/v1/client";
 import { ContractError } from "../src/api/v1/decoders";
 import { decodeReviewRun } from "../src/api/v1/decoders";
+import backendPublicReviewRun from "./fixtures/backend-63079af-public-review-run.json";
 
 const json = (value: unknown, status = 200): Response =>
   new Response(JSON.stringify(value), { status, headers: { "content-type": "application/json" } });
@@ -22,33 +23,6 @@ const jobPayload = (jobId: string, kind: "review" | "revision" = "review") => ({
   updated_at: "2026-07-21",
 });
 
-const reviewRunPayload = (overrides: Record<string, unknown> = {}) => ({
-  review_run_id: "run-1",
-  case_id: "case-1",
-  org_id: "org-1",
-  created_by: "reviewer-1",
-  case_revision: 1,
-  created_at: "2026-07-21",
-  execution_status: "succeeded",
-  assessment: "no_issue_detected",
-  review_disposition: "human_review_required",
-  assurance_level: "production_candidate",
-  input_manifest_digest: "a".repeat(64),
-  agent_input_manifest_sha256: "b".repeat(64),
-  provider_result_sha256: "c".repeat(64),
-  result_digest: "d".repeat(64),
-  completion_eligibility: {
-    eligible: false,
-    profile_id: null,
-    scope: [],
-    unmet_reason_codes: ["domain_approval_missing"],
-  },
-  required_actions: [],
-  action_trace: [],
-  result_detail: {},
-  ...overrides,
-});
-
 const canonicalJson = (value: unknown): string => {
   if (value === null || typeof value === "string" || typeof value === "boolean" || typeof value === "number") return JSON.stringify(value);
   if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
@@ -58,7 +32,111 @@ const canonicalJson = (value: unknown): string => {
 
 const canonicalSha256 = (value: unknown): string => createHash("sha256").update(canonicalJson(value)).digest("hex");
 
+const backendEffectiveSummary = (value: Record<string, unknown>): Record<string, unknown> => ({
+  provider_result_sha256: value.provider_result_sha256,
+  input_manifest_digest: value.input_manifest_digest,
+  input_document_manifest: value.input_document_manifest ?? [],
+  execution_status: value.execution_status,
+  assessment: value.assessment,
+  review_disposition: value.review_disposition,
+  assurance_level: value.assurance_level,
+  completion_eligibility: value.completion_eligibility,
+  required_actions: value.required_actions ?? [],
+  review_stage_trace: value.review_stage_trace ?? [],
+  auto_completion_profile: value.auto_completion_profile ?? {
+    profile_id: null,
+    approved_document_types: [],
+    approved_required_document_codes: [],
+    approval_digest: null,
+  },
+});
+
+const reviewRunPayload = (overrides: Record<string, unknown> = {}) => {
+  const payload: Record<string, unknown> = {
+    review_run_id: "run-1",
+    case_id: "case-1",
+    org_id: "org-1",
+    created_by: "reviewer-1",
+    case_revision: 1,
+    created_at: "2026-07-21",
+    execution_status: "succeeded",
+    assessment: "no_issue_detected",
+    review_disposition: "human_review_required",
+    assurance_level: "production_candidate",
+    input_document_manifest: [],
+    input_manifest_digest: "a".repeat(64),
+    agent_input_manifest_sha256: "b".repeat(64),
+    provider_result_sha256: "c".repeat(64),
+    completion_eligibility: {
+      eligible: false,
+      profile_id: null,
+      scope: [],
+      unmet_reason_codes: ["domain_approval_missing"],
+    },
+    required_actions: [],
+    action_trace: [],
+    review_stage_trace: [],
+    auto_completion_profile: {
+      profile_id: null,
+      approved_document_types: [],
+      approved_required_document_codes: [],
+      approval_digest: null,
+    },
+    result_detail: {},
+    ...overrides,
+  };
+  payload.result_digest = overrides.result_digest ?? canonicalSha256(backendEffectiveSummary(payload));
+  return payload;
+};
+
 describe("Backend API v1 client", () => {
+  it("accepts the complete Backend 63079af public ReviewRun serialization without provider-private aliases", () => {
+    const publicPayload = structuredClone(backendPublicReviewRun) as Record<string, unknown>;
+    const detail = publicPayload.result_detail as Record<string, unknown>;
+
+    expect(Object.keys(detail).sort()).toEqual([
+      "document_results",
+      "fact_ledger",
+      "jurisdiction",
+      "knowledge_snapshot_id",
+      "rag_evidence",
+      "regulatory_findings",
+      "report",
+      "retrieval_coverage",
+      "retrieval_results",
+      "retrieval_status",
+      "review_as_of",
+      "review_gaps",
+      "review_plan",
+      "review_stage_trace",
+      "trade_type",
+      "validation_issues",
+    ]);
+    for (const privateField of ["schema_version", "status", "requires_human_review", "case_id", "input_manifest_sha256"]) {
+      expect(detail).not.toHaveProperty(privateField);
+    }
+    expect(decodeReviewRun(publicPayload)).toMatchObject({
+      execution_status: "succeeded",
+      review_disposition: "human_review_required",
+      assurance_level: "production_candidate",
+    });
+    expect(publicPayload.result_digest).toBe("de7900f91fb5895d2fcd8187c8031b5d3dd898e17c3e90e44173b4979113e31d");
+    expect(canonicalSha256(backendEffectiveSummary(publicPayload))).toBe(publicPayload.result_digest);
+
+    const forgedDigest = structuredClone(publicPayload);
+    forgedDigest.result_digest = "0".repeat(64);
+    expect(() => decodeReviewRun(forgedDigest)).toThrow("Backend effective result digest mismatch");
+    const forgedEffectiveSummary = structuredClone(publicPayload);
+    forgedEffectiveSummary.provider_result_sha256 = "0".repeat(64);
+    expect(() => decodeReviewRun(forgedEffectiveSummary)).toThrow("Backend effective result digest mismatch");
+
+    const attacked = structuredClone(backendPublicReviewRun) as Record<string, unknown>;
+    const narrative = attacked.narrative_report as Record<string, unknown>;
+    const repeatedClaim = (narrative.document_consistency as Array<Record<string, unknown>>)[0]!;
+    repeatedClaim.text = "같은 claim ID에 다른 의미를 주입했습니다.";
+    expect(() => decodeReviewRun(attacked)).toThrow("repeated claim ID has conflicting semantics");
+  });
+
   it("accepts only the same-origin /oidc/ reverse-proxy configuration", async () => {
     const origin = window.location.origin;
     const fetcher = vi.fn<typeof fetch>().mockResolvedValue(
@@ -206,20 +284,46 @@ describe("Backend API v1 client", () => {
   });
 
   it("binds review enqueue to an Idempotency-Key header", async () => {
-    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(
-      json({ job: jobPayload("job-1"), idempotency_reused: false }, 202),
-    );
+    const fetcher = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(json({ subject: "reviewer-1", org_id: "org-1", roles: ["reviewer"] }))
+      .mockResolvedValueOnce(json({ job: jobPayload("job-1"), idempotency_reused: false }, 202));
     const client = new ApiClient(fetcher, () => "token");
+    await client.getSession();
 
     const job = await client.enqueueReview("case-1", { trade_type: "import", submitted_document_codes: [] }, "idem-123");
 
-    const [, init] = fetcher.mock.calls[0]!;
+    const [, init] = fetcher.mock.calls[1]!;
     expect(new Headers(init?.headers).get("Idempotency-Key")).toBe("idem-123");
     expect(JSON.parse(String(init?.body))).toEqual({
       trade_type: "import",
       submitted_document_codes: [],
     });
     expect(job.job_id).toBe("job-1");
+  });
+
+  it("rejects review enqueue without session binding or with revision/other-actor Job identities", async () => {
+    const unauthenticated = new ApiClient(vi.fn<typeof fetch>(), () => "token");
+    expect(() => unauthenticated.enqueueReview(
+      "case-1",
+      { trade_type: "import", submitted_document_codes: [] },
+      "idem-missing-session",
+    )).toThrow("requires an authenticated session");
+
+    for (const attackedJob of [
+      { ...jobPayload("job-revision", "revision"), parent_run_id: "run-parent" },
+      { ...jobPayload("job-other-actor"), created_by: "attacker-1" },
+    ]) {
+      const fetcher = vi.fn<typeof fetch>()
+        .mockResolvedValueOnce(json({ subject: "reviewer-1", org_id: "org-1", roles: ["reviewer"] }))
+        .mockResolvedValueOnce(json({ job: attackedJob, idempotency_reused: false }, 202));
+      const client = new ApiClient(fetcher, () => "token");
+      await client.getSession();
+      await expect(client.enqueueReview(
+        "case-1",
+        { trade_type: "import", submitted_document_codes: [] },
+        "idem-attacked",
+      )).rejects.toThrow(ContractError);
+    }
   });
 
   it("rejects self-declared requirement codes before any HTTP request", async () => {
@@ -555,7 +659,16 @@ describe("Backend API v1 client", () => {
   });
 
   it("accepts auto-review completion only with a coherent released safety envelope", () => {
-    const evidenceId = `ev_${"7".repeat(64)}`;
+    const sourceRecordId = "requirement-record-1";
+    const versionHash = "a".repeat(64);
+    const evidenceId = `ev_${createHash("sha256").update(`${sourceRecordId}\u001f${versionHash}`).digest("hex")}`;
+    const outcomeValue = {
+      status: "completed",
+      requires_human_review: false,
+      retrieval_status: "ok",
+      retrieval_coverage: "complete",
+    };
+    const outcomeReference = `outcome_${canonicalSha256(outcomeValue)}`;
     const profileId = "profile-0303540000-v1";
     const releaseIdentity = {
       agent_package_version: "0.3.0",
@@ -643,6 +756,28 @@ describe("Backend API v1 client", () => {
       trade_type: "import",
       documents: inputDocumentManifest,
     });
+    const ragEvidence = {
+      evidence_id: evidenceId,
+      source_record_id: sourceRecordId,
+      source_type: "customs_requirement",
+      item_id: "item-1",
+      title: "released import requirement",
+      text: "A verified import permit is required.",
+      law_id: "LAW-1",
+      law_name: "Released Law",
+      article_no: "Article 1",
+      source_uri: "https://law.example.invalid/1",
+      valid_from: "2026-01-01",
+      valid_to: null,
+      version_hash: versionHash,
+      matched_hs_code: "0303540000",
+      trade_type: "import",
+      required_document_code: "IMPORT_PERMIT",
+      required_document_name: "Import Permit",
+      agencies: ["TEST_AUTHORITY"],
+      eligibility: "finding",
+      retrieval_methods: ["exact_hs"],
+    };
     const complete = reviewRunPayload({
       review_as_of: "2026-07-21",
       trade_type: "import",
@@ -651,7 +786,7 @@ describe("Backend API v1 client", () => {
       auto_completion_profile: {
         profile_id: profileId,
         approved_document_types: ["CI", "PL", "BL", "CO"],
-        approved_required_document_codes: [],
+        approved_required_document_codes: ["IMPORT_PERMIT"],
         approval_digest: releaseIdentity.backend_auto_completion_approval_digest,
       },
       review_disposition: "auto_review_complete",
@@ -680,49 +815,93 @@ describe("Backend API v1 client", () => {
       release_identity: releaseIdentity,
       review_stage_trace: mandatoryStageTrace,
       result_detail: {
-        schema_version: "3.0",
-        status: "completed",
-        requires_human_review: false,
-        case_id: "case-1",
         review_as_of: "2026-07-21",
         trade_type: "import",
-        input_manifest_sha256: "b".repeat(64),
+        jurisdiction: "KR",
         retrieval_status: "ok",
         retrieval_coverage: "complete",
         knowledge_snapshot_id: "generation-1",
+        retrieval_results: [{
+          item_id: "item-1",
+          hs_resolution: "exact",
+          resolved_hsk10: "0303540000",
+          candidate_hsk10s: ["0303540000"],
+          coverage: "complete",
+          requirements_found: true,
+          evidence: [ragEvidence],
+          errors: [],
+        }],
+        validation_issues: [],
+        regulatory_findings: [],
         review_gaps: [],
+        review_plan: { plan_id: `plan_${"1".repeat(64)}`, mode: "bounded", actions: [] },
         document_results: documentResults,
         review_stage_trace: mandatoryStageTrace,
-        rag_evidence: [{
-          evidence_id: evidenceId,
-          source_record_id: "law-1",
-          source_type: "law_article",
-          item_id: "item-1",
-          title: "released Evidence",
-          text: "released text",
-          law_id: "LAW-1",
-          law_name: "Released Law",
-          source_uri: "https://law.example.invalid/1",
-          version_hash: "a".repeat(64),
-          trade_type: "import",
-          eligibility: "supporting",
-          retrieval_methods: ["exact_hs"],
-        }],
+        rag_evidence: [ragEvidence],
+        report: {
+          case_id: "case-1",
+          overall_status: "completed",
+          summary: {
+            total_documents: 4,
+            total_issues: 0,
+            critical: 0,
+            high: 0,
+            medium: 0,
+            low: 0,
+            average_extraction_confidence: 1,
+            outcome_reasons: [],
+            retrieval_status: "ok",
+            retrieval_coverage: "complete",
+            knowledge_snapshot_id: "generation-1",
+          },
+          document_summary: documentResults.map((document) => ({
+            document_id: document.document_id,
+            document_type: document.document_type,
+            extraction_status: document.extraction_status,
+            extraction_confidence: document.extraction_confidence,
+          })),
+          issues: [],
+          regulatory_findings: [],
+          rag_evidence: [ragEvidence],
+          disclaimer: "Released pre-clearance review aid.",
+        },
         fact_ledger: {
           ledger_id: `ledger_${"3".repeat(64)}`,
           entries: [...fieldLedgerEntries, {
             fact_id: `fact_${"e".repeat(64)}`,
             kind: "evidence",
             reference_id: evidenceId,
-            label: "released Evidence",
-            value: "released text",
+            label: "released import requirement",
+            value: "A verified import permit is required.",
             document_id: null,
             source_sha256: "f".repeat(64),
+          }, {
+            fact_id: `fact_${"0".repeat(64)}`,
+            kind: "outcome",
+            reference_id: outcomeReference,
+            label: "deterministic_outcome",
+            value: canonicalJson(outcomeValue),
+            document_id: null,
+            source_sha256: "0".repeat(64),
           }],
         },
       },
     });
     expect(decodeReviewRun(complete).review_disposition).toBe("auto_review_complete");
+    const mutateEveryEvidenceCopy = (
+      value: Record<string, unknown>,
+      key: string,
+      replacement: unknown,
+    ): void => {
+      const detail = value.result_detail as {
+        rag_evidence: Array<Record<string, unknown>>;
+        report: { rag_evidence: Array<Record<string, unknown>> };
+        retrieval_results: Array<{ evidence: Array<Record<string, unknown>> }>;
+      };
+      detail.rag_evidence[0]![key] = replacement;
+      detail.report.rag_evidence[0]![key] = replacement;
+      detail.retrieval_results[0]!.evidence[0]![key] = replacement;
+    };
     const mutations: Array<(value: Record<string, unknown>) => void> = [
       (value) => { value.release_identity = { ...releaseIdentity, kill_switch_active: true }; },
       (value) => { value.release_identity = { ...releaseIdentity, model_id: "claude-sonnet-5", model_revision: "claude-sonnet-5" }; },
@@ -730,7 +909,32 @@ describe("Backend API v1 client", () => {
       (value) => { (value.result_detail as Record<string, unknown>).rag_evidence = [{}]; },
       (value) => { ((value.result_detail as { rag_evidence: Array<Record<string, unknown>> }).rag_evidence[0]!).source_uri = "about:blank"; },
       (value) => { ((value.result_detail as { fact_ledger: { entries: Array<Record<string, unknown>> } }).fact_ledger.entries[0]!).label = "forged label"; },
+      (value) => { ((value.result_detail as { fact_ledger: { entries: Array<Record<string, unknown>> } }).fact_ledger.entries[0]!).value = "forged field value"; },
+      (value) => { const entry = (value.result_detail as { fact_ledger: { entries: Array<Record<string, unknown>> } }).fact_ledger.entries.find((item) => item.kind === "outcome")!; entry.value = canonicalJson({ ...outcomeValue, requires_human_review: true }); },
       (value) => { (value.result_detail as Record<string, unknown>).review_gaps = [{ gap_id: `gap_${"6".repeat(64)}`, gap_type: "release_gate", reason_code: "not_released", source_reference_ids: [evidenceId], status: "deferred" }]; },
+      (value) => { delete (value.result_detail as Record<string, unknown>).review_gaps; },
+      (value) => { delete value.required_actions; },
+      (value) => { delete (value.result_detail as Record<string, unknown>).validation_issues; },
+      (value) => { delete (value.result_detail as Record<string, unknown>).regulatory_findings; },
+      (value) => { value.issues = []; },
+      (value) => { ((value.result_detail as { fact_ledger: { entries: Array<Record<string, unknown>> } }).fact_ledger.entries).push({ fact_id: `fact_${"6".repeat(64)}`, kind: "issue", reference_id: `issue_${"6".repeat(64)}`, label: "MATERIAL_MISMATCH", value: "hidden mismatch", document_id: "doc-ci", source_sha256: "6".repeat(64) }); },
+      (value) => { ((value.result_detail as { fact_ledger: { entries: Array<Record<string, unknown>> } }).fact_ledger.entries).push({ fact_id: `fact_${"8".repeat(64)}`, kind: "finding", reference_id: `finding_${"8".repeat(64)}`, label: "HIDDEN_FINDING", value: "hidden finding", document_id: "doc-ci", source_sha256: "8".repeat(64) }); },
+      (value) => { ((value.result_detail as { fact_ledger: { entries: Array<Record<string, unknown>> } }).fact_ledger.entries).push({ fact_id: `fact_${"9".repeat(64)}`, kind: "evidence", reference_id: `ev_${"9".repeat(64)}`, label: "hidden evidence", value: "hidden evidence", document_id: null, source_sha256: "9".repeat(64) }); },
+      (value) => { ((value.result_detail as { report: { rag_evidence: Array<Record<string, unknown>> } }).report.rag_evidence).pop(); },
+      (value) => { ((value.result_detail as { report: { rag_evidence: Array<Record<string, unknown>> } }).report.rag_evidence[0]!).text = "contradictory report Evidence"; },
+      (value) => { ((value.result_detail as { retrieval_results: Array<{ evidence: Array<Record<string, unknown>> }> }).retrieval_results[0]!.evidence[0]!).text = "contradictory retrieval Evidence"; },
+      (value) => { ((value.result_detail as { retrieval_results: Array<Record<string, unknown>> }).retrieval_results[0]!).coverage = "partial"; },
+      (value) => { ((value.result_detail as { retrieval_results: Array<Record<string, unknown>> }).retrieval_results[0]!).hs_resolution = "ambiguous"; },
+      (value) => { ((value.result_detail as { retrieval_results: Array<Record<string, unknown>> }).retrieval_results[0]!).resolved_hsk10 = null; },
+      (value) => { ((value.result_detail as { retrieval_results: Array<Record<string, unknown>> }).retrieval_results[0]!).errors = [{ code: "UPSTREAM_PARTIAL", message: "partial", retryable: false }]; },
+      (value) => { ((value.result_detail as { retrieval_results: Array<Record<string, unknown>> }).retrieval_results[0]!).requirements_found = false; },
+      (value) => { ((value.result_detail as { retrieval_results: Array<Record<string, unknown>> }).retrieval_results[0]!).status = "ok"; },
+      (value) => { mutateEveryEvidenceCopy(value, "required_document_code", "UNVERIFIED_PERMIT"); },
+      (value) => { mutateEveryEvidenceCopy(value, "required_document_name", null); },
+      (value) => { mutateEveryEvidenceCopy(value, "matched_hs_code", "9999999999"); },
+      (value) => { mutateEveryEvidenceCopy(value, "matched_hs_code", "030354"); },
+      (value) => { mutateEveryEvidenceCopy(value, "eligibility", "blocked"); },
+      (value) => { ((value.result_detail as { report: { summary: Record<string, unknown> } }).report.summary).outcome_reasons = ["manual_action_required"]; },
       (value) => { (value.narrative_report as Record<string, unknown>).generation_mode = "deterministic_fallback"; (value.narrative_report as Record<string, unknown>).generated_by = "deterministic_fallback"; },
       (value) => { ((value.narrative_report as { summary: Array<Record<string, unknown>> }).summary[0]!).citation_ids = []; },
       (value) => { delete value.input_document_manifest; },
@@ -745,7 +949,10 @@ describe("Backend API v1 client", () => {
       (value) => { ((value.result_detail as { review_stage_trace: Array<Record<string, unknown>> }).review_stage_trace[0]!).sequence = 2; },
       (value) => { (value.narrative_report as Record<string, unknown>).impact = [{ claim_id: `claim_${"8".repeat(64)}`, text: "Uncited impact", citation_ids: [], material: false }]; },
       (value) => { (value.narrative_report as Record<string, unknown>).required_actions = [{ claim_id: `claim_${"1".repeat(64)}`, text: "Aliased claim", citation_ids: [evidenceId] }]; },
+      (value) => { (value.narrative_report as Record<string, unknown>).required_actions = [{ claim_id: `claim_${"9".repeat(64)}`, text: "Manual action required.", citation_ids: [evidenceId] }]; },
       (value) => { ((value.narrative_report as { summary: Array<Record<string, unknown>> }).summary[0]!).citations = [{ reference_id: evidenceId }]; },
+      (value) => { value.result_digest = "0".repeat(64); },
+      (value) => { value.provider_result_sha256 = "0".repeat(64); },
     ];
     for (const mutate of mutations) {
       const attacked = structuredClone(complete);

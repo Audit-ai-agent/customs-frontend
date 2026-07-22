@@ -202,6 +202,9 @@ export class ApiClient {
   }
 
   enqueueReview(caseId: string, payload: EnqueueReviewRequest, idempotencyKey: string): Promise<JobRecord> {
+    if (this.session === undefined) {
+      throw new ContractError("Review enqueue binding requires an authenticated session");
+    }
     if (
       !Array.isArray(payload.submitted_document_codes)
       || payload.submitted_document_codes.length !== 0
@@ -225,6 +228,10 @@ export class ApiClient {
     return this.request(`/cases/${segment(caseId)}/reviews`, { ...init, headers }, (value) => {
       const job = decodeJobResponse(value);
       this.assertIdentity(job.case_id, caseId, "Review Job Case");
+      if (job.kind !== "review" || (job.parent_run_id !== undefined && job.parent_run_id !== null)) {
+        throw new ContractError("Review enqueue must return a root review Job");
+      }
+      this.assertActor(job.created_by, "Review Job creator");
       return job;
     });
   }

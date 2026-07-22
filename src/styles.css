@@ -159,6 +159,13 @@ textarea { resize: vertical; line-height: 1.5; }
 .field-list dd { display: grid; gap: 0.2rem; }
 .field-list small { color: var(--muted); }
 .issue, .finding, .evidence { margin-bottom: 0.6rem; padding: 0.7rem; border-left: 3px solid #8da0b4; background: var(--soft); }
+.evidence-boundary { margin-bottom: 0.75rem; padding: 0.8rem; border: 2px solid; border-radius: 0.5rem; }
+.evidence-boundary strong { display: block; margin-bottom: 0.25rem; letter-spacing: 0.04em; }
+.evidence-boundary p { margin: 0; font-size: 0.78rem; line-height: 1.5; }
+.evidence-boundary--diagnostic { color: #702300; border-color: #c2410c; background: repeating-linear-gradient(135deg, #fff4e8, #fff4e8 12px, #ffe6ce 12px, #ffe6ce 24px); }
+.evidence-boundary--release { color: var(--positive); border-color: #58a77d; background: var(--positive-bg); }
+.evidence--diagnostic { border: 2px dashed #c2410c; border-left-width: 5px; background: #fff8ef; }
+.evidence--release-bound { border-color: var(--positive); background: #f1faf5; }
 .required-action { margin-bottom: 0.6rem; padding: 0.7rem; border-left: 3px solid var(--caution); background: var(--caution-bg); }
 .required-action p { margin: 0.35rem 0; }
 .required-action--high, .required-action--critical { border-color: var(--negative); background: var(--negative-bg); }

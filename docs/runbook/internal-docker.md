@@ -30,15 +30,17 @@ Frontend container에는 runtime secret을 주입하지 않는다. Nginx는 Dock
 8. `auditor`로 조회·근거 이동·audit는 되지만 Case·문서·제안·결정 수정이 비활성인지 확인한다.
    - Backend가 Chat history GET을 403으로 제한해도 Run·Evidence·audit가 계속 표시되고 Chat은 읽기 전용 안내로 대체되어야 한다.
 9. `clean_text_production_candidate_blocked`는 실행되더라도 Release/kill-switch 요건 전에 `auto_review_complete`를 성공으로 표시하지 않는지 확인한다.
-10. Review enqueue 응답을 의도적으로 끊어 새로고침한 뒤 다시 로그인한다. 해당 Case의 새 Review가 차단되고, `sessionStorage`에는 조직·OIDC subject namespace 아래 `case_id`, `case_revision`, `job_id`, `idempotency_key`만 있어야 한다. token·원문·결과는 없어야 한다.
+10. Review enqueue 응답을 의도적으로 끊어 새로고침한 뒤 다시 로그인한다. 해당 Case의 새 Review가 차단되고, `sessionStorage`에는 조직·OIDC subject namespace 아래 `case_id`, `case_revision`, `job_id`, `job_kind`, `parent_run_id`, `request_sha256`, `idempotency_key`만 있어야 한다. Review는 `job_kind=review`, `parent_run_id=null`, 고정 text-only request SHA-256이어야 하며 token·원문·결과는 없어야 한다.
 11. 저장된 Job 재조회 또는 명시적 "같은 요청 키로 대조"가 동일 intent를 복구하고, network/503 polling 오류가 1·2·4초 순서의 bounded backoff를 사용하는지 확인한다.
 12. `reviewer`·`auditor`에는 전달 대조 form이 없고, `approver` 또는 `admin`에만 표시되는지 확인한다. Backend도 reviewer token의 reconciliation POST를 403으로 거절해야 한다.
 13. 단순 timeout 설명이나 확인 체크 없는 입력으로 차단을 해제할 수 없어야 한다. 64자리 소문자 SHA-256, 10자 이상 사유, 명시적 미처리 확인을 제출한 뒤 Backend가 `failed + delivery_reconciled`를 반환해야만 복구 레코드가 삭제되고 새 심사가 활성화되어야 한다.
 14. reconciliation POST 응답을 의도적으로 끊은 경우 차단과 request hash 복구 레코드가 남고 사유·증거 원문은 남지 않아야 한다. 같은 내용을 다시 제출할 때 POST보다 권위 Job GET이 먼저 호출되는지 확인한다. GET에서 `delivery_reconciled`가 확인되면 두 번째 POST 없이 운영 대조 종결로 표시되어야 한다. 계속 `delivery_uncertain`이면 같은 request hash만 재전송한다.
 15. Job GET/POST가 요청 URL과 다른 `job_id` 또는 현재 화면과 다른 `case_id`를 반환하면 응답을 적용하지 않고 계속 차단하는지 확인한다.
-16. Proposal approve/reject POST 응답을 의도적으로 끊고 새로고침한다. `sessionStorage`의 decision intent에는 Proposal/Run/Case ID, Case revision, parent digest, request SHA-256, idempotency key, decision만 있고 승인/거절 사유는 없어야 한다. 재로그인 후 Backend Proposal 목록의 상태를 권위 있는 결과로 사용하고, `approved + child_job_id`면 해당 Job에 재연결하는지 확인한다.
+16. Proposal approve/reject POST 응답을 의도적으로 끊고 새로고침한다. `sessionStorage`의 decision intent에는 Proposal/Run/Case ID, Case revision, parent digest, request SHA-256, idempotency key, decision만 있고 승인/거절 사유는 없어야 한다. 재로그인 후 Backend Proposal과 HumanDecision 목록을 함께 권위 원장으로 사용하고, 현재 subject·요청한 terminal status·scoped key·request digest까지 exact match인 `approved + 동일 child_job_id`에만 재연결하는지 확인한다. reject에는 child Job이 없어야 하며, 다른 actor/key/digest이면 `superseded`로 표시되고 child Job GET이 없어야 한다.
 17. Case/Run/Document/Supporting/Audit/Proposal/Chat 응답이 URL ID, 로그인 조직, 선택 Case/Run lineage와 하나라도 다르면 목록 전체를 폐기하고 화면에 적용하지 않는지 확인한다.
 18. SSE가 `text/event-stream`이 아니거나 요청 Job ID와 다르거나 sequence가 중복·역행하면 stream을 적용하지 않고 polling 복구 경로로 전환하는지 확인한다.
+19. `human_review_required` 또는 diagnostic/production-candidate Run의 Evidence 위에 `DIAGNOSTIC EVIDENCE — NOT RELEASED`가 강하게 표시되고 각 Evidence card가 diagnostic 상태인지 확인한다. 오직 `production + auto_review_complete`만 `RELEASE-BOUND EVIDENCE`로 표시되어야 하며, 진단 Evidence를 법적 판단·자동완료 근거로 표현하면 Release를 중단한다.
+20. 저장된 Run의 `result_digest`를 한 글자 바꾸거나 effective-summary의 provider hash·manifest·상태·판정·보증·완료 자격·필수 조치·stage/profile 중 하나를 변조하면 전체 Run이 거절되는지 확인한다. 자동완료의 Retrieval item을 partial/ambiguous/error 상태로 바꾸거나 report outcome reason·narrative required action을 추가해도 거절되어야 한다. 반대로 `requirements_found=true`인 요건 Evidence라도 required code가 검증된 Supporting Document profile에 결박되고 Finding이 0이면 정상 자동완료 Evidence로 표시되어야 한다.
 
 ## 장애와 Rollback
 

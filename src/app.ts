@@ -10,7 +10,6 @@ import type {
   CorrectionProposal,
   CorrectionProposalDecisionResponse,
   CorrectionOperation,
-  EvidenceItem,
   ExtractedField,
   GroundedAnswer,
   HumanDecisionRecord,
@@ -35,12 +34,15 @@ const MAX_PRIMARY_DOCUMENTS = 6;
 const MAX_SUPPORTING_DOCUMENTS = 100;
 const MAX_PRIMARY_TEXT_CHARACTERS = 500_000;
 const MAX_DOCUMENT_TEXT_CHARACTERS = 200_000;
-const REVIEW_RECOVERY_STORAGE_PREFIX = "customs.workbench.review-recovery.v2";
+const REVIEW_RECOVERY_STORAGE_PREFIX = "customs.workbench.review-recovery.v3";
 const PROPOSAL_DECISION_RECOVERY_STORAGE_PREFIX = "customs.workbench.proposal-decision-recovery.v1";
 const DELIVERY_RECONCILIATION_RECOVERY_STORAGE_PREFIX = "customs.workbench.delivery-reconciliation-recovery.v1";
 const MAX_RECOVERY_RECORDS = 50;
 const MAX_TRANSIENT_POLL_FAILURES = 8;
 const MAX_POLL_DELAY_MS = 15_000;
+// SHA-256 of canonical JSON {"submitted_document_codes":[],"trade_type":"import"}.
+// The first text-only release exposes no user-controlled Review body fields.
+const DEFAULT_REVIEW_REQUEST_SHA256 = "cc9c10fbfc72c972dd063b063b033f031c43ad17f44556a835ff497b3ea52108";
 
 interface ReviewRecoveryRecord {
   org_id: string;
@@ -48,6 +50,9 @@ interface ReviewRecoveryRecord {
   case_id: string;
   case_revision: number;
   job_id: string | null;
+  job_kind: "review" | "revision";
+  parent_run_id: string | null;
+  request_sha256: string;
   idempotency_key: string;
 }
 
@@ -283,8 +288,49 @@ export class WorkbenchApp {
     return this.hasRole("approver", "admin");
   }
 
-  private canDecideProposal(proposal: CorrectionProposal): boolean {
-    return this.canApprove() && proposal.created_by !== this.state.session?.subject;
+  private canDecideProposal(proposal: CorrectionProposal, run: ReviewRun): boolean {
+    return this.proposalDecisionBlockReason(proposal, run) === undefined;
+  }
+
+  private proposalDecisionBlockReason(proposal: CorrectionProposal, run: ReviewRun): string | undefined {
+    const current = this.state.selectedCase;
+    const session = this.state.session;
+    if (!this.canApprove() || !current || !session) return "현재 역할에는 제안 결정 권한이 없습니다.";
+    if (proposal.created_by === session.subject) return "자신이 만든 revision 제안은 결정할 수 없습니다.";
+    if (proposal.status !== "pending") return "이미 종결된 제안입니다.";
+    if (
+      proposal.org_id !== session.org_id
+      || proposal.case_id !== current.case_id
+      || proposal.review_run_id !== run.review_run_id
+      || proposal.parent_result_digest !== run.result_digest
+      || proposal.parent_input_manifest_sha256 !== run.agent_input_manifest_sha256
+      || proposal.case_revision !== current.revision
+    ) return "Proposal의 parent result·input manifest·Case revision 계보가 현재 Run과 일치하지 않습니다.";
+    const correctionTargets = new Set(run.fields
+      .filter((field) => field.document_id !== "unbound-document")
+      .map((field) => `${field.document_id}\u0000${field.field_path}`));
+    const knownSources = new Set(run.sources.map((source) => source.source_id));
+    const confirmableSources = new Set(run.fields.flatMap((field) => field.source_ids)
+      .filter((sourceId) => knownSources.has(sourceId)));
+    const supportingDocuments = new Set(this.state.supportingDocuments.map((document) => document.document_id));
+    const corrections = [
+      ...proposal.corrections,
+      ...proposal.actions.flatMap((action) => action.correction ? [action.correction] : []),
+    ];
+    if (corrections.some((correction) => !correctionTargets.has(`${correction.document_id}\u0000${correction.field_path}`))) {
+      return "Proposal correction이 현재 Run의 알려진 추출 필드를 가리키지 않습니다.";
+    }
+    if (proposal.actions.some((action) => (
+      action.confirmed_reference_id !== undefined
+      && action.confirmed_reference_id !== null
+      && !confirmableSources.has(action.confirmed_reference_id)
+    ))) return "Proposal 확인 대상이 현재 Run의 알려진 FactLedger 원문 근거가 아닙니다.";
+    if (proposal.actions.some((action) => (
+      action.supporting_document_id !== undefined
+      && action.supporting_document_id !== null
+      && !supportingDocuments.has(action.supporting_document_id)
+    ))) return "Proposal 요건서류가 현재 Case에 등록된 문서가 아닙니다.";
+    return undefined;
   }
 
   private canChat(): boolean {
@@ -822,7 +868,7 @@ export class WorkbenchApp {
         "article",
         { className: "review-pane" },
         el("h2", { text: "3. 법령 Evidence" }),
-        this.renderEvidence(run.evidence),
+        this.renderEvidence(run),
         run.findings.length > 0 ? el("h3", { text: "규정 Finding" }) : null,
         ...run.findings.map((finding) =>
           el(
@@ -921,21 +967,38 @@ export class WorkbenchApp {
     );
   }
 
-  private renderEvidence(items: EvidenceItem[]): HTMLElement {
-    if (items.length === 0) return empty("검증된 Evidence가 없습니다. 자동완료 근거로 사용할 수 없습니다.");
+  private renderEvidence(run: ReviewRun): HTMLElement {
+    const items = run.evidence;
+    const isReleasedForAutomaticReview = run.assurance_level === "production"
+      && run.review_disposition === "auto_review_complete";
+    const releaseState = isReleasedForAutomaticReview ? "release-bound" : "diagnostic";
+    const boundary = isReleasedForAutomaticReview
+      ? el(
+          "div",
+          { className: "evidence-boundary evidence-boundary--release", attrs: { role: "note", "data-evidence-release-state": releaseState } },
+          el("strong", { text: "RELEASE-BOUND EVIDENCE" }),
+          el("p", { text: "이 Evidence는 현재 Run의 서명된 Agent·Data Release와 자동완료 판정에 결박되어 있습니다." }),
+        )
+      : el(
+          "div",
+          { className: "evidence-boundary evidence-boundary--diagnostic", attrs: { role: "alert", "data-evidence-release-state": releaseState } },
+          el("strong", { text: "DIAGNOSTIC EVIDENCE — NOT RELEASED" }),
+          el("p", { text: "법령 검색 기능 확인용 결과입니다. 법적 판단 또는 Production 자동완료 근거로 사용할 수 없습니다." }),
+        );
     return el(
       "div",
-      { className: "evidence-list" },
-      ...items.map((item) =>
+      { className: `evidence-list evidence-list--${releaseState}`, attrs: { "data-evidence-release-state": releaseState } },
+      boundary,
+      ...(items.length === 0 ? [empty("검증된 Evidence가 없습니다. 자동완료 근거로 사용할 수 없습니다.")] : items.map((item) =>
         el(
           "article",
-          { className: "evidence", attrs: { "data-source-id": item.evidence_id, tabindex: "-1" } },
+          { className: `evidence evidence--${releaseState}`, attrs: { "data-source-id": item.evidence_id, "data-evidence-release-state": releaseState, tabindex: "-1" } },
           el("span", { className: "evidence__law", text: `${item.law_id}${item.article ? ` · ${item.article}` : ""}` }),
           el("strong", { text: item.title }),
           el("p", { text: item.excerpt }),
           el("small", { text: `source hash ${item.source_hash.slice(0, 12)}… · ${item.effective_date ?? "시행일 미표시"}` }),
         ),
-      ),
+      )),
     );
   }
 
@@ -1089,7 +1152,8 @@ export class WorkbenchApp {
   }
 
   private renderRevisionProposal(proposal: CorrectionProposal, run: ReviewRun): HTMLElement {
-    const canDecide = this.canDecideProposal(proposal);
+    const decisionBlockReason = this.proposalDecisionBlockReason(proposal, run);
+    const canDecide = decisionBlockReason === undefined;
     const decisionForm = (decision: "approve" | "reject"): HTMLFormElement =>
       el(
         "form",
@@ -1114,7 +1178,7 @@ export class WorkbenchApp {
       el("small", { text: `parent ${proposal.parent_result_digest.slice(0, 12)}… · manifest ${proposal.parent_input_manifest_sha256.slice(0, 12)}… · revision ${proposal.case_revision}` }),
       proposal.status === "pending" && canDecide ? el("div", { className: "decision-grid" }, decisionForm("approve"), decisionForm("reject")) : null,
       proposal.status === "pending" && this.canApprove() && !canDecide
-        ? el("p", { className: "notice notice--warning", text: "자신이 만든 revision 제안은 승인하거나 거절할 수 없습니다. 다른 승인자가 검토해야 합니다." })
+        ? el("p", { className: "notice notice--warning", text: decisionBlockReason ?? "현재 Proposal을 안전하게 결정할 수 없습니다." })
         : null,
       proposal.decision_reason ? el("p", { className: "section-help", text: `결정: ${proposal.decision_reason}` }) : null,
     );
@@ -1382,16 +1446,20 @@ export class WorkbenchApp {
     await this.act(async () => {
       const intent = `review:${current.case_id}`;
       const session = this.requireSession();
+      const request = { trade_type: "import" as const, submitted_document_codes: [] as string[] };
       const recovery: ReviewRecoveryRecord = {
         org_id: session.org_id,
         subject: session.subject,
         case_id: current.case_id,
         case_revision: current.revision,
         job_id: null,
+        job_kind: "review",
+        parent_run_id: null,
+        request_sha256: await sha256CanonicalJson(request),
         idempotency_key: this.idempotencyKey(intent),
       };
       this.saveRecovery(recovery);
-      await this.submitReviewIntent(recovery);
+      await this.submitReviewIntent(recovery, request);
     });
   }
 
@@ -1401,14 +1469,27 @@ export class WorkbenchApp {
     await this.act(async () => this.submitReviewIntent(recovery));
   }
 
-  private async submitReviewIntent(recovery: ReviewRecoveryRecord): Promise<void> {
+  private async submitReviewIntent(
+    recovery: ReviewRecoveryRecord,
+    request = { trade_type: "import" as const, submitted_document_codes: [] as string[] },
+  ): Promise<void> {
     try {
+      const session = this.requireSession();
+      if (
+        recovery.org_id !== session.org_id
+        || recovery.subject !== session.subject
+        || recovery.job_kind !== "review"
+        || recovery.parent_run_id !== null
+        || recovery.request_sha256 !== await sha256CanonicalJson(request)
+      ) {
+        throw new Error("저장된 Review 요청이 현재 조직·사용자·요청 본문과 정확히 결박되지 않았습니다.");
+      }
       const job = await this.api.enqueueReview(
         recovery.case_id,
-        { trade_type: "import", submitted_document_codes: [] },
+        request,
         recovery.idempotency_key,
       );
-      if (job.case_id !== recovery.case_id) throw new Error("Backend Job이 요청한 Case와 일치하지 않습니다.");
+      this.assertJobRecoveryBinding(job, recovery);
       this.saveRecovery({ ...recovery, job_id: job.job_id });
       const intent = `review:${recovery.case_id}`;
       this.jobIntentById.set(job.job_id, intent);
@@ -1438,7 +1519,13 @@ export class WorkbenchApp {
 
   private saveRecovery(record: ReviewRecoveryRecord): void {
     const session = this.requireSession();
-    if (record.org_id !== session.org_id || record.subject !== session.subject) {
+    if (
+      record.org_id !== session.org_id
+      || record.subject !== session.subject
+      || !/^[a-f0-9]{64}$/.test(record.request_sha256)
+      || (record.job_kind === "review") !== (record.parent_run_id === null)
+      || (record.job_kind === "revision" && record.job_id === null)
+    ) {
       throw new Error("Job 복구 상태가 현재 세션과 일치하지 않습니다.");
     }
     const next = new Map(this.recoveryByCase);
@@ -1450,7 +1537,16 @@ export class WorkbenchApp {
 
   private saveProposalDecisionRecovery(record: ProposalDecisionRecoveryRecord): void {
     const session = this.requireSession();
-    if (record.org_id !== session.org_id || record.subject !== session.subject) {
+    if (
+      record.org_id !== session.org_id
+      || record.subject !== session.subject
+      || !validResourceId(record.case_id)
+      || !validResourceId(record.review_run_id)
+      || !validResourceId(record.proposal_id)
+      || !/^[a-f0-9]{64}$/.test(record.parent_result_digest)
+      || !/^[a-f0-9]{64}$/.test(record.request_sha256)
+      || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(record.idempotency_key)
+    ) {
       throw new Error("제안 결정 복구 상태가 현재 세션과 일치하지 않습니다.");
     }
     const next = new Map(this.proposalDecisionRecovery);
@@ -1494,22 +1590,59 @@ export class WorkbenchApp {
     proposal: CorrectionProposal,
     run: ReviewRun,
     current: CaseDetail,
+    recovery: ProposalDecisionRecoveryRecord,
+    expectedScopedIdempotencyKey: string,
   ): void {
     const session = this.requireSession();
+    const approved = recovery.decision === "approve";
+    const responseJob = response.job ?? null;
+    const childJobId = response.proposal.child_job_id ?? null;
     if (
       response.proposal.proposal_id !== proposal.proposal_id
       || response.proposal.review_run_id !== run.review_run_id
       || response.proposal.case_id !== current.case_id
       || response.proposal.org_id !== session.org_id
+      || response.proposal.parent_result_digest !== run.result_digest
+      || response.proposal.parent_input_manifest_sha256 !== run.agent_input_manifest_sha256
+      || response.proposal.case_revision !== current.revision
+      || response.proposal.decided_by !== session.subject
+      || response.proposal.decided_at === undefined
+      || response.proposal.decided_at === null
+      || response.proposal.status !== (approved ? "approved" : "rejected")
       || response.decision.proposal_id !== proposal.proposal_id
       || response.decision.review_run_id !== run.review_run_id
       || response.decision.case_id !== current.case_id
       || response.decision.org_id !== session.org_id
-      || (response.job !== undefined && response.job !== null && (
-        response.job.case_id !== current.case_id || response.job.kind !== "revision"
+      || response.decision.decided_by !== session.subject
+      || response.decision.decision !== recovery.decision
+      || response.decision.idempotency_key !== expectedScopedIdempotencyKey
+      || response.decision.idempotency_request_digest !== recovery.request_sha256
+      || (approved && (responseJob === null || childJobId === null || responseJob.job_id !== childJobId))
+      || (!approved && (responseJob !== null || childJobId !== null))
+      || (responseJob !== null && (
+        responseJob.case_id !== current.case_id
+        || responseJob.kind !== "revision"
+        || responseJob.created_by !== session.subject
+        || responseJob.parent_run_id !== run.review_run_id
       ))
     ) {
       throw new Error("Backend 제안 결정 응답이 현재 Case·Run·조직·Proposal 계보와 일치하지 않습니다.");
+    }
+  }
+
+  private assertJobRecoveryBinding(job: JobRecord, recovery: ReviewRecoveryRecord): void {
+    const session = this.requireSession();
+    if (
+      recovery.org_id !== session.org_id
+      || recovery.subject !== session.subject
+      || job.case_id !== recovery.case_id
+      || (recovery.job_id !== null && job.job_id !== recovery.job_id)
+      || job.kind !== recovery.job_kind
+      || job.created_by !== session.subject
+      || (job.parent_run_id ?? null) !== recovery.parent_run_id
+      || !/^[a-f0-9]{64}$/.test(recovery.request_sha256)
+    ) {
+      throw new Error("Backend Job이 저장된 조직·사용자·Case·요청 계보와 일치하지 않습니다.");
     }
   }
 
@@ -1602,6 +1735,7 @@ export class WorkbenchApp {
       if (recovery && recovery.job_id !== null && recovery.job_id !== job.job_id) {
         throw new Error("Backend Job이 저장된 Case 복구 상태와 일치하지 않습니다.");
       }
+      if (recovery?.job_id === job.job_id) this.assertJobRecoveryBinding(job, recovery);
       this.state.job = job;
       this.transientPollFailures = 0;
       try {
@@ -1652,6 +1786,8 @@ export class WorkbenchApp {
 
   private async handleTerminalJob(job: JobRecord): Promise<void> {
     this.streamAbort?.abort();
+    const recovery = this.recoveryByCase.get(job.case_id);
+    if (recovery?.job_id === job.job_id) this.assertJobRecoveryBinding(job, recovery);
     if (job.status === "succeeded") {
       this.clearIdempotencyKeysForJob(job);
       if (job.review_run_id) {
@@ -1673,17 +1809,14 @@ export class WorkbenchApp {
       return;
     }
     if (job.status === "delivery_uncertain") {
-      let existing = this.recoveryByCase.get(job.case_id);
-      if (!existing) {
-        const intent = this.jobIntentById.get(job.job_id);
-        const idempotencyKey = intent ? this.idempotencyKeys.get(intent) : undefined;
-        const current = this.state.selectedCase;
-        if (idempotencyKey && current?.case_id === job.case_id) {
-          const session = this.requireSession();
-          existing = { org_id: session.org_id, subject: session.subject, case_id: job.case_id, case_revision: current.revision, job_id: job.job_id, idempotency_key: idempotencyKey };
-        }
+      const existing = this.recoveryByCase.get(job.case_id);
+      if (!existing || existing.job_id !== job.job_id) {
+        this.state.error = "Agent 전달 상태가 불확실하지만 이 Job의 정확한 요청 digest·종류·사용자 계보를 가진 복구 기록이 없습니다. 새 Agent 호출을 만들지 말고 운영 대조가 필요합니다.";
+        this.render();
+        return;
       }
-      if (existing?.job_id === job.job_id) this.saveRecovery(existing);
+      this.assertJobRecoveryBinding(job, existing);
+      this.saveRecovery(existing);
       this.state.error = "Agent 호출 결과 수신 여부를 확정할 수 없습니다. Job과 Idempotency-Key를 보존했으며 운영 대조 전까지 이 Case의 새 Agent 호출을 차단합니다.";
       this.render();
     }
@@ -1870,7 +2003,7 @@ export class WorkbenchApp {
     decision: "approve" | "reject",
   ): Promise<void> {
     event.preventDefault();
-    if (!this.canDecideProposal(proposal) || this.state.busy || this.jobIsActive() || proposal.status !== "pending") return;
+    if (!this.canDecideProposal(proposal, run) || this.state.busy || this.jobIsActive() || proposal.status !== "pending") return;
     const current = this.state.selectedCase;
     if (!current || !run.result_digest) return;
     const data = new FormData(event.currentTarget as HTMLFormElement);
@@ -1892,9 +2025,16 @@ export class WorkbenchApp {
       proposal_id: proposal.proposal_id,
       decision,
       parent_result_digest: run.result_digest,
-      request_sha256: await sha256CanonicalJson(payload),
+      request_sha256: await sha256CanonicalJson({ proposal_id: proposal.proposal_id, decision: payload }),
       idempotency_key: idempotencyKey,
     };
+    const expectedScopedIdempotencyKey = `idem_${await sha256CanonicalJson({
+      endpoint: "revision-proposal.decide/v1",
+      actor_id: session.subject,
+      org_id: session.org_id,
+      case_id: current.case_id,
+      supplied_key: idempotencyKey,
+    })}`;
     const previous = this.proposalDecisionRecovery.get(proposal.proposal_id);
     if (previous !== undefined && (
       previous.request_sha256 !== recovery.request_sha256
@@ -1911,14 +2051,42 @@ export class WorkbenchApp {
         payload,
         idempotencyKey,
       );
-      this.assertProposalDecisionResponse(response, proposal, run, current);
+      this.assertProposalDecisionResponse(
+        response,
+        proposal,
+        run,
+        current,
+        recovery,
+        expectedScopedIdempotencyKey,
+      );
       this.state.proposals = await this.api.listRevisionProposals(run.review_run_id);
       const authoritative = this.state.proposals.find((item) => item.proposal_id === proposal.proposal_id);
+      const expectedStatus = decision === "approve" ? "approved" : "rejected";
+      const expectedChildJobId = response.job?.job_id ?? null;
       if (!authoritative || authoritative.status === "pending") {
         throw new Error("Backend 제안 상태가 결정 응답을 확정하지 않아 복구 기록을 유지합니다.");
       }
+      if (
+        authoritative.status !== expectedStatus
+        || authoritative.decided_by !== session.subject
+        || authoritative.decided_at === undefined
+        || authoritative.decided_at === null
+        || (authoritative.child_job_id ?? null) !== expectedChildJobId
+      ) {
+        throw new Error("Backend 권위 Proposal이 현재 승인자의 결정·상태·child Job 계보와 일치하지 않습니다.");
+      }
       if (response.job) {
-        this.saveRecovery({ org_id: session.org_id, subject: session.subject, case_id: current.case_id, case_revision: current.revision, job_id: response.job.job_id, idempotency_key: idempotencyKey });
+        this.saveRecovery({
+          org_id: session.org_id,
+          subject: session.subject,
+          case_id: current.case_id,
+          case_revision: current.revision,
+          job_id: response.job.job_id,
+          job_kind: "revision",
+          parent_run_id: run.review_run_id,
+          request_sha256: recovery.request_sha256,
+          idempotency_key: idempotencyKey,
+        });
         this.jobIntentById.set(response.job.job_id, intent);
         this.state.job = response.job;
         this.pollAttempts = 0;
@@ -2055,9 +2223,13 @@ export class WorkbenchApp {
         : "이전 심사 요청 후 Case revision이 변경되어 운영 대조 전까지 새 심사를 차단합니다.";
       return;
     }
+    if (recovery.case_revision !== caseDetail.revision) {
+      this.state.error = "저장된 Job의 Case revision이 현재 Case와 달라 권위 Job을 자동 결박하지 않았습니다. 운영 대조 전까지 새 심사는 차단됩니다.";
+      return;
+    }
     try {
       const job = await this.api.getJob(recovery.job_id);
-      if (job.case_id !== caseDetail.case_id) throw new Error("저장된 Job과 Case의 소유 관계가 일치하지 않습니다.");
+      this.assertJobRecoveryBinding(job, recovery);
       this.state.job = job;
       if (job.status === "queued" || job.status === "running") await this.startJobTracking(job.job_id);
       else await this.handleTerminalJob(job);
@@ -2137,7 +2309,7 @@ export class WorkbenchApp {
     this.state.chat = chat;
     this.state.decisions = decisions;
     this.state.proposals = proposals;
-    await this.recoverProposalDecisionState(run, proposals);
+    await this.recoverProposalDecisionState(run, proposals, decisions);
     this.render();
   }
 
@@ -2167,7 +2339,11 @@ export class WorkbenchApp {
     }
   }
 
-  private async recoverProposalDecisionState(run: ReviewRun, proposals: CorrectionProposal[]): Promise<void> {
+  private async recoverProposalDecisionState(
+    run: ReviewRun,
+    proposals: CorrectionProposal[],
+    decisions: HumanDecisionRecord[],
+  ): Promise<void> {
     const current = this.state.selectedCase;
     const session = this.requireSession();
     if (!current) return;
@@ -2176,23 +2352,71 @@ export class WorkbenchApp {
         recovery.org_id !== session.org_id
         || recovery.subject !== session.subject
         || recovery.case_id !== current.case_id
+        || recovery.review_run_id !== run.review_run_id
+        || recovery.case_revision !== current.revision
         || recovery.parent_result_digest !== run.result_digest
       ) {
         throw new Error("저장된 제안 결정 복구 기록이 현재 Case·Run·조직·결과와 일치하지 않습니다.");
       }
       const proposal = proposals.find((item) => item.proposal_id === recovery.proposal_id);
       if (!proposal) throw new Error("저장된 제안 결정을 Backend 권위 목록에서 찾을 수 없습니다.");
+      if (
+        proposal.org_id !== session.org_id
+        || proposal.case_id !== current.case_id
+        || proposal.review_run_id !== run.review_run_id
+        || proposal.parent_result_digest !== run.result_digest
+        || proposal.parent_input_manifest_sha256 !== run.agent_input_manifest_sha256
+        || proposal.case_revision !== current.revision
+      ) {
+        throw new Error("Backend Proposal이 저장된 현재 사용자 결정 의도의 Case·Run·result·manifest·revision 계보와 일치하지 않습니다.");
+      }
       if (proposal.status === "pending") {
         this.state.notice = "이전 Proposal 결정 응답이 확정되지 않았습니다. 같은 내용과 Idempotency-Key로만 재전송하거나 Backend 상태를 확인하세요.";
         continue;
       }
-      if ((proposal.status === "approved") !== (recovery.decision === "approve")) {
-        throw new Error("Backend에 확정된 Proposal 결정이 저장된 의도와 다릅니다.");
+      const expectedScopedIdempotencyKey = `idem_${await sha256CanonicalJson({
+        endpoint: "revision-proposal.decide/v1",
+        actor_id: session.subject,
+        org_id: session.org_id,
+        case_id: current.case_id,
+        supplied_key: recovery.idempotency_key,
+      })}`;
+      const exactDecisions = decisions.filter((decision) => (
+        decision.proposal_id === recovery.proposal_id
+        && decision.review_run_id === recovery.review_run_id
+        && decision.case_id === recovery.case_id
+        && decision.org_id === recovery.org_id
+        && decision.decided_by === recovery.subject
+        && decision.decision === recovery.decision
+        && decision.idempotency_key === expectedScopedIdempotencyKey
+        && decision.idempotency_request_digest === recovery.request_sha256
+      ));
+      if (exactDecisions.length === 0 || proposal.decided_by !== recovery.subject) {
+        this.removeProposalDecisionRecovery(proposal.proposal_id);
+        this.state.notice = "이 Proposal은 다른 결정 요청 또는 다른 승인자에 의해 먼저 종결되어 현재 로컬 의도는 superseded 처리했습니다. 해당 child Job에는 현재 raw Idempotency-Key를 결박하지 않습니다.";
+        continue;
+      }
+      const approved = recovery.decision === "approve";
+      if (
+        exactDecisions.length !== 1
+        || proposal.decided_at === undefined
+        || proposal.decided_at === null
+        || (proposal.status === "approved") !== approved
+        || (approved && !proposal.child_job_id)
+        || (!approved && proposal.child_job_id !== undefined && proposal.child_job_id !== null)
+      ) {
+        throw new Error("Backend에 확정된 Proposal 결정이 저장된 현재 사용자 의도와 일관되지 않습니다.");
       }
       if (proposal.status === "approved") {
         if (!proposal.child_job_id) throw new Error("승인된 Proposal에 child Job 계보가 없습니다.");
         const job = await this.api.getJob(proposal.child_job_id);
-        if (job.case_id !== current.case_id || job.kind !== "revision") {
+        if (
+          job.job_id !== proposal.child_job_id
+          || job.case_id !== current.case_id
+          || job.kind !== "revision"
+          || job.created_by !== session.subject
+          || job.parent_run_id !== run.review_run_id
+        ) {
           throw new Error("Proposal child Job이 현재 Case의 Revision 계보와 일치하지 않습니다.");
         }
         this.saveRecovery({
@@ -2201,6 +2425,9 @@ export class WorkbenchApp {
           case_id: current.case_id,
           case_revision: recovery.case_revision,
           job_id: job.job_id,
+          job_kind: "revision",
+          parent_run_id: run.review_run_id,
+          request_sha256: recovery.request_sha256,
           idempotency_key: recovery.idempotency_key,
         });
         this.jobIntentById.set(job.job_id, `proposal:${proposal.proposal_id}:approve`);
@@ -2301,7 +2528,7 @@ function readReviewRecoveries(session: Session): ReviewRecoveryRecord[] {
     }
     const raw = value as Record<string, unknown>;
     const keys = Object.keys(raw).sort();
-    if (keys.join(",") !== "case_id,case_revision,idempotency_key,job_id,org_id,subject") {
+    if (keys.join(",") !== "case_id,case_revision,idempotency_key,job_id,job_kind,org_id,parent_run_id,request_sha256,subject") {
       throw new Error(`Job 복구 상태 ${index + 1}번에 허용되지 않은 필드가 있습니다.`);
     }
     if (
@@ -2312,17 +2539,29 @@ function readReviewRecoveries(session: Session): ReviewRecoveryRecord[] {
       || !Number.isInteger(raw.case_revision)
       || Number(raw.case_revision) < 0
       || (raw.job_id !== null && (typeof raw.job_id !== "string" || !/^[A-Za-z0-9._:-]{1,160}$/.test(raw.job_id)))
+      || (raw.job_kind !== "review" && raw.job_kind !== "revision")
+      || (raw.parent_run_id !== null && !validResourceId(raw.parent_run_id))
+      || (raw.job_kind === "review") !== (raw.parent_run_id === null)
+      || (raw.job_kind === "review" && raw.request_sha256 !== DEFAULT_REVIEW_REQUEST_SHA256)
+      || (raw.job_kind === "revision" && raw.job_id === null)
+      || typeof raw.request_sha256 !== "string"
+      || !/^[a-f0-9]{64}$/.test(raw.request_sha256)
       || typeof raw.idempotency_key !== "string"
       || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(raw.idempotency_key)
     ) {
       throw new Error(`Job 복구 상태 ${index + 1}번의 값이 올바르지 않습니다.`);
     }
+    const parentRunId = typeof raw.parent_run_id === "string" ? raw.parent_run_id : null;
+    const jobId = typeof raw.job_id === "string" ? raw.job_id : null;
     return {
       org_id: session.org_id,
       subject: session.subject,
       case_id: raw.case_id,
       case_revision: Number(raw.case_revision),
-      job_id: raw.job_id,
+      job_id: jobId,
+      job_kind: raw.job_kind,
+      parent_run_id: parentRunId,
+      request_sha256: raw.request_sha256,
       idempotency_key: raw.idempotency_key,
     };
   });
@@ -2373,7 +2612,7 @@ function readProposalDecisionRecoveries(session: Session): ProposalDecisionRecov
       || typeof raw.request_sha256 !== "string"
       || !/^[a-f0-9]{64}$/.test(raw.request_sha256)
       || typeof raw.idempotency_key !== "string"
-      || !/^[0-9a-f-]{36}$/i.test(raw.idempotency_key)
+      || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(raw.idempotency_key)
     ) {
       throw new Error(`Proposal 결정 복구 상태 ${index + 1}번의 값이 올바르지 않습니다.`);
     }

@@ -1,8 +1,9 @@
 import axe from "axe-core";
+import { createHash } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
 import { WorkbenchApp, type WorkbenchAuth } from "../src/app";
 import { ApiError, type ApiClient } from "../src/api/v1/client";
-import type { CorrectionProposal, JobRecord, ReviewRun } from "../src/api/v1/types";
+import type { CorrectionProposal, CorrectionProposalDecisionResponse, JobRecord, ReviewRun } from "../src/api/v1/types";
 import { UAT_SCENARIOS } from "../src/uat/scenarios";
 
 const run: ReviewRun = {
@@ -63,7 +64,17 @@ const proposal: CorrectionProposal = {
   created_at: "2026-07-21T12:00:00Z",
 };
 
-function jobRecord(jobId: string, kind: "review" | "revision" = "review"): JobRecord {
+const canonicalJson = (value: unknown): string => {
+  if (value === null || typeof value !== "object") return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  const record = value as Record<string, unknown>;
+  return `{${Object.keys(record).sort().map((key) => `${JSON.stringify(key)}:${canonicalJson(record[key])}`).join(",")}}`;
+};
+
+const canonicalSha256 = (value: unknown): string => createHash("sha256").update(canonicalJson(value)).digest("hex");
+const REVIEW_REQUEST_SHA256 = canonicalSha256({ trade_type: "import", submitted_document_codes: [] });
+
+function jobRecord(jobId: string, kind: "review" | "revision" = "review", createdBy = "reviewer-1"): JobRecord {
   return {
     job_id: jobId,
     case_id: "case-1",
@@ -71,7 +82,8 @@ function jobRecord(jobId: string, kind: "review" | "revision" = "review"): JobRe
     agent_call_state: "not_started",
     kind,
     attempt_count: 0,
-    created_by: "reviewer-1",
+    created_by: createdBy,
+    parent_run_id: kind === "revision" ? "run-001" : null,
     review_run_id: "",
     created_at: "2026-07-21",
     updated_at: "2026-07-21",
@@ -79,13 +91,58 @@ function jobRecord(jobId: string, kind: "review" | "revision" = "review"): JobRe
 }
 
 const recoveryKey = (subject = "reviewer-1"): string =>
-  `customs.workbench.review-recovery.v2:org-1:${subject}`;
+  `customs.workbench.review-recovery.v3:org-1:${subject}`;
 
 const reconciliationRecoveryKey = (subject = "reviewer-1"): string =>
   `customs.workbench.delivery-reconciliation-recovery.v1:org-1:${subject}`;
 
+const proposalRecoveryKey = (subject = "approver-1"): string =>
+  `customs.workbench.proposal-decision-recovery.v1:org-1:${subject}`;
+
 function seedRecovery(subject: string, record: Omit<Record<string, unknown>, "org_id" | "subject">): void {
-  window.sessionStorage.setItem(recoveryKey(subject), JSON.stringify([{ org_id: "org-1", subject, ...record }]));
+  const jobKind = record.job_kind === "revision" ? "revision" : "review";
+  window.sessionStorage.setItem(recoveryKey(subject), JSON.stringify([{
+    org_id: "org-1",
+    subject,
+    job_kind: jobKind,
+    parent_run_id: jobKind === "revision" ? "run-001" : null,
+    request_sha256: REVIEW_REQUEST_SHA256,
+    ...record,
+  }]));
+}
+
+function seedProposalDecisionRecovery(
+  overrides: Record<string, unknown> = {},
+): { rawKey: string; requestSha256: string; scopedKey: string } {
+  const rawKey = "11111111-1111-4111-8111-111111111111";
+  const decision = {
+    decision: "approve",
+    reason: "checked after independent review",
+    parent_result_digest: "a".repeat(64),
+    case_revision: 1,
+  };
+  const requestSha256 = canonicalSha256({ proposal_id: "proposal-1", decision });
+  const scopedKey = `idem_${canonicalSha256({
+    endpoint: "revision-proposal.decide/v1",
+    actor_id: "approver-1",
+    org_id: "org-1",
+    case_id: "case-1",
+    supplied_key: rawKey,
+  })}`;
+  window.sessionStorage.setItem(proposalRecoveryKey(), JSON.stringify([{
+    org_id: "org-1",
+    subject: "approver-1",
+    case_id: "case-1",
+    case_revision: 1,
+    review_run_id: "run-001",
+    proposal_id: "proposal-1",
+    decision: "approve",
+    parent_result_digest: "a".repeat(64),
+    request_sha256: requestSha256,
+    idempotency_key: rawKey,
+    ...overrides,
+  }]));
+  return { rawKey, requestSha256, scopedKey };
 }
 
 function auth(authenticated: boolean): WorkbenchAuth {
@@ -158,6 +215,9 @@ describe("review workbench", () => {
     expect(root.textContent).toContain("업무 처리");
     expect(root.textContent).toContain("보증 수준");
     expect(root.textContent).toContain("Evidence-bound Case Chat");
+    expect(root.textContent).toContain("DIAGNOSTIC EVIDENCE — NOT RELEASED");
+    expect(root.textContent).toContain("법적 판단 또는 Production 자동완료 근거로 사용할 수 없습니다");
+    expect(root.querySelector('[data-evidence-release-state="diagnostic"]')).not.toBeNull();
     expect(root.textContent).toContain("원문 대조 확인 제안");
     expect(root.textContent).toContain("추출값 수정 제안");
     expect(root.textContent).toContain("요건서류 추가 제안");
@@ -169,6 +229,35 @@ describe("review workbench", () => {
     expect((document.activeElement as HTMLElement | null)?.dataset.sourceId).toBe("source-1");
     const accessibility = await axe.run(root);
     expect(accessibility.violations).toEqual([]);
+  });
+
+  it("marks Evidence as release-bound only for a production automatic-completion Run", async () => {
+    const root = document.createElement("div");
+    document.body.append(root);
+    const api = fakeApi();
+    const released: ReviewRun = {
+      ...run,
+      assurance_level: "production",
+      review_disposition: "auto_review_complete",
+      input_document_manifest: [{ document_id: "doc-1", document_type: "CI", content_sha256: "d".repeat(64) }],
+      completion_eligibility: {
+        eligible: true,
+        profile_id: "profile-0303540000-v1",
+        scope: ["KR/import/0303540000"],
+        unmet_reason_codes: [],
+      },
+    };
+    vi.mocked(api.listReviewRuns).mockResolvedValue([released]);
+    vi.mocked(api.getReviewRun).mockResolvedValue(released);
+    const app = new WorkbenchApp(root, api, auth(true));
+
+    await app.start();
+    [...root.querySelectorAll<HTMLButtonElement>("button")].find((item) => item.textContent?.includes("<img src=x"))?.click();
+    await vi.waitFor(() => expect(root.textContent).toContain("RELEASE-BOUND EVIDENCE"));
+
+    expect(root.textContent).not.toContain("DIAGNOSTIC EVIDENCE — NOT RELEASED");
+    expect(root.querySelector('[data-evidence-release-state="release-bound"]')).not.toBeNull();
+    app.destroy();
   });
 
   it("clears an expired bearer session and returns to the login affordance", async () => {
@@ -449,7 +538,12 @@ describe("review workbench", () => {
     expect([...root.querySelectorAll<HTMLButtonElement>("button")].find((item) => item.textContent === "새 심사 실행")?.disabled).toBe(true);
     const stored = JSON.parse(window.sessionStorage.getItem(recoveryKey()) ?? "null") as Array<Record<string, unknown>>;
     expect(stored).toEqual([expect.objectContaining({ case_id: "case-1", case_revision: 1, job_id: "job-uncertain" })]);
-    expect(Object.keys(stored[0]!).sort()).toEqual(["case_id", "case_revision", "idempotency_key", "job_id", "org_id", "subject"]);
+    expect(Object.keys(stored[0]!).sort()).toEqual(["case_id", "case_revision", "idempotency_key", "job_id", "job_kind", "org_id", "parent_run_id", "request_sha256", "subject"]);
+    expect(stored[0]).toEqual(expect.objectContaining({
+      job_kind: "review",
+      parent_run_id: null,
+      request_sha256: REVIEW_REQUEST_SHA256,
+    }));
     expect(JSON.stringify(stored)).not.toMatch(/token|authorization|bearer/i);
     app.destroy();
 
@@ -481,13 +575,13 @@ describe("review workbench", () => {
     const api = fakeApi();
     vi.mocked(api.getSession).mockResolvedValue({ subject: "approver-1", org_id: "org-1", roles: ["approver"] });
     vi.mocked(api.getJob).mockResolvedValue({
-      ...jobRecord("job-uncertain"),
+      ...jobRecord("job-uncertain", "review", "approver-1"),
       status: "delivery_uncertain",
       agent_call_state: "delivery_uncertain",
       error_code: "agent_delivery_uncertain",
     });
     vi.mocked(api.reconcileDeliveryUncertain).mockResolvedValue({
-      ...jobRecord("job-uncertain"),
+      ...jobRecord("job-uncertain", "review", "approver-1"),
       status: "failed",
       agent_call_state: "delivery_reconciled",
       error_code: "delivery_confirmed_not_processed",
@@ -552,7 +646,7 @@ describe("review workbench", () => {
     const api = fakeApi();
     vi.mocked(api.getSession).mockResolvedValue({ subject: "approver-1", org_id: "org-1", roles: ["approver"] });
     vi.mocked(api.getJob).mockResolvedValue({
-      ...jobRecord("job-uncertain"),
+      ...jobRecord("job-uncertain", "review", "approver-1"),
       status: "delivery_uncertain",
       agent_call_state: "delivery_uncertain",
       error_code: "agent_delivery_uncertain",
@@ -602,7 +696,7 @@ describe("review workbench", () => {
     vi.mocked(api.getJob).mockImplementation(async () => {
       order.push("get");
       return {
-        ...jobRecord("job-uncertain"),
+        ...jobRecord("job-uncertain", "review", "approver-1"),
         status: "delivery_uncertain",
         agent_call_state: "delivery_uncertain",
         error_code: "agent_delivery_uncertain",
@@ -616,7 +710,7 @@ describe("review workbench", () => {
       .mockImplementationOnce(async () => {
         order.push("post-2");
         return {
-          ...jobRecord("job-uncertain"),
+          ...jobRecord("job-uncertain", "review", "approver-1"),
           status: "failed",
           agent_call_state: "delivery_reconciled",
           error_code: "delivery_confirmed_not_processed",
@@ -664,6 +758,55 @@ describe("review workbench", () => {
     await vi.waitFor(() => expect(root.textContent).toContain("저장된 Job 상태를 확인하지 못했습니다"));
     expect(window.sessionStorage.getItem(recoveryKey())).not.toBeNull();
     expect([...root.querySelectorAll<HTMLButtonElement>("button")].find((item) => item.textContent === "새 심사 실행")?.disabled).toBe(true);
+    app.destroy();
+  });
+
+  it("rejects restored review Jobs from a revision lineage or another authenticated actor", async () => {
+    for (const attackedJob of [
+      { ...jobRecord("job-bound", "revision"), created_by: "reviewer-1" },
+      { ...jobRecord("job-bound"), created_by: "other-reviewer" },
+    ]) {
+      window.sessionStorage.clear();
+      seedRecovery("reviewer-1", {
+        case_id: "case-1",
+        case_revision: 1,
+        job_id: "job-bound",
+        idempotency_key: crypto.randomUUID(),
+      });
+      const root = document.createElement("div");
+      document.body.append(root);
+      const api = fakeApi();
+      vi.mocked(api.getJob).mockResolvedValue(attackedJob);
+      const app = new WorkbenchApp(root, api, auth(true));
+
+      await app.start();
+      [...root.querySelectorAll<HTMLButtonElement>("button")].find((item) => item.textContent?.includes("<img src=x"))?.click();
+
+      await vi.waitFor(() => expect(root.textContent).toContain("저장된 Job 상태를 확인하지 못했습니다"));
+      expect(window.sessionStorage.getItem(recoveryKey())).not.toBeNull();
+      expect([...root.querySelectorAll<HTMLButtonElement>("button")].find((item) => item.textContent === "새 심사 실행")?.disabled).toBe(true);
+      app.destroy();
+      root.remove();
+    }
+  });
+
+  it("rejects a tampered review recovery request digest before any Job lookup", async () => {
+    seedRecovery("reviewer-1", {
+      case_id: "case-1",
+      case_revision: 1,
+      job_id: "job-bound",
+      request_sha256: "f".repeat(64),
+      idempotency_key: crypto.randomUUID(),
+    });
+    const root = document.createElement("div");
+    document.body.append(root);
+    const api = fakeApi();
+    const app = new WorkbenchApp(root, api, auth(true));
+
+    await app.start();
+
+    expect(root.textContent).toContain("Job 복구 상태 1번의 값이 올바르지 않습니다");
+    expect(api.getJob).not.toHaveBeenCalled();
     app.destroy();
   });
 
@@ -835,11 +978,29 @@ describe("review workbench", () => {
     vi.mocked(api.listRevisionProposals)
       .mockResolvedValueOnce([proposal])
       .mockResolvedValueOnce([{ ...proposal, status: "approved", child_job_id: "child-job-1", decided_by: "approver-1", decided_at: "2026-07-21T12:01:00Z" }]);
-    vi.mocked(api.decideRevisionProposal).mockResolvedValue({
-      proposal: { ...proposal, status: "approved", decided_by: "approver-1", decided_at: "2026-07-21T12:01:00Z" },
-      decision: { decision_id: "decision-1", org_id: "org-1", case_id: "case-1", review_run_id: "run-001", proposal_id: "proposal-1", decision: "approve", reason: "checked", decided_by: "approver-1", created_at: "2026-07-21T12:01:00Z" },
-      job: { ...jobRecord("child-job-1", "revision"), created_by: "approver-1", review_run_id: "run-child-1" },
-    });
+    vi.mocked(api.decideRevisionProposal).mockImplementation(async (proposalId, decisionRequest, suppliedKey) => ({
+      proposal: { ...proposal, status: "approved", child_job_id: "child-job-1", decided_by: "approver-1", decided_at: "2026-07-21T12:01:00Z" },
+      decision: {
+        decision_id: "decision-1",
+        org_id: "org-1",
+        case_id: "case-1",
+        review_run_id: "run-001",
+        proposal_id: "proposal-1",
+        decision: "approve",
+        reason: "checked",
+        decided_by: "approver-1",
+        created_at: "2026-07-21T12:01:00Z",
+        idempotency_key: `idem_${canonicalSha256({
+          endpoint: "revision-proposal.decide/v1",
+          actor_id: "approver-1",
+          org_id: "org-1",
+          case_id: "case-1",
+          supplied_key: suppliedKey,
+        })}`,
+        idempotency_request_digest: canonicalSha256({ proposal_id: proposalId, decision: decisionRequest }),
+      },
+      job: { ...jobRecord("child-job-1", "revision", "approver-1"), review_run_id: "run-child-1" },
+    }));
     const app = new WorkbenchApp(root, api, auth(true));
     await app.start();
     [...root.querySelectorAll<HTMLButtonElement>("button")].find((item) => item.textContent?.includes("<img src=x"))?.click();
@@ -858,6 +1019,82 @@ describe("review workbench", () => {
     app.destroy();
   });
 
+  it("rejects direct terminal Proposal responses with mismatched actor, status, or child Job lineage", async () => {
+    const attacks: Array<{
+      decision: "approve" | "reject";
+      mutate: (response: CorrectionProposalDecisionResponse) => void;
+    }> = [
+      { decision: "approve", mutate: (response) => { response.proposal.decided_by = "other-approver"; } },
+      { decision: "approve", mutate: (response) => { response.proposal.status = "rejected"; } },
+      { decision: "approve", mutate: (response) => { response.proposal.child_job_id = "child-job-other"; } },
+      {
+        decision: "reject",
+        mutate: (response) => {
+          response.proposal.child_job_id = "child-job-for-rejection";
+          response.job = { ...jobRecord("child-job-for-rejection", "revision", "approver-1") };
+        },
+      },
+    ];
+    for (const attack of attacks) {
+      window.sessionStorage.clear();
+      const root = document.createElement("div");
+      document.body.append(root);
+      const api = fakeApi();
+      vi.mocked(api.getSession).mockResolvedValue({ subject: "approver-1", org_id: "org-1", roles: ["approver"] });
+      vi.mocked(api.listRevisionProposals).mockResolvedValue([proposal]);
+      vi.mocked(api.decideRevisionProposal).mockImplementation(async (proposalId, decisionRequest, suppliedKey) => {
+        const approved = attack.decision === "approve";
+        const response: CorrectionProposalDecisionResponse = {
+          proposal: {
+            ...proposal,
+            status: approved ? "approved" : "rejected",
+            ...(approved ? { child_job_id: "child-job-1" } : {}),
+            decided_by: "approver-1",
+            decided_at: "2026-07-21T12:01:00Z",
+          },
+          decision: {
+            decision_id: "decision-attack",
+            org_id: "org-1",
+            case_id: "case-1",
+            review_run_id: "run-001",
+            proposal_id: "proposal-1",
+            decision: attack.decision,
+            reason: "checked",
+            decided_by: "approver-1",
+            created_at: "2026-07-21T12:01:00Z",
+            idempotency_key: `idem_${canonicalSha256({
+              endpoint: "revision-proposal.decide/v1",
+              actor_id: "approver-1",
+              org_id: "org-1",
+              case_id: "case-1",
+              supplied_key: suppliedKey,
+            })}`,
+            idempotency_request_digest: canonicalSha256({ proposal_id: proposalId, decision: decisionRequest }),
+          },
+          ...(approved ? { job: { ...jobRecord("child-job-1", "revision", "approver-1") } } : {}),
+        };
+        attack.mutate(response);
+        return response;
+      });
+      const app = new WorkbenchApp(root, api, auth(true));
+
+      await app.start();
+      [...root.querySelectorAll<HTMLButtonElement>("button")].find((item) => item.textContent?.includes("<img src=x"))?.click();
+      const buttonText = attack.decision === "approve" ? "제안 승인·재심사" : "제안 거절";
+      await vi.waitFor(() => expect(root.textContent).toContain(buttonText));
+      const button = [...root.querySelectorAll<HTMLButtonElement>("button")].find((item) => item.textContent === buttonText)!;
+      const form = button.closest("form") as HTMLFormElement;
+      (form.elements.namedItem("reason") as HTMLInputElement).value = "checked";
+      form.requestSubmit();
+
+      await vi.waitFor(() => expect(root.textContent).toContain("계보와 일치하지 않습니다"));
+      expect(api.getJob).not.toHaveBeenCalled();
+      expect(api.listJobEvents).not.toHaveBeenCalled();
+      app.destroy();
+      root.remove();
+    }
+  });
+
   it("persists proposal-decision intent before POST and recovers an authoritative child Job after response loss", async () => {
     const root = document.createElement("div");
     document.body.append(root);
@@ -874,8 +1111,7 @@ describe("review workbench", () => {
     (form.elements.namedItem("reason") as HTMLInputElement).value = "checked after independent review";
     form.requestSubmit();
     await vi.waitFor(() => expect(api.decideRevisionProposal).toHaveBeenCalledOnce());
-    const proposalRecoveryKey = "customs.workbench.proposal-decision-recovery.v1:org-1:approver-1";
-    const stored = JSON.parse(window.sessionStorage.getItem(proposalRecoveryKey) ?? "null") as Array<Record<string, unknown>>;
+    const stored = JSON.parse(window.sessionStorage.getItem(proposalRecoveryKey()) ?? "null") as Array<Record<string, unknown>>;
     expect(stored).toEqual([expect.objectContaining({
       proposal_id: "proposal-1",
       review_run_id: "run-001",
@@ -896,17 +1132,114 @@ describe("review workbench", () => {
       decided_by: "approver-1",
       decided_at: "2026-07-21T12:01:00Z",
     }]);
+    const storedRecovery = stored[0]!;
+    vi.mocked(restoredApi.listDecisions).mockResolvedValue([{
+      decision_id: "decision-recovered",
+      org_id: "org-1",
+      case_id: "case-1",
+      review_run_id: "run-001",
+      proposal_id: "proposal-1",
+      decision: "approve",
+      reason: "checked after independent review",
+      decided_by: "approver-1",
+      created_at: "2026-07-21T12:01:00Z",
+      idempotency_key: `idem_${canonicalSha256({
+        endpoint: "revision-proposal.decide/v1",
+        actor_id: "approver-1",
+        org_id: "org-1",
+        case_id: "case-1",
+        supplied_key: storedRecovery.idempotency_key,
+      })}`,
+      idempotency_request_digest: String(storedRecovery.request_sha256),
+    }]);
     vi.mocked(restoredApi.getJob).mockResolvedValue({
-      ...jobRecord("child-job-recovered", "revision"),
-      created_by: "approver-1",
+      ...jobRecord("child-job-recovered", "revision", "approver-1"),
     });
     const restored = new WorkbenchApp(root, restoredApi, auth(true));
     await restored.start();
     [...root.querySelectorAll<HTMLButtonElement>("button")].find((item) => item.textContent?.includes("<img src=x"))?.click();
     await vi.waitFor(() => expect(restoredApi.getJob).toHaveBeenCalledWith("child-job-recovered"));
-    expect(window.sessionStorage.getItem(proposalRecoveryKey)).toBeNull();
+    expect(window.sessionStorage.getItem(proposalRecoveryKey())).toBeNull();
     expect(window.sessionStorage.getItem(recoveryKey("approver-1"))).not.toBeNull();
     restored.destroy();
+  });
+
+  it("marks terminal proposal decisions by another actor, key, or request digest as superseded without binding their child Job", async () => {
+    const attacks = [
+      {},
+      { decided_by: "other-approver" },
+      { idempotency_key: `idem_${"d".repeat(64)}` },
+      { idempotency_request_digest: "f".repeat(64) },
+    ];
+    for (const attack of attacks) {
+      window.sessionStorage.clear();
+      const binding = seedProposalDecisionRecovery();
+      const root = document.createElement("div");
+      document.body.append(root);
+      const api = fakeApi();
+      vi.mocked(api.getSession).mockResolvedValue({ subject: "approver-1", org_id: "org-1", roles: ["approver"] });
+      vi.mocked(api.listRevisionProposals).mockResolvedValue([{
+        ...proposal,
+        status: "approved",
+        child_job_id: "child-job-other-intent",
+        decided_by: "other-approver",
+        decided_at: "2026-07-21T12:01:00Z",
+      }]);
+      vi.mocked(api.listDecisions).mockResolvedValue([{
+        decision_id: "decision-other-intent",
+        org_id: "org-1",
+        case_id: "case-1",
+        review_run_id: "run-001",
+        proposal_id: "proposal-1",
+        decision: "approve",
+        reason: "another terminal decision",
+        decided_by: "approver-1",
+        created_at: "2026-07-21T12:01:00Z",
+        idempotency_key: binding.scopedKey,
+        idempotency_request_digest: binding.requestSha256,
+        ...attack,
+      }]);
+      const app = new WorkbenchApp(root, api, auth(true));
+
+      await app.start();
+      [...root.querySelectorAll<HTMLButtonElement>("button")].find((item) => item.textContent?.includes("<img src=x"))?.click();
+
+      await vi.waitFor(() => expect(root.textContent).toContain("superseded"));
+      expect(api.getJob).not.toHaveBeenCalled();
+      expect(window.sessionStorage.getItem(proposalRecoveryKey())).toBeNull();
+      expect(window.sessionStorage.getItem(recoveryKey("approver-1"))).toBeNull();
+      app.destroy();
+      root.remove();
+    }
+  });
+
+  it("keeps pending proposal controls disabled unless result, manifest, revision, and every target ID are current", async () => {
+    const staleProposals: CorrectionProposal[] = [
+      { ...proposal, parent_result_digest: "f".repeat(64) },
+      { ...proposal, parent_input_manifest_sha256: "f".repeat(64) },
+      { ...proposal, case_revision: 2 },
+      { ...proposal, corrections: [{ ...proposal.corrections[0]!, field_path: "fields.unknown" }] },
+      { ...proposal, corrections: [], actions: [{ decision: "confirm_field", reason: "check", confirmed_reference_id: "source-unknown" }] },
+      { ...proposal, corrections: [], actions: [{ decision: "add_supporting_document", reason: "check", supporting_document_id: "support-unknown" }] },
+    ];
+    for (const staleProposal of staleProposals) {
+      const root = document.createElement("div");
+      document.body.append(root);
+      const api = fakeApi();
+      vi.mocked(api.getSession).mockResolvedValue({ subject: "approver-1", org_id: "org-1", roles: ["approver"] });
+      vi.mocked(api.listRevisionProposals).mockResolvedValue([staleProposal]);
+      const app = new WorkbenchApp(root, api, auth(true));
+
+      await app.start();
+      [...root.querySelectorAll<HTMLButtonElement>("button")].find((item) => item.textContent?.includes("<img src=x"))?.click();
+
+      await vi.waitFor(() => expect(root.textContent).toContain("Proposal"));
+      expect([...root.querySelectorAll<HTMLButtonElement>("button")].some((item) => item.textContent === "제안 승인·재심사")).toBe(false);
+      expect(root.querySelector(".correction-proposal .notice--warning")).not.toBeNull();
+      expect(api.decideRevisionProposal).not.toHaveBeenCalled();
+      app.destroy();
+      root.remove();
+    }
   });
 
   it("does not offer maker-checker decisions to the proposal creator", async () => {
@@ -918,7 +1251,7 @@ describe("review workbench", () => {
     const app = new WorkbenchApp(root, api, auth(true));
     await app.start();
     [...root.querySelectorAll<HTMLButtonElement>("button")].find((item) => item.textContent?.includes("<img src=x"))?.click();
-    await vi.waitFor(() => expect(root.textContent).toContain("자신이 만든 revision 제안은 승인하거나 거절할 수 없습니다"));
+    await vi.waitFor(() => expect(root.textContent).toContain("자신이 만든 revision 제안은 결정할 수 없습니다"));
     expect([...root.querySelectorAll<HTMLButtonElement>("button")].some((item) => item.textContent === "제안 승인·재심사")).toBe(false);
     expect(api.decideRevisionProposal).not.toHaveBeenCalled();
     app.destroy();

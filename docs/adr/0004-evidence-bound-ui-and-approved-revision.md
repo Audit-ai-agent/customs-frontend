@@ -16,9 +16,12 @@ AI 응답 문장과 수정 제안을 그대로 표시·적용하면 사용자가
 - Reviewer는 다섯 결정 유형을 명시한 `RevisionProposal`(`confirm_field`, `correct_field`, `add_supporting_document`, `approve_review`, `reject_review`)만 생성한다. Frontend에서 direct revision이나 replay-idempotent하지 않은 legacy Run decision endpoint를 호출하지 않는다.
 - Approver가 parent result digest·Agent input manifest·Case revision을 다시 검증해 승인한 경우에만 Backend이 child Job을 생성한다.
 - Review enqueue와 proposal decision은 사용자 intent별 안정적 idempotency key를 재시도에서 재사용한다.
+- Review 복구 Job은 root review kind·현재 actor·Case·revision·고정 요청 hash에 결박한다. Proposal 직접 응답과 응답 유실 복구는 현재 actor·요청한 terminal status·exact scoped idempotency key·request digest·child Job ID까지 일치하는 경우에만 적용한다. approve에는 revision child Job이 필수이고 reject에는 없어야 하며, 다른 terminal intent는 superseded로 종결한다.
 - 응답 유실 또는 `delivery_uncertain`이면 최소 복구 식별자만 sessionStorage에 저장하고 해당 Case의 새 intent를 차단한다. 자동 새 요청은 금지하고 저장된 Job 조회 또는 동일 key 수동 재전송으로 대조한다.
 - `delivery_uncertain` 해제는 Backend Approver 권한의 별도 reconciliation 전이로만 수행한다. 현재 Case·Job·복구 식별자와 미수신 증거 hash를 결박하고 `failed + delivery_reconciled` 응답이 확인될 때만 로컬 차단을 해제한다.
 - SSE는 인증된 `fetch` stream으로 소비하고, Job polling을 authoritative fallback으로 유지한다.
+- Backend provider 원본이 아니라 public serializer allowlist를 소비한다. Backend effective-summary canonical SHA-256을 재계산해 모든 Run의 `result_digest`를 검증한다. 자동완료에서는 명시적 빈 issue/finding/gap/action, 문서·보고서·Retrieval item HS resolution/coverage/errors/Evidence·FactLedger·outcome 일치와 Release identity를 fail-closed 검증한다. 요건 존재 자체는 차단하지 않고, finding-eligible Evidence의 required code가 Backend의 검증된 Supporting Document profile code에 포함된 경우 정상 충족으로 인정한다.
+- Released 자동완료가 아닌 Evidence는 진단 경계와 시각적 경고를 붙여 법적 판단 근거와 구분한다.
 
 ## Consequences
 

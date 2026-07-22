@@ -68,6 +68,31 @@ const GAP_TYPES = new Set([
   "human_approval_required",
   "release_gate",
 ]);
+const BACKEND_PUBLIC_RESULT_DETAIL_KEYS = [
+  "document_results",
+  "fact_ledger",
+  "jurisdiction",
+  "knowledge_snapshot_id",
+  "rag_evidence",
+  "regulatory_findings",
+  "report",
+  "retrieval_coverage",
+  "retrieval_results",
+  "retrieval_status",
+  "review_as_of",
+  "review_gaps",
+  "review_plan",
+  "review_stage_trace",
+  "trade_type",
+  "validation_issues",
+] as const;
+const BACKEND_PRIVATE_RESULT_FIELDS = [
+  "schema_version",
+  "status",
+  "requires_human_review",
+  "case_id",
+  "input_manifest_sha256",
+] as const;
 
 function object(value: unknown, context: string): JsonObject {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
@@ -225,6 +250,9 @@ export function decodeReviewRun(value: unknown): ReviewRun {
     throw new ContractError("reviewRun.assurance_level: unsupported level");
   }
   if (typeof raw.case_revision !== "number") throw new ContractError("reviewRun.case_revision: number expected");
+  if (!validateBackendEffectiveResultDigest(raw)) {
+    throw new ContractError("reviewRun.result_digest: Backend effective result digest mismatch");
+  }
   object(raw.result_detail, "reviewRun.result_detail");
   const resultValue = raw.result_detail ?? raw.result;
   const result = typeof resultValue === "object" && resultValue !== null ? (resultValue as JsonObject) : {};
@@ -292,7 +320,10 @@ export function decodeReviewRun(value: unknown): ReviewRun {
     }
   }
   if (raw.review_disposition === "auto_review_complete") {
-    const reviewGaps = Array.isArray(result.review_gaps) ? result.review_gaps.map((item) => asObject(item)) : [];
+    const hasExplicitEmptyRequiredActions = Array.isArray(raw.required_actions) && raw.required_actions.length === 0;
+    const rawReviewGaps: unknown[] | undefined = Array.isArray(result.review_gaps) ? result.review_gaps : undefined;
+    const hasExplicitReviewGaps = rawReviewGaps !== undefined;
+    const reviewGaps: JsonObject[] = rawReviewGaps?.map((item) => asObject(item)) ?? [];
     const release = releaseIdentity as JsonObject | undefined;
     const hasReleaseHash = (key: string): boolean => typeof release?.[key] === "string" && /^[a-f0-9]{64}$/.test(String(release[key]));
     const completionProfileMatches = typeof completion?.profile_id === "string"
@@ -327,7 +358,10 @@ export function decodeReviewRun(value: unknown): ReviewRun {
       || issues.length > 0
       || findings.length > 0
       || evidence.length === 0
+      || !hasExplicitEmptyRequiredActions
+      || !hasExplicitReviewGaps
       || requiredActions.length > 0
+      || reviewGaps.length > 0
       || reviewGaps.some((gap) => gap.status === "open")
       || actionTrace.some((action) => action.status !== "succeeded")
       || actionTrace.length === 0
@@ -938,13 +972,20 @@ function validateProductionCompletionEnvelope(input: {
 }): boolean {
   const { raw, result, releaseIdentity } = input;
   if (
-    result.schema_version !== "3.0"
-    || result.status !== "completed"
-    || result.requires_human_review !== false
-    || !SHA256.test(String(raw.result_digest))
+    !SHA256.test(String(raw.result_digest))
     || !SHA256.test(String(raw.provider_result_sha256))
-    || !SHA256.test(String(result.input_manifest_sha256 ?? raw.agent_input_manifest_sha256))
-    || result.input_manifest_sha256 !== raw.agent_input_manifest_sha256
+    || !SHA256.test(String(raw.agent_input_manifest_sha256))
+    || Object.keys(result).sort().join(",") !== [...BACKEND_PUBLIC_RESULT_DETAIL_KEYS].sort().join(",")
+    || BACKEND_PRIVATE_RESULT_FIELDS.some((key) => key in result)
+    || ["fields", "issues", "evidence", "findings", "sources"].some((key) => key in raw)
+    || !Array.isArray(result.validation_issues)
+    || !Array.isArray(result.regulatory_findings)
+    || !Array.isArray(result.rag_evidence)
+    || !Array.isArray(result.document_results)
+    || !Array.isArray(result.retrieval_results)
+    || !Array.isArray(result.review_gaps)
+    || !Array.isArray(raw.required_actions)
+    || !Array.isArray(raw.action_trace)
   ) return false;
 
   const release = releaseIdentity as JsonObject | undefined;
@@ -986,14 +1027,57 @@ function validateProductionCompletionEnvelope(input: {
     }
   }
 
+  const ledgerReferences = (kind: string): string[] => ledgerRows
+    .filter((entry) => entry.kind === kind)
+    .map((entry) => String(entry.reference_id));
+  const exactUniqueReferences = (actual: string[], expected: string[]): boolean => (
+    actual.length === new Set(actual).size
+    && expected.length === new Set(expected).size
+    && actual.length === expected.length
+    && expected.every((reference) => actual.includes(reference))
+  );
+  if (
+    result.validation_issues.length !== 0
+    || result.regulatory_findings.length !== 0
+    || ledgerReferences("issue").length !== 0
+    || ledgerReferences("finding").length !== 0
+    || !exactUniqueReferences(ledgerReferences("field_source"), input.fields.map((field) => field.field_id))
+  ) return false;
+
+  const expectedOutcome = {
+    status: "completed",
+    requires_human_review: false,
+    retrieval_status: result.retrieval_status,
+    retrieval_coverage: result.retrieval_coverage,
+  };
+  const autoProfile = asObject(raw.auto_completion_profile);
+  const approvedRequiredDocumentCodes = new Set(
+    Array.isArray(autoProfile.approved_required_document_codes)
+      ? autoProfile.approved_required_document_codes.filter((code): code is string => typeof code === "string")
+      : [],
+  );
+  const outcomeRows = ledgerRows.filter((entry) => entry.kind === "outcome");
+  if (
+    outcomeRows.length !== 1
+    || outcomeRows[0]?.reference_id !== `outcome_${sha256CanonicalJson(expectedOutcome)}`
+    || outcomeRows[0]?.label !== "deterministic_outcome"
+    || outcomeRows[0]?.value !== canonicalJson(expectedOutcome)
+    || (outcomeRows[0]?.document_id !== null && outcomeRows[0]?.document_id !== undefined)
+  ) return false;
+
   if (input.rawEvidence.length !== input.evidence.length || input.evidence.length === 0) return false;
   for (const [index, rawValue] of input.rawEvidence.entries()) {
     const evidenceRaw = asObject(rawValue);
     const evidence = input.evidence[index]!;
     const sourceType = String(evidenceRaw.source_type ?? "");
+    const eligibility = String(evidenceRaw.eligibility ?? "");
     const uri = safeUrl(evidenceRaw.source_uri);
+    const stableEvidenceId = typeof evidenceRaw.source_record_id === "string" && typeof evidenceRaw.version_hash === "string"
+      ? `ev_${hexSha256(new TextEncoder().encode(`${evidenceRaw.source_record_id}\u001f${evidenceRaw.version_hash}`))}`
+      : "";
     if (
       !/^ev_[a-f0-9]{64}$/.test(String(evidenceRaw.evidence_id ?? ""))
+      || evidenceRaw.evidence_id !== stableEvidenceId
       || evidence.evidence_id !== evidenceRaw.evidence_id
       || typeof evidenceRaw.source_record_id !== "string"
       || evidenceRaw.source_record_id.length === 0
@@ -1008,13 +1092,34 @@ function validateProductionCompletionEnvelope(input: {
       || uri.username !== ""
       || uri.password !== ""
       || !SHA256.test(String(evidenceRaw.version_hash ?? ""))
-      || (evidenceRaw.trade_type !== "import" && evidenceRaw.trade_type !== "export")
-      || evidenceRaw.eligibility !== "supporting"
+      || evidenceRaw.trade_type !== raw.trade_type
+      || (eligibility !== "supporting" && eligibility !== "finding")
       || !Array.isArray(evidenceRaw.retrieval_methods)
       || evidenceRaw.retrieval_methods.length === 0
       || evidenceRaw.retrieval_methods.some((method) => !["exact_hs", "dense", "bm25", "graph"].includes(String(method)))
+      || new Set(evidenceRaw.retrieval_methods).size !== evidenceRaw.retrieval_methods.length
       || (sourceType !== "hsk_entry" && (typeof evidenceRaw.law_id !== "string" || evidenceRaw.law_id.length === 0))
     ) return false;
+    if (eligibility === "finding") {
+      if (
+        sourceType !== "customs_requirement"
+        || typeof evidenceRaw.law_name !== "string"
+        || evidenceRaw.law_name.length === 0
+        || typeof evidenceRaw.valid_from !== "string"
+        || !/^\d{4}-\d{2}-\d{2}$/.test(evidenceRaw.valid_from)
+        || typeof evidenceRaw.matched_hs_code !== "string"
+        || !/^\d{6}(?:\d{4})?$/.test(evidenceRaw.matched_hs_code)
+        || typeof evidenceRaw.required_document_code !== "string"
+        || evidenceRaw.required_document_code.length === 0
+        || !approvedRequiredDocumentCodes.has(evidenceRaw.required_document_code)
+        || typeof evidenceRaw.required_document_name !== "string"
+        || evidenceRaw.required_document_name.length === 0
+        || !Array.isArray(evidenceRaw.agencies)
+        || evidenceRaw.agencies.length === 0
+        || evidenceRaw.agencies.some((agency) => typeof agency !== "string" || agency.trim().length === 0)
+        || new Set(evidenceRaw.agencies).size !== evidenceRaw.agencies.length
+      ) return false;
+    }
     const matches = ledgerRows.filter((entry) => (
       entry.kind === "evidence"
       && entry.reference_id === evidenceRaw.evidence_id
@@ -1024,24 +1129,139 @@ function validateProductionCompletionEnvelope(input: {
     ));
     if (matches.length !== 1) return false;
   }
+  if (!exactUniqueReferences(
+    ledgerReferences("evidence"),
+    input.rawEvidence.map((value) => String(asObject(value).evidence_id ?? "")),
+  )) return false;
 
   for (const field of input.fields) {
+    const fieldLedger = ledgerRows.find((entry) => entry.kind === "field_source" && entry.reference_id === field.field_id);
+    const fieldSource = input.sources.find((source) => source.source_id === field.field_id);
     if (
       !/^field_[a-f0-9]{64}$/.test(field.field_id)
       || field.document_id === "unbound-document"
       || field.source_ids.length === 0
       || field.source_ids.some((id) => !ledgerReferenceIds.has(id))
-      || !ledgerRows.some((entry) => entry.kind === "field_source" && entry.reference_id === field.field_id && entry.document_id === field.document_id)
+      || fieldLedger?.document_id !== field.document_id
+      || fieldLedger?.value !== String(field.value)
+      || fieldSource?.document_id !== field.document_id
+      || fieldSource.quote !== fieldLedger.value
     ) return false;
   }
   if (input.sources.some((source) => !GLOBAL_REFERENCE_ID.test(source.source_id) || !ledgerReferenceIds.has(source.source_id))) {
     return false;
   }
 
+  if (!validateProductionPublicResultConsistency(raw, result)) return false;
   if (!validateProductionGaps(input.reviewGaps, ledgerReferenceIds)) return false;
   if (!validateProductionActionTrace(input.rawActionTrace, input.actionTrace, ledgerReferenceIds)) return false;
   if (!validateProductionNarrative(raw.narrative_report, input.narrative, input.knownCitationIds)) return false;
   return true;
+}
+
+function validateBackendEffectiveResultDigest(raw: JsonObject): boolean {
+  if (
+    typeof raw.completion_eligibility !== "object"
+    || raw.completion_eligibility === null
+    || Array.isArray(raw.completion_eligibility)
+    || (raw.auto_completion_profile !== undefined && (
+      typeof raw.auto_completion_profile !== "object"
+      || raw.auto_completion_profile === null
+      || Array.isArray(raw.auto_completion_profile)
+    ))
+    || (raw.input_document_manifest !== undefined && !Array.isArray(raw.input_document_manifest))
+    || (raw.required_actions !== undefined && !Array.isArray(raw.required_actions))
+    || (raw.review_stage_trace !== undefined && !Array.isArray(raw.review_stage_trace))
+  ) return false;
+  const completion = asObject(raw.completion_eligibility);
+  const profile = asObject(raw.auto_completion_profile);
+  const inputManifest = Array.isArray(raw.input_document_manifest) ? raw.input_document_manifest : [];
+  const requiredActions = Array.isArray(raw.required_actions) ? raw.required_actions : [];
+  const stageTrace = Array.isArray(raw.review_stage_trace) ? raw.review_stage_trace : [];
+  if (
+    typeof completion.eligible !== "boolean"
+    || (completion.profile_id !== undefined && completion.profile_id !== null && typeof completion.profile_id !== "string")
+    || (completion.scope !== undefined && !Array.isArray(completion.scope))
+    || (completion.unmet_reason_codes !== undefined && !Array.isArray(completion.unmet_reason_codes))
+    || (profile.profile_id !== undefined && profile.profile_id !== null && typeof profile.profile_id !== "string")
+    || (profile.approval_digest !== undefined && profile.approval_digest !== null && typeof profile.approval_digest !== "string")
+    || (profile.approved_document_types !== undefined && !Array.isArray(profile.approved_document_types))
+    || (profile.approved_required_document_codes !== undefined && !Array.isArray(profile.approved_required_document_codes))
+    || !Object.keys(completion).every((key) => ["eligible", "profile_id", "scope", "unmet_reason_codes"].includes(key))
+    || !Object.keys(profile).every((key) => ["profile_id", "approved_document_types", "approved_required_document_codes", "approval_digest"].includes(key))
+  ) return false;
+  if (inputManifest.some((value) => {
+    const entry = asObject(value);
+    return Object.keys(entry).sort().join(",") !== "content_sha256,document_id,document_type"
+      || typeof entry.document_id !== "string"
+      || typeof entry.document_type !== "string"
+      || typeof entry.content_sha256 !== "string";
+  })) return false;
+  if (requiredActions.some((value) => {
+    const action = asObject(value);
+    return !Object.keys(action).every((key) => ["action_code", "message", "source_reference_ids"].includes(key))
+      || typeof action.action_code !== "string"
+      || typeof action.message !== "string"
+      || (action.source_reference_ids !== undefined && !Array.isArray(action.source_reference_ids));
+  })) return false;
+  if (stageTrace.some((value) => {
+    const stage = asObject(value);
+    return !Object.keys(stage).every((key) => ["sequence", "stage", "status", "reason_ids"].includes(key))
+      || !Number.isInteger(stage.sequence)
+      || typeof stage.stage !== "string"
+      || typeof stage.status !== "string"
+      || (stage.reason_ids !== undefined && !Array.isArray(stage.reason_ids));
+  })) return false;
+  const effectiveSummary = {
+    provider_result_sha256: raw.provider_result_sha256,
+    input_manifest_digest: raw.input_manifest_digest,
+    input_document_manifest: inputManifest.map((value) => {
+      const entry = asObject(value);
+      return {
+        document_id: entry.document_id,
+        document_type: entry.document_type,
+        content_sha256: entry.content_sha256,
+      };
+    }),
+    execution_status: raw.execution_status,
+    assessment: raw.assessment,
+    review_disposition: raw.review_disposition,
+    assurance_level: raw.assurance_level,
+    completion_eligibility: {
+      eligible: completion.eligible,
+      profile_id: completion.profile_id ?? null,
+      scope: completion.scope ?? [],
+      unmet_reason_codes: completion.unmet_reason_codes ?? [],
+    },
+    required_actions: requiredActions.map((value) => {
+      const action = asObject(value);
+      return {
+        action_code: action.action_code,
+        message: action.message,
+        source_reference_ids: action.source_reference_ids ?? [],
+      };
+    }),
+    review_stage_trace: stageTrace.map((value) => {
+      const stage = asObject(value);
+      return {
+        sequence: stage.sequence,
+        stage: stage.stage,
+        status: stage.status,
+        reason_ids: stage.reason_ids ?? [],
+      };
+    }),
+    auto_completion_profile: {
+      profile_id: profile.profile_id ?? null,
+      approved_document_types: profile.approved_document_types ?? [],
+      approved_required_document_codes: profile.approved_required_document_codes ?? [],
+      approval_digest: profile.approval_digest ?? null,
+    },
+  };
+  try {
+    return raw.result_digest === sha256CanonicalJson(effectiveSummary);
+  } catch {
+    return false;
+  }
 }
 
 function validateProductionInputDocuments(
@@ -1057,7 +1277,6 @@ function validateProductionInputDocuments(
     || typeof raw.review_as_of !== "string"
     || !/^\d{4}-\d{2}-\d{2}$/.test(raw.review_as_of)
     || (raw.trade_type !== "import" && raw.trade_type !== "export")
-    || result.case_id !== raw.case_id
     || result.review_as_of !== raw.review_as_of
     || result.trade_type !== raw.trade_type
   ) return false;
@@ -1065,6 +1284,7 @@ function validateProductionInputDocuments(
   const profile = asObject(raw.auto_completion_profile);
   if (!Array.isArray(manifestValues) || manifestValues.length !== REQUIRED_PRIMARY_DOCUMENT_TYPES.length) return false;
   if (typeof profile.profile_id !== "string" || profile.profile_id.length === 0) return false;
+  const approvedRequiredDocumentCodes = profile.approved_required_document_codes;
   const completion = asObject(raw.completion_eligibility);
   if (
     profile.profile_id !== completion.profile_id
@@ -1073,9 +1293,13 @@ function validateProductionInputDocuments(
     || profile.approval_digest !== release.backend_auto_completion_approval_digest
     || !Array.isArray(profile.approved_document_types)
     || !sameUniqueSet(profile.approved_document_types, REQUIRED_PRIMARY_DOCUMENT_TYPES)
-    || !Array.isArray(profile.approved_required_document_codes)
-    || profile.approved_required_document_codes.some((code) => typeof code !== "string" || code.length === 0 || code.length > 128)
-    || new Set(profile.approved_required_document_codes).size !== profile.approved_required_document_codes.length
+    || !Array.isArray(approvedRequiredDocumentCodes)
+    || approvedRequiredDocumentCodes.length === 0
+    || approvedRequiredDocumentCodes.some((code) => typeof code !== "string" || code.length === 0 || code.length > 128)
+    || new Set(approvedRequiredDocumentCodes).size !== approvedRequiredDocumentCodes.length
+    || approvedRequiredDocumentCodes.some((code, index) => (
+      index > 0 && String(approvedRequiredDocumentCodes[index - 1]).localeCompare(String(code)) >= 0
+    ))
   ) return false;
 
   const manifest = manifestValues.map(asObject);
@@ -1190,15 +1414,123 @@ function validateMandatoryCoreStages(value: unknown): boolean {
 }
 
 function validateProductionGaps(gaps: JsonObject[], knownReferences: ReadonlySet<string>): boolean {
-  return gaps.every((gap) => (
-    /^gap_[a-f0-9]{64}$/.test(String(gap.gap_id ?? ""))
+  const ids = new Set<string>();
+  return gaps.every((gap) => {
+    const gapId = String(gap.gap_id ?? "");
+    if (ids.has(gapId)) return false;
+    ids.add(gapId);
+    return /^gap_[a-f0-9]{64}$/.test(gapId)
     && GAP_TYPES.has(String(gap.gap_type ?? ""))
     && typeof gap.reason_code === "string"
     && gap.reason_code.length > 0
     && gap.status === "resolved"
     && Array.isArray(gap.source_reference_ids)
+    && new Set(gap.source_reference_ids).size === gap.source_reference_ids.length
     && gap.source_reference_ids.every((reference) => typeof reference === "string" && knownReferences.has(reference))
+  });
+}
+
+function validateProductionPublicResultConsistency(raw: JsonObject, result: JsonObject): boolean {
+  const report = asObject(result.report);
+  const summary = asObject(report.summary);
+  const documents = Array.isArray(result.document_results) ? result.document_results.map(asObject) : [];
+  const reportDocuments = Array.isArray(report.document_summary) ? report.document_summary.map(asObject) : [];
+  const evidence = Array.isArray(result.rag_evidence) ? result.rag_evidence.map(asObject) : [];
+  const reportEvidence = Array.isArray(report.rag_evidence) ? report.rag_evidence.map(asObject) : [];
+  const retrievalResults = Array.isArray(result.retrieval_results) ? result.retrieval_results.map(asObject) : [];
+  const retrievalEvidence = retrievalResults.flatMap((item) => (
+    Array.isArray(item.evidence) ? item.evidence.map(asObject) : []
   ));
+  const exactUniqueRecords = (values: JsonObject[], key: string, expected: JsonObject[]): boolean => {
+    const actualIds = values.map((item) => String(item[key] ?? ""));
+    const expectedIds = expected.map((item) => String(item[key] ?? ""));
+    return actualIds.every((id) => id.length > 0)
+      && expectedIds.every((id) => id.length > 0)
+      && actualIds.length === new Set(actualIds).size
+      && expectedIds.length === new Set(expectedIds).size
+      && actualIds.length === expectedIds.length
+      && expectedIds.every((id) => {
+        const actual = values.find((item) => item[key] === id);
+        const expectedValue = expected.find((item) => item[key] === id);
+        return actual !== undefined
+          && expectedValue !== undefined
+          && canonicalJson(actual) === canonicalJson(expectedValue);
+      });
+  };
+  if (
+    report.case_id !== raw.case_id
+    || report.overall_status !== "completed"
+    || !Array.isArray(report.issues)
+    || report.issues.length !== 0
+    || !Array.isArray(report.regulatory_findings)
+    || report.regulatory_findings.length !== 0
+    || !Array.isArray(report.rag_evidence)
+    || !Array.isArray(report.document_summary)
+    || summary.total_documents !== documents.length
+    || summary.total_issues !== 0
+    || ["critical", "high", "medium", "low"].some((key) => summary[key] !== 0)
+    || !Array.isArray(summary.outcome_reasons)
+    || summary.outcome_reasons.length !== 0
+    || summary.retrieval_status !== result.retrieval_status
+    || summary.retrieval_coverage !== result.retrieval_coverage
+    || summary.knowledge_snapshot_id !== result.knowledge_snapshot_id
+    || !exactUniqueRecords(reportEvidence, "evidence_id", evidence)
+    || !exactUniqueRecords(retrievalEvidence, "evidence_id", evidence)
+  ) return false;
+  const retrievalItemIds = new Set<string>();
+  const retrievalItemKeys = [
+    "candidate_hsk10s",
+    "coverage",
+    "errors",
+    "evidence",
+    "hs_resolution",
+    "item_id",
+    "requirements_found",
+    "resolved_hsk10",
+  ].sort().join(",");
+  for (const item of retrievalResults) {
+    const itemId = String(item.item_id ?? "");
+    const candidates = item.candidate_hsk10s;
+    const itemEvidence = item.evidence;
+    const customsRequirements = Array.isArray(itemEvidence)
+      ? itemEvidence.map(asObject).filter((evidenceItem) => evidenceItem.source_type === "customs_requirement")
+      : [];
+    const findingRequirements = customsRequirements.filter((evidenceItem) => evidenceItem.eligibility === "finding");
+    if (
+      Object.keys(item).sort().join(",") !== retrievalItemKeys
+      || itemId.length === 0
+      || itemId.length > 256
+      || retrievalItemIds.has(itemId)
+      || (item.hs_resolution !== "exact" && item.hs_resolution !== "unique_descendant")
+      || typeof item.resolved_hsk10 !== "string"
+      || !/^\d{10}$/.test(item.resolved_hsk10)
+      || !Array.isArray(candidates)
+      || candidates.some((code) => typeof code !== "string" || !/^\d{10}$/.test(code))
+      || new Set(candidates).size !== candidates.length
+      || (candidates.length !== 0 && (candidates.length !== 1 || candidates[0] !== item.resolved_hsk10))
+      || item.coverage !== "complete"
+      || item.requirements_found !== (findingRequirements.length > 0)
+      || !Array.isArray(itemEvidence)
+      || itemEvidence.some((value) => asObject(value).item_id !== itemId)
+      || customsRequirements.some((value) => value.matched_hs_code !== item.resolved_hsk10)
+      || !Array.isArray(item.errors)
+      || item.errors.length !== 0
+    ) return false;
+    retrievalItemIds.add(itemId);
+  }
+  const reportDocumentIds = reportDocuments.map((document) => String(document.document_id ?? ""));
+  const documentIds = documents.map((document) => String(document.document_id ?? ""));
+  if (!sameUniqueSet(reportDocumentIds, documentIds)) return false;
+  for (const document of documents) {
+    const summaryDocument = reportDocuments.find((item) => item.document_id === document.document_id);
+    if (
+      summaryDocument === undefined
+      || summaryDocument.document_type !== document.document_type
+      || summaryDocument.extraction_status !== document.extraction_status
+      || summaryDocument.extraction_confidence !== document.extraction_confidence
+    ) return false;
+  }
+  return true;
 }
 
 function validateProductionActionTrace(
@@ -1240,6 +1572,7 @@ function validateProductionNarrative(
   const raw = asObject(rawValue);
   if (report === undefined || report.generated_by !== "claude") return false;
   if (raw.generation_mode !== "claude" && raw.generated_by !== "claude") return false;
+  if (!Array.isArray(raw.required_actions) || raw.required_actions.length !== 0 || report.recommended_actions.length !== 0) return false;
   const sections = ["summary", "document_consistency", "regulatory_review", "required_actions"];
   for (const section of sections) {
     const claims = raw[section];
@@ -1558,12 +1891,21 @@ function normalizeNarrative(value: unknown, knownCitationIds: ReadonlySet<string
     ...report.impact,
     ...report.recommended_actions,
   ];
-  const claimIds = new Set<string>();
+  const claimFingerprints = new Map<string, string>();
   for (const claim of visibleClaims) {
-    if (claimIds.has(claim.claim_id) || knownCitationIds.has(claim.claim_id)) {
-      throw new ContractError(`narrative.${claim.claim_id}: duplicate or aliased claim ID`);
+    if (knownCitationIds.has(claim.claim_id)) {
+      throw new ContractError(`narrative.${claim.claim_id}: claim ID aliases a source or Evidence ID`);
     }
-    claimIds.add(claim.claim_id);
+    const fingerprint = canonicalJson({
+      text: claim.text,
+      citation_ids: claim.citation_ids,
+      material: claim.material ?? null,
+    });
+    const previousFingerprint = claimFingerprints.get(claim.claim_id);
+    if (previousFingerprint !== undefined && previousFingerprint !== fingerprint) {
+      throw new ContractError(`narrative.${claim.claim_id}: repeated claim ID has conflicting semantics`);
+    }
+    claimFingerprints.set(claim.claim_id, fingerprint);
     if (claim.citation_ids.length === 0) throw new ContractError(`narrative.${claim.claim_id}: every visible claim must cite evidence`);
     for (const citationId of claim.citation_ids) {
       if (!knownCitationIds.has(citationId)) throw new ContractError(`narrative.${claim.claim_id}: unknown citation ${citationId}`);

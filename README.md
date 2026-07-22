@@ -8,6 +8,7 @@
 - Case 목록·생성, text-only 문서 등록
 - 인증된 SSE 실행 단계와 Job polling fallback
 - 원문·추출/불일치·법령 Evidence 3-pane 심사
+- 미승인 Run의 법령 결과에 `DIAGNOSTIC EVIDENCE — NOT RELEASED` 경계와 별도 시각 스타일 적용
 - `execution / assessment / disposition / assurance` 분리 표시
 - source ledger에 결박된 XAI 보고서와 Case Chat
 - 원문 hash에 결박된 요건서류, 작성자·검증자 분리(maker-checker), signed/unsigned verification receipt 구분
@@ -36,6 +37,8 @@ npm run dev
 
 Backend의 `/api/v1/auth/config`가 OIDC issuer/client/endpoint를 제공해야 한다. Browser에 표시되는 OIDC URL은 Workbench의 same-origin `/oidc/`를 사용하고, Vite/Nginx가 내부 Keycloak로 proxy한다. SPA callback `/auth/callback`과 proxy 경로를 분리해 callback이 Keycloak으로 오라우팅되지 않게 한다. access token은 메모리에만 저장된다. OAuth state·PKCE verifier와 미확정 Review/Proposal decision intent의 식별자·버전·digest·request hash·idempotency key만 `sessionStorage`에 둔다. 모든 복구 레코드는 `org_id`와 OIDC `subject`로 namespace를 분리하고 종류별 최대 50개로 제한한다. Proposal 승인/거절 사유, 문서 원문·결과·token은 저장하지 않으며, 새로고침 뒤 로그인하면 Backend의 Job/Proposal 원장을 재조회해 응답 유실을 대조한다.
 
+Review 복구 레코드는 `kind=review`, `parent_run_id=null`, Case revision, 현재 OIDC subject, 고정 text-only 요청의 canonical SHA-256과 정확히 일치해야 한다. Proposal decision의 직접 응답과 복구는 Backend decision 원장의 동일 Proposal/Run/Case/org, 현재 actor, 요청한 terminal status, scoped idempotency key, request digest가 모두 일치할 때만 child revision Job을 결박한다. approve에는 동일 ID의 child Job이 필수이고 reject에는 child Job이 없어야 한다. 다른 actor·key·digest가 먼저 종결한 intent는 `superseded`로 표시하며 그 child Job을 현재 raw key에 연결하지 않는다.
+
 합성 UAT Case 생성은 요건서류 원문과 metadata까지만 만든다. 같은 사용자가 즉시 스스로 검증하지 않으며, 다른 `approver` 계정이 assertion을 추가해야 한다. Backend signer가 release-bound trust root와 일치할 때만 signed receipt가 생성되며, unsigned 진단 기록은 자동완료 근거가 아니다. 이 두 사람 절차를 거치더라도 미승인 Agent/Data Release에서는 `auto_review_complete`가 활성화되지 않는다.
 
 `delivery_uncertain`은 실패로 추정하거나 단순 timeout만으로 해제하지 않는다. 저장된 Job을 먼저 재조회하고, 여전히 불확실하면 Backend가 승인한 `approver` 또는 `admin`만 Agent 미수신을 입증하는 독립 운영 증거의 SHA-256·사유·명시적 확인을 제출할 수 있다. 대조 POST 직전에 민감 내용을 제외한 request hash를 `sessionStorage`에 저장한다. 응답을 잃으면 다음 POST 전에 반드시 권위 Job GET을 수행하고, 여전히 `delivery_uncertain`이며 요청 hash가 같을 때만 재전송한다. Backend가 `failed + delivery_reconciled`를 반환해야 브라우저가 복구 레코드를 지우고 새 심사를 허용한다.
@@ -55,6 +58,8 @@ npm run contract:check
 ```
 
 `verify`는 exact runtime doctor, 경계/XSS 정적 검사, 계약 검사, strict typecheck, DOM·접근성 전체 테스트와 coverage gate, production build를 실행한다. 경계 검사는 외부 GitHub Action의 40자리 commit pin과 Docker/Gitleaks/Trivy의 SHA-256 digest pin도 강제한다. GitHub Actions는 여기에 high 이상 dependency audit, dependency·container CycloneDX SBOM과 30일 보존, 고정 digest Gitleaks의 현재 소스·전체 Git history fail-closed 검사, 미수정 취약점을 예외 처리하지 않는 Trivy High/Critical runtime 스캔, read-only/non-root container smoke를 추가한다. Windows linked worktree에서는 `scripts/run-gitleaks.ps1`을 사용한다.
+
+`tests/fixtures/backend-63079af-public-review-run.json`은 Backend commit `63079affe205…`의 실제 public serializer 전체 응답이다. Frontend는 이 안전 공개 형식만 소비하며 provider 전용 `schema_version`, `status`, `requires_human_review`, `case_id`, `input_manifest_sha256`를 `result_detail`에 요구하거나 다시 주입하지 않는다. Backend와 동일한 effective-summary canonical JSON SHA-256을 다시 계산해 `result_digest`를 검증하고, 자동완료에서는 Retrieval item의 exact HS resolution·complete coverage·빈 errors·item-bound Evidence 및 보고서의 빈 outcome/action 이유까지 일관되어야 한다. 발견된 법령 요건이 있어도 검증된 Supporting Document code와 profile에 결박되어 Finding 없이 충족된 경우는 정상 자동완료를 허용한다.
 
 ## Production container
 
