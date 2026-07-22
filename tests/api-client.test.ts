@@ -244,6 +244,35 @@ describe("Backend API v1 client", () => {
     });
   });
 
+  it("binds default and explicitly injected browser fetch to the global receiver", async () => {
+    const origin = window.location.origin;
+    const authConfig = {
+      issuer: `${origin}/oidc/realms/customs`,
+      audience: "customs",
+      client_id: "frontend",
+      authorization_endpoint: `${origin}/oidc/realms/customs/protocol/openid-connect/auth`,
+      token_endpoint: `${origin}/oidc/realms/customs/protocol/openid-connect/token`,
+      scopes: ["openid"],
+      flow: "authorization_code_pkce_s256",
+      token_storage: "memory_only",
+    };
+    const receiverSensitiveFetch = vi.fn(function (this: typeof globalThis) {
+      if (this !== globalThis) throw new TypeError("fetch receiver mismatch");
+      return Promise.resolve(json(authConfig));
+    }) as unknown as typeof fetch;
+    const originalFetch = globalThis.fetch;
+
+    try {
+      globalThis.fetch = receiverSensitiveFetch;
+      await expect(new ApiClient().getAuthConfig()).resolves.toMatchObject({ client_id: "frontend" });
+      await expect(new ApiClient(receiverSensitiveFetch).getAuthConfig()).resolves.toMatchObject({ client_id: "frontend" });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+
+    expect(receiverSensitiveFetch).toHaveBeenCalledTimes(2);
+  });
+
   it("fails closed when Backend omits the PKCE or memory-only security profile", async () => {
     const origin = window.location.origin;
     const fetcher = vi.fn<typeof fetch>().mockResolvedValue(json({

@@ -77,11 +77,18 @@ type Decoder<T> = (value: unknown) => T;
 
 export class ApiClient {
   private session: Session | undefined;
+  private readonly fetcher: typeof fetch;
 
   constructor(
-    private readonly fetcher: typeof fetch = fetch,
+    fetcher: typeof fetch = globalThis.fetch,
     private readonly accessToken: () => string | undefined = () => undefined,
-  ) {}
+  ) {
+    // Chrome's Window.fetch Web IDL implementation rejects an ApiClient
+    // instance as its receiver. Normalizing both the default and an explicitly
+    // injected raw window.fetch here keeps every public method on the same safe
+    // invocation path while preserving bound functions and test doubles.
+    this.fetcher = fetcher.bind(globalThis);
+  }
 
   getAuthConfig(): Promise<AuthConfig> {
     return this.request("/auth/config", { method: "GET" }, decodeAuthConfig, false);
