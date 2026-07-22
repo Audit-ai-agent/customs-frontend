@@ -582,7 +582,10 @@ describe("review workbench", () => {
   });
 
   it("defines a complete synthetic no-requirement control separately from the untrusted-issuer case", () => {
-    expect(UAT_SCENARIOS.every((scenario) => scenario.expected.execution_status === "partial")).toBe(true);
+    expect(UAT_SCENARIOS.every((scenario) => (
+      scenario.expected.allowed_execution_statuses.join(",") === "succeeded,partial"
+      && !(scenario.expected.allowed_execution_statuses as readonly string[]).includes("failed")
+    ))).toBe(true);
     expect(UAT_SCENARIOS.every((scenario) => (
       scenario.expected.semantic?.runtime?.evidence_profile === "synthetic-v3"
       && scenario.expected.semantic.runtime.evidence_scope_label === "TEST_ONLY_V3"
@@ -644,7 +647,11 @@ describe("review workbench", () => {
     });
   });
 
-  it("separates scenario function PASS from the human-review disposition and evaluates semantic evidence", async () => {
+  it.each([
+    ["partial", "PASS", "Agent partial은 Job 실패가 아니라"],
+    ["succeeded", "PASS", "Agent succeeded는 필수 심사 단계와"],
+    ["failed", "FAIL", null],
+  ] as const)("separates %s Agent completion from Job and human-review disposition", async (executionStatus, expectedState, explanation) => {
     const root = document.createElement("div");
     document.body.append(root);
     const api = fakeApi();
@@ -665,6 +672,7 @@ describe("review workbench", () => {
     vi.mocked(api.getCase).mockResolvedValue(cleanCase);
     const noRequirementRun: ReviewRun = {
       ...run,
+      execution_status: executionStatus,
       evidence: [],
       evidence_retrieval: {
         status: "ok",
@@ -682,10 +690,14 @@ describe("review workbench", () => {
 
     await app.start();
     [...root.querySelectorAll<HTMLButtonElement>("button")].find((item) => item.textContent?.includes("합성 무요건 정상 Case"))?.click();
-    await vi.waitFor(() => expect(root.textContent).toContain("시나리오 기능: PASS"));
+    await vi.waitFor(() => expect(root.textContent).toContain(`시나리오 기능: ${expectedState}`));
 
-    expect(root.textContent).toContain("Agent 심사 완결성: partial / expected partial");
-    expect(root.textContent).toContain("Agent partial은 Job 실패가 아니라");
+    expect(root.textContent).toContain(`Agent 심사 완결성: ${executionStatus} / expected succeeded | partial`);
+    if (explanation) expect(root.textContent).toContain(explanation);
+    else {
+      expect(root.textContent).not.toContain("Agent partial은 Job 실패가 아니라");
+      expect(root.textContent).not.toContain("Agent succeeded는 필수 심사 단계와");
+    }
     expect(root.textContent).toContain("Issue 수: 0 / expected 0");
     expect(root.textContent).toContain("Finding 수: 0 / expected 0");
     expect(root.textContent).toContain("Evidence 수: 0 / expected 0");

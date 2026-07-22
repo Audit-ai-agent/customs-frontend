@@ -97,9 +97,12 @@ interface UatCheck {
   label: string;
   expected: string;
   actual: string;
+  matches?: boolean;
   pending?: boolean;
   invalid?: boolean;
 }
+
+const uatCheckMatches = (check: UatCheck): boolean => check.matches ?? check.expected === check.actual;
 
 interface ProposalDecisionRecoveryRecord {
   org_id: string;
@@ -867,7 +870,12 @@ export class WorkbenchApp {
             className: "section-help",
             text: "Agent partial은 Job 실패가 아니라 필수 심사 파이프라인 종료 후, 승인되지 않은 선택 조사 항목을 안전하게 보류했다는 뜻입니다.",
           })
-        : null,
+        : run.execution_status === "succeeded"
+          ? el("p", {
+              className: "section-help",
+              text: "Agent succeeded는 필수 심사 단계와 이번 Run에서 선택된 Agent action이 모두 끝났다는 뜻이며, Job 처리 성공이나 통관 승인과는 별도입니다.",
+            })
+          : null,
     );
   }
 
@@ -883,7 +891,12 @@ export class WorkbenchApp {
         expected: this.state.uatMetadata.supported_review_as_of ?? "unavailable",
         actual: run.review_as_of ?? "not_available",
       },
-      { label: "Agent 심사 완결성", expected: scenario.expected.execution_status, actual: run.execution_status },
+      {
+        label: "Agent 심사 완결성",
+        expected: scenario.expected.allowed_execution_statuses.join(" | "),
+        actual: run.execution_status,
+        matches: scenario.expected.allowed_execution_statuses.some((status) => status === run.execution_status),
+      },
       { label: "평가", expected: scenario.expected.assessment, actual: run.assessment ?? "not_available" },
       ...this.semanticUatChecks(scenario, run),
     ];
@@ -897,7 +910,7 @@ export class WorkbenchApp {
     ];
     const hasInvalidInput = functionalChecks.some((check) => check.invalid === true);
     const hasFunctionalFailure = functionalChecks.some((check) => (
-      check.pending !== true && check.invalid !== true && check.expected !== check.actual
+      check.pending !== true && check.invalid !== true && !uatCheckMatches(check)
     ));
     const hasPendingCheck = functionalChecks.some((check) => check.pending === true);
     const functionalState = hasInvalidInput
@@ -1031,7 +1044,7 @@ export class WorkbenchApp {
   }
 
   private renderUatCheck(check: UatCheck): HTMLElement {
-    const pass = check.expected === check.actual;
+    const pass = uatCheckMatches(check);
     const result = check.invalid ? "invalid" : check.pending ? "pending" : pass ? "pass" : "fail";
     return el("span", {
       className: `uat-check--${result}`,

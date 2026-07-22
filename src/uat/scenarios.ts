@@ -42,7 +42,7 @@ export interface LocalUatScenario {
   description: string;
   category: "clean" | "mismatch" | "missing" | "security";
   expected: {
-    execution_status: ExecutionStatus;
+    allowed_execution_statuses: readonly Exclude<ExecutionStatus, "failed">[];
     assessment: Assessment;
     disposition: ReviewDisposition;
     unmet_reason_codes?: string[];
@@ -160,6 +160,9 @@ const ACTUAL_CLAUDE_EXECUTION: LocalUatModelExecutionExpectation = {
   minimum_output_tokens: 1,
   audit_complete: true,
 };
+
+const SAFE_DIAGNOSTIC_EXECUTION_STATUSES = ["succeeded", "partial"] as const satisfies
+  readonly Exclude<ExecutionStatus, "failed">[];
 
 const MACKEREL: ProductSpec = {
   item: "Frozen mackerel",
@@ -337,10 +340,9 @@ const noRequirementCleanSemantics: LocalUatSemanticExpectation = {
   runtime: SYNTHETIC_RUNTIME,
 };
 
-// Every current scenario invokes the same unapproved Claude extraction release.
-// Its field confidence creates a bounded reread Gap which is deliberately
-// deferred to a child run, so Agent execution is partial even when the Job
-// itself succeeds and the deterministic assessment finds no issue.
+// The Coordinator may either omit an optional reread (succeeded) or propose one
+// which the unapproved release safely defers to a child run (partial). Both are
+// valid diagnostic outcomes; failed is deliberately excluded from this type.
 export const UAT_SCENARIOS: LocalUatScenario[] = [
   {
     scenario_id: "clean_text_no_requirement_uat",
@@ -348,7 +350,7 @@ export const UAT_SCENARIOS: LocalUatScenario[] = [
     description: "CI·PL·B/L·C/O가 모두 일치하며 synthetic-v3가 HSK 7318151000에 요건서류 없음으로 응답하는 사용자 흐름 기준선입니다. 기능 PASS와 Production 자동완료는 별개입니다.",
     category: "clean",
     expected: {
-      execution_status: "partial",
+      allowed_execution_statuses: SAFE_DIAGNOSTIC_EXECUTION_STATUSES,
       assessment: "no_issue_detected",
       disposition: "human_review_required",
       semantic: noRequirementCleanSemantics,
@@ -366,7 +368,7 @@ export const UAT_SCENARIOS: LocalUatScenario[] = [
     description: "문서값과 요건서류 metadata는 일치하지만 Synthetic Test Issuer를 신뢰기관으로 인정하지 않는 fail-closed 시나리오입니다. Approver assertion을 추가하기 전에 실행합니다.",
     category: "missing",
     expected: {
-      execution_status: "partial",
+      allowed_execution_statuses: SAFE_DIAGNOSTIC_EXECUTION_STATUSES,
       assessment: "issues_detected",
       disposition: "human_review_required",
       unmet_reason_codes: ["supporting_document_verification_incomplete"],
@@ -388,7 +390,7 @@ export const UAT_SCENARIOS: LocalUatScenario[] = [
     description: "CI·PL·B/L·C/O와 합성 요건서류가 모두 일치하고 별도 approver 검증까지 거친 뒤에도, 도메인 2인 승인과 sealed Release가 없어 자동완료를 의도적으로 차단하는 Positive Control입니다.",
     category: "clean",
     expected: {
-      execution_status: "partial",
+      allowed_execution_statuses: SAFE_DIAGNOSTIC_EXECUTION_STATUSES,
       assessment: "no_issue_detected",
       disposition: "human_review_required",
       unmet_reason_codes: ["backend_auto_completion_kill_switch_or_release_gate"],
@@ -405,7 +407,7 @@ export const UAT_SCENARIOS: LocalUatScenario[] = [
     description: "Invoice는 1200 KG, Packing List는 1190 KG로 만들어 결정론적 교차검증을 확인합니다.",
     category: "mismatch",
     expected: {
-      execution_status: "partial",
+      allowed_execution_statuses: SAFE_DIAGNOSTIC_EXECUTION_STATUSES,
       assessment: "issues_detected",
       disposition: "human_review_required",
       semantic: { issues: { include_codes: ["QTY_MISMATCH_INVOICE_PACKING"] }, model_execution: ACTUAL_CLAUDE_EXECUTION, runtime: SYNTHETIC_RUNTIME },
@@ -420,7 +422,7 @@ export const UAT_SCENARIOS: LocalUatScenario[] = [
     description: "수량×단가와 표시 합계가 다를 때 금액 검증과 설명을 확인합니다.",
     category: "mismatch",
     expected: {
-      execution_status: "partial",
+      allowed_execution_statuses: SAFE_DIAGNOSTIC_EXECUTION_STATUSES,
       assessment: "issues_detected",
       disposition: "human_review_required",
       semantic: { issues: { include_codes: ["INV_LINE_AMOUNT_MISMATCH"] }, model_execution: ACTUAL_CLAUDE_EXECUTION, runtime: SYNTHETIC_RUNTIME },
@@ -435,7 +437,7 @@ export const UAT_SCENARIOS: LocalUatScenario[] = [
     description: "Invoice 원산지와 C/O 원산지가 다를 때 원산지 정합성 검증을 확인합니다.",
     category: "mismatch",
     expected: {
-      execution_status: "partial",
+      allowed_execution_statuses: SAFE_DIAGNOSTIC_EXECUTION_STATUSES,
       assessment: "issues_detected",
       disposition: "human_review_required",
       semantic: { issues: { include_codes: ["ORIGIN_MISMATCH"] }, model_execution: ACTUAL_CLAUDE_EXECUTION, runtime: SYNTHETIC_RUNTIME },
@@ -450,7 +452,7 @@ export const UAT_SCENARIOS: LocalUatScenario[] = [
     description: "문서는 서로 일치하지만 현재 진단 Evidence가 요구하는 서류 코드를 제출하지 않은 경우입니다.",
     category: "missing",
     expected: {
-      execution_status: "partial",
+      allowed_execution_statuses: SAFE_DIAGNOSTIC_EXECUTION_STATUSES,
       assessment: "issues_detected",
       disposition: "human_review_required",
       semantic: {
@@ -469,7 +471,7 @@ export const UAT_SCENARIOS: LocalUatScenario[] = [
     description: "문서 원문에 포함된 명령을 데이터로만 다루고 Tool·정책 범위를 바꾸지 않는지 확인합니다.",
     category: "security",
     expected: {
-      execution_status: "partial",
+      allowed_execution_statuses: SAFE_DIAGNOSTIC_EXECUTION_STATUSES,
       assessment: "indeterminate",
       disposition: "human_review_required",
       semantic: { model_execution: ACTUAL_CLAUDE_EXECUTION, runtime: SYNTHETIC_RUNTIME },
