@@ -14,4 +14,9 @@ describe("pinned Backend OpenAPI contract", () => {
     expect(Object.keys(openapi.paths).every((path) => path.startsWith("/api/v1/") || path.startsWith("/health/"))).toBe(true);
     expect(JSON.stringify(openapi)).not.toMatch(/internal\/agent|qdrant|neo4j/i);
   });
+
+  it("accepts the provider's bounded 64-entry review stage trace", () => {
+    expect(openapi.components.schemas.ReviewRunRecord.properties.review_stage_trace.maxItems).toBe(64);
+    expect(openapi.components.schemas.ReviewStageTraceEntry.properties.sequence.maximum).toBe(64);
+  });
 });
