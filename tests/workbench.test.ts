@@ -45,7 +45,7 @@ const run: ReviewRun = {
   case_revision: 1,
   review_as_of: SUPPORTED_REVIEW_AS_OF,
   created_at: "2026-07-21T12:00:00Z",
-  execution_status: "succeeded",
+  execution_status: "partial",
   assessment: "no_issue_detected",
   review_disposition: "human_review_required",
   assurance_level: "production_candidate",
@@ -517,6 +517,7 @@ describe("review workbench", () => {
     await vi.waitFor(() => expect(root.textContent).toContain("새 심사 실행"));
     [...root.querySelectorAll<HTMLButtonElement>("button")].find((item) => item.textContent === "새 심사 실행")?.click();
     await vi.waitFor(() => expect(root.textContent).toContain("Job job-degraded"));
+    expect(root.textContent).toContain("Job 처리: queued");
     expect(root.textContent).toContain("실행 단계 이벤트를 기다리는 중입니다.");
     expect(root.textContent).not.toContain("event stream unavailable");
     app.destroy();
@@ -581,6 +582,7 @@ describe("review workbench", () => {
   });
 
   it("defines a complete synthetic no-requirement control separately from the untrusted-issuer case", () => {
+    expect(UAT_SCENARIOS.every((scenario) => scenario.expected.execution_status === "partial")).toBe(true);
     expect(UAT_SCENARIOS.every((scenario) => (
       scenario.expected.semantic?.runtime?.evidence_profile === "synthetic-v3"
       && scenario.expected.semantic.runtime.evidence_scope_label === "TEST_ONLY_V3"
@@ -682,6 +684,8 @@ describe("review workbench", () => {
     [...root.querySelectorAll<HTMLButtonElement>("button")].find((item) => item.textContent?.includes("합성 무요건 정상 Case"))?.click();
     await vi.waitFor(() => expect(root.textContent).toContain("시나리오 기능: PASS"));
 
+    expect(root.textContent).toContain("Agent 심사 완결성: partial / expected partial");
+    expect(root.textContent).toContain("Agent partial은 Job 실패가 아니라");
     expect(root.textContent).toContain("Issue 수: 0 / expected 0");
     expect(root.textContent).toContain("Finding 수: 0 / expected 0");
     expect(root.textContent).toContain("Evidence 수: 0 / expected 0");

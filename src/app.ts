@@ -666,7 +666,7 @@ export class WorkbenchApp {
       "div",
       { className: `job-status${uncertain ? " job-status--uncertain" : ""}`, attrs: { role: "status", "aria-live": "polite" } },
       el("strong", { text: `Job ${job.job_id.slice(0, 12)}` }),
-      el("span", { text: humanize(job.status) }),
+      el("span", { text: `Job 처리: ${humanize(job.status)}` }),
       el("small", { text: `Agent call: ${humanize(job.agent_call_state)}` }),
       job.error_code ? el("span", { className: "danger-text", text: job.error_code }) : null,
       uncertain
@@ -852,7 +852,7 @@ export class WorkbenchApp {
     return el(
       "section",
       { className: "status-grid", attrs: { "aria-label": "분리된 심사 상태" } },
-      badge("실행", run.execution_status, tone(run.execution_status)),
+      badge("Agent 심사 완결성", run.execution_status, tone(run.execution_status)),
       badge("문서·규정 평가", run.assessment, tone(run.assessment)),
       badge("업무 처리", run.review_disposition, tone(run.review_disposition)),
       badge("보증 수준", run.assurance_level, tone(run.assurance_level)),
@@ -862,6 +862,12 @@ export class WorkbenchApp {
         el("strong", { text: run.completion_eligibility?.eligible ? "자동 사전심사 가능" : "자동 사전심사 보류" }),
         el("span", { text: run.completion_eligibility?.unmet_reason_codes.map(humanize).join(" · ") || "차단 사유 없음" }),
       ),
+      run.execution_status === "partial"
+        ? el("p", {
+            className: "section-help",
+            text: "Agent partial은 Job 실패가 아니라 필수 심사 파이프라인 종료 후, 승인되지 않은 선택 조사 항목을 안전하게 보류했다는 뜻입니다.",
+          })
+        : null,
     );
   }
 
@@ -877,7 +883,7 @@ export class WorkbenchApp {
         expected: this.state.uatMetadata.supported_review_as_of ?? "unavailable",
         actual: run.review_as_of ?? "not_available",
       },
-      { label: "실행", expected: "succeeded", actual: run.execution_status },
+      { label: "Agent 심사 완결성", expected: scenario.expected.execution_status, actual: run.execution_status },
       { label: "평가", expected: scenario.expected.assessment, actual: run.assessment ?? "not_available" },
       ...this.semanticUatChecks(scenario, run),
     ];
