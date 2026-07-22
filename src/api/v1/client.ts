@@ -4,6 +4,7 @@ import {
   decodeChatRecord,
   decodeCorrectionProposal,
   decodeCorrectionProposalDecision,
+  decodeExactIsoDate,
   decodeHumanDecision,
   decodeJob,
   decodeLocalUatMetadata,
@@ -219,14 +220,15 @@ export class ApiClient {
         "Requirement-document codes must come from persisted supporting documents",
       );
     }
+    const reviewAsOf = decodeExactIsoDate(payload.review_as_of, "reviewEnqueue.review_as_of");
     const allowedKeys = new Set(["review_as_of", "trade_type", "submitted_document_codes"]);
     if (Object.keys(payload as object).some((key) => !allowedKeys.has(key))) {
       throw new ContractError("Review enqueue contains an unsupported field");
     }
     const canonicalPayload: EnqueueReviewRequest = {
+      review_as_of: reviewAsOf,
       trade_type: payload.trade_type,
       submitted_document_codes: [],
-      ...(payload.review_as_of === undefined ? {} : { review_as_of: payload.review_as_of }),
     };
     const init = this.json("POST", canonicalPayload);
     const headers = new Headers(init.headers);

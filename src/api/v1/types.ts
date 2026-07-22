@@ -34,6 +34,7 @@ export interface Session {
  * provider-internal identifiers.  It is not a release admission contract.
  */
 export type LocalUatMetadata = BackendSchemas["UatMetadataResponse"];
+export type ModelExecutionSummary = BackendSchemas["ModelExecutionSummary"];
 
 export interface CaseSummary {
   case_id: string;
@@ -271,6 +272,8 @@ export interface ReviewRun extends RunSummary {
     requirements_found: boolean | null;
     result_count: number;
   };
+  /** Safe Backend projection of the Agent provider-call audit. */
+  model_execution_summary?: ModelExecutionSummary;
   findings: ComplianceFinding[];
   sources: SourceReference[];
   narrative_report?: NarrativeReport;
@@ -289,6 +292,8 @@ export interface GroundedAnswer {
   bound_result_digest: string;
   status: "answered" | "insufficient_evidence" | "out_of_scope";
   claims: NarrativeClaim[];
+  generation_mode?: "claude" | "deterministic_fallback";
+  model_execution_summary?: ModelExecutionSummary;
   snapshot_id: string;
   created_at: string;
 }
@@ -343,6 +348,8 @@ export interface ChatRecord {
   answer: string;
   answer_status: "answered" | "insufficient_evidence" | "out_of_scope";
   citations: Array<{ citation_id?: string; evidence_id?: string; source_id?: string; reference_id?: string; kind?: string; label?: string }>;
+  generation_mode: "claude" | "deterministic_fallback";
+  model_execution_summary: ModelExecutionSummary;
   bound_result_digest: string;
   idempotency_key: string;
   idempotency_request_digest: string;

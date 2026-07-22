@@ -588,12 +588,18 @@ export interface components {
             created_at: string;
             /** Created By */
             created_by: string;
+            /**
+             * Generation Mode
+             * @enum {string}
+             */
+            generation_mode: "claude" | "deterministic_fallback";
             /** Idempotency Key */
             idempotency_key: string;
             /** Idempotency Request Digest */
             idempotency_request_digest: string;
             /** Message Id */
             message_id: string;
+            model_execution_summary: components["schemas"]["ModelExecutionSummary"];
             /** Org Id */
             org_id: string;
             /** Question */
@@ -851,6 +857,39 @@ export interface components {
              * Format: date-time
              */
             updated_at: string;
+        };
+        /**
+         * ModelExecutionSummary
+         * @description Bounded, non-sensitive projection of provider model-call audit records.
+         *
+         *     This deliberately excludes document/request/message IDs, raw content, hashes,
+         *     latency detail, credentials, and provider responses.  ``audit_complete`` means
+         *     only that the provider-owned audit records are structurally complete and bound
+         *     to the runtime identity; it is not a model-quality or Production-release claim.
+         */
+        ModelExecutionSummary: {
+            /** Audit Complete */
+            audit_complete: boolean;
+            /** Call Count */
+            call_count: number;
+            /** Input Tokens Total */
+            input_tokens_total: number;
+            /** Model Id */
+            model_id: string | null;
+            /** Output Tokens Total */
+            output_tokens_total: number;
+            /** Prompt Hashes Complete */
+            prompt_hashes_complete: boolean;
+            /** Provider */
+            provider: "anthropic" | null;
+            /** Runtime Identity Match */
+            runtime_identity_match: boolean;
+            /** Schema Hashes Complete */
+            schema_hashes_complete: boolean;
+            /** Text Only */
+            text_only: boolean;
+            /** Unmet Reason Codes */
+            unmet_reason_codes: ("no_model_calls" | "provider_not_anthropic" | "model_id_incomplete_or_mixed" | "non_text_model_call" | "non_positive_input_tokens" | "non_positive_output_tokens" | "prompt_hash_incomplete" | "schema_hash_incomplete" | "runtime_identity_mismatch")[];
         };
         /** ProblemDetailsV1 */
         ProblemDetailsV1: {
@@ -1255,6 +1294,11 @@ export interface components {
              * @constant
              */
             production_release: false;
+            /**
+             * Supported Review As Of
+             * Format: date
+             */
+            supported_review_as_of: string;
             /**
              * Text Only
              * @default true

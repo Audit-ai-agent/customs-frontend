@@ -12,6 +12,7 @@ import type {
   HumanDecisionRecord,
   JobRecord,
   LocalUatMetadata,
+  ModelExecutionSummary,
   NarrativeClaim,
   NarrativeReport,
   Paged,
@@ -74,6 +75,7 @@ const BACKEND_PUBLIC_RESULT_DETAIL_KEYS = [
   "fact_ledger",
   "jurisdiction",
   "knowledge_snapshot_id",
+  "model_execution_summary",
   "rag_evidence",
   "regulatory_findings",
   "report",
@@ -126,6 +128,21 @@ function boundedString(value: unknown, context: string, maximum: number): string
   return decoded;
 }
 
+export function decodeExactIsoDate(value: unknown, context: string): string {
+  const decoded = string(value, context);
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(decoded);
+  if (!match) throw new ContractError(`${context}: exact YYYY-MM-DD calendar date expected`);
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+  const days = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+  if (year < 1 || month < 1 || month > 12 || day < 1 || day > (days[month - 1] ?? 0)) {
+    throw new ContractError(`${context}: valid calendar date expected`);
+  }
+  return decoded;
+}
+
 export class ContractError extends Error {
   constructor(message: string) {
     super(message);
@@ -157,6 +174,7 @@ export function decodeLocalUatMetadata(value: unknown): LocalUatMetadata {
     "claude_mode",
     "evidence_profile",
     "evidence_scope_label",
+    "supported_review_as_of",
     "planner_mode",
     "production_release",
   ]);
@@ -180,8 +198,106 @@ export function decodeLocalUatMetadata(value: unknown): LocalUatMetadata {
     claude_mode: exact("claude_mode", "actual"),
     evidence_profile: oneOf("evidence_profile", ["synthetic-v3", "preserved-3law", "unknown"] as const),
     evidence_scope_label: oneOf("evidence_scope_label", ["TEST_ONLY_V3", "REAL_3_OF_58", "UNKNOWN"] as const),
+    supported_review_as_of: decodeExactIsoDate(
+      raw.supported_review_as_of,
+      "localUatMetadata.supported_review_as_of",
+    ),
     planner_mode: oneOf("planner_mode", ["shadow", "diagnostic_active"] as const),
     production_release: exact("production_release", false),
+  };
+}
+
+const MODEL_EXECUTION_REASON_CODES = [
+  "no_model_calls",
+  "provider_not_anthropic",
+  "model_id_incomplete_or_mixed",
+  "non_text_model_call",
+  "non_positive_input_tokens",
+  "non_positive_output_tokens",
+  "prompt_hash_incomplete",
+  "schema_hash_incomplete",
+  "runtime_identity_mismatch",
+] as const;
+
+export function decodeModelExecutionSummary(
+  value: unknown,
+  context = "modelExecutionSummary",
+): ModelExecutionSummary {
+  const raw = object(value, context);
+  const expectedKeys = [
+    "audit_complete",
+    "call_count",
+    "input_tokens_total",
+    "model_id",
+    "output_tokens_total",
+    "prompt_hashes_complete",
+    "provider",
+    "runtime_identity_match",
+    "schema_hashes_complete",
+    "text_only",
+    "unmet_reason_codes",
+  ].sort().join(",");
+  if (Object.keys(raw).sort().join(",") !== expectedKeys) {
+    throw new ContractError(`${context}: exact safe model execution fields required`);
+  }
+  if (raw.provider !== null && raw.provider !== "anthropic") {
+    throw new ContractError(`${context}.provider: anthropic or null expected`);
+  }
+  if (raw.model_id !== null) boundedString(raw.model_id, `${context}.model_id`, 128);
+  for (const key of ["text_only", "prompt_hashes_complete", "schema_hashes_complete", "runtime_identity_match", "audit_complete"] as const) {
+    if (typeof raw[key] !== "boolean") throw new ContractError(`${context}.${key}: boolean expected`);
+  }
+  const callCount = nonNegativeInteger(raw.call_count, `${context}.call_count`);
+  const inputTokens = nonNegativeInteger(raw.input_tokens_total, `${context}.input_tokens_total`);
+  const outputTokens = nonNegativeInteger(raw.output_tokens_total, `${context}.output_tokens_total`);
+  if (callCount > 1_000 || inputTokens > 1_000_000_000_000 || outputTokens > 1_000_000_000_000) {
+    throw new ContractError(`${context}: numeric bound exceeded`);
+  }
+  const reasons = boundedArray(raw.unmet_reason_codes, `${context}.unmet_reason_codes`, 9).map((item, index) => {
+    const decoded = string(item, `${context}.unmet_reason_codes[${index}]`);
+    if (!(MODEL_EXECUTION_REASON_CODES as readonly string[]).includes(decoded)) {
+      throw new ContractError(`${context}.unmet_reason_codes[${index}]: unsupported reason`);
+    }
+    return decoded as ModelExecutionSummary["unmet_reason_codes"][number];
+  });
+  const expectedReasons: ModelExecutionSummary["unmet_reason_codes"] = callCount === 0
+    ? ["no_model_calls"]
+    : [
+        ...(raw.provider === "anthropic" ? [] : ["provider_not_anthropic" as const]),
+        ...(raw.model_id === null ? ["model_id_incomplete_or_mixed" as const] : []),
+        ...(raw.text_only === true ? [] : ["non_text_model_call" as const]),
+        ...(inputTokens > 0 ? [] : ["non_positive_input_tokens" as const]),
+        ...(outputTokens > 0 ? [] : ["non_positive_output_tokens" as const]),
+        ...(raw.prompt_hashes_complete === true ? [] : ["prompt_hash_incomplete" as const]),
+        ...(raw.schema_hashes_complete === true ? [] : ["schema_hash_incomplete" as const]),
+        ...(raw.runtime_identity_match === true ? [] : ["runtime_identity_mismatch" as const]),
+      ];
+  if (callCount === 0 && (
+    raw.provider !== null
+    || raw.model_id !== null
+    || raw.text_only !== false
+    || inputTokens !== 0
+    || outputTokens !== 0
+    || raw.prompt_hashes_complete !== false
+    || raw.schema_hashes_complete !== false
+    || raw.runtime_identity_match !== false
+  )) throw new ContractError(`${context}: empty summary cannot advertise observed calls`);
+  if (
+    reasons.join(",") !== expectedReasons.join(",")
+    || raw.audit_complete !== (expectedReasons.length === 0)
+  ) throw new ContractError(`${context}: derived audit state mismatch`);
+  return {
+    provider: raw.provider,
+    model_id: raw.model_id as string | null,
+    text_only: raw.text_only as boolean,
+    call_count: callCount,
+    input_tokens_total: inputTokens,
+    output_tokens_total: outputTokens,
+    prompt_hashes_complete: raw.prompt_hashes_complete as boolean,
+    schema_hashes_complete: raw.schema_hashes_complete as boolean,
+    runtime_identity_match: raw.runtime_identity_match as boolean,
+    audit_complete: raw.audit_complete as boolean,
+    unmet_reason_codes: reasons,
   };
 }
 
@@ -289,12 +405,18 @@ export function decodeReviewRun(value: unknown): ReviewRun {
     throw new ContractError("reviewRun.assurance_level: unsupported level");
   }
   if (typeof raw.case_revision !== "number") throw new ContractError("reviewRun.case_revision: number expected");
-  if (!validateBackendEffectiveResultDigest(raw)) {
-    throw new ContractError("reviewRun.result_digest: Backend effective result digest mismatch");
-  }
   object(raw.result_detail, "reviewRun.result_detail");
   const resultValue = raw.result_detail ?? raw.result;
   const result = typeof resultValue === "object" && resultValue !== null ? (resultValue as JsonObject) : {};
+  const modelExecutionSummary = result.model_execution_summary === undefined
+    ? undefined
+    : decodeModelExecutionSummary(
+        result.model_execution_summary,
+        "reviewRun.result_detail.model_execution_summary",
+      );
+  if (!validateBackendEffectiveResultDigest(raw, modelExecutionSummary)) {
+    throw new ContractError("reviewRun.result_digest: Backend effective result digest mismatch");
+  }
   const pickArray = (top: string, ...nested: string[]): unknown[] => {
     if (Array.isArray(raw[top])) return raw[top] as unknown[];
     for (const key of nested) if (Array.isArray(result[key])) return result[key] as unknown[];
@@ -435,6 +557,7 @@ export function decodeReviewRun(value: unknown): ReviewRun {
       || reviewGaps.some((gap) => gap.status === "open")
       || actionTrace.some((action) => action.status !== "succeeded")
       || actionTrace.length === 0
+      || modelExecutionSummary?.audit_complete !== true
       || narrative === undefined
       || narrative.summary.length === 0
       || result.retrieval_status !== "ok"
@@ -459,6 +582,7 @@ export function decodeReviewRun(value: unknown): ReviewRun {
   // A top-level alias is not part of the Backend contract and must never
   // override the validated public Agent result_detail attestation.
   delete safeRaw.evidence_retrieval;
+  delete safeRaw.model_execution_summary;
   return {
     ...(safeRaw as unknown as ReviewRun),
     stages: pickArray("stages", "stages") as ReviewRun["stages"],
@@ -466,6 +590,7 @@ export function decodeReviewRun(value: unknown): ReviewRun {
     issues,
     evidence,
     ...(evidenceRetrieval === undefined ? {} : { evidence_retrieval: evidenceRetrieval }),
+    ...(modelExecutionSummary === undefined ? {} : { model_execution_summary: modelExecutionSummary }),
     findings,
     sources,
     action_trace: actionTrace,
@@ -779,6 +904,16 @@ export function decodeChatRecord(value: unknown): ChatRecord | GroundedAnswer {
   if (raw.answer_status !== "answered" && raw.answer_status !== "insufficient_evidence" && raw.answer_status !== "out_of_scope") {
     throw new ContractError("chatRecord.answer_status: unsupported status");
   }
+  if (raw.generation_mode !== "claude" && raw.generation_mode !== "deterministic_fallback") {
+    throw new ContractError("chatRecord.generation_mode: unsupported mode");
+  }
+  const modelExecutionSummary = decodeModelExecutionSummary(
+    raw.model_execution_summary,
+    "chatRecord.model_execution_summary",
+  );
+  if (modelExecutionSummary.call_count !== (raw.generation_mode === "claude" ? 1 : 0)) {
+    throw new ContractError("chatRecord: generation mode/model execution mismatch");
+  }
   const citations = array(raw.citations, "chatRecord.citations").map((value, index) => {
     const citation = object(value, `chatRecord.citations[${index}]`);
     const identifier = citation.citation_id ?? citation.evidence_id ?? citation.source_id ?? citation.reference_id;
@@ -791,7 +926,12 @@ export function decodeChatRecord(value: unknown): ChatRecord | GroundedAnswer {
   if (raw.answer_status !== "answered" && citations.length > 0) {
     throw new ContractError("chatRecord: non-answer status must not present material citations");
   }
-  return { ...(raw as unknown as ChatRecord), citations: citations as ChatRecord["citations"] };
+  return {
+    ...(raw as unknown as ChatRecord),
+    generation_mode: raw.generation_mode,
+    model_execution_summary: modelExecutionSummary,
+    citations: citations as ChatRecord["citations"],
+  };
 }
 
 export function decodeJob(value: unknown): JobRecord {
@@ -1234,7 +1374,10 @@ function validateProductionCompletionEnvelope(input: {
   return true;
 }
 
-function validateBackendEffectiveResultDigest(raw: JsonObject): boolean {
+function validateBackendEffectiveResultDigest(
+  raw: JsonObject,
+  modelExecutionSummary: ModelExecutionSummary | undefined,
+): boolean {
   if (
     typeof raw.completion_eligibility !== "object"
     || raw.completion_eligibility === null
@@ -1331,6 +1474,9 @@ function validateBackendEffectiveResultDigest(raw: JsonObject): boolean {
       approved_required_document_codes: profile.approved_required_document_codes ?? [],
       approval_digest: profile.approval_digest ?? null,
     },
+    ...(modelExecutionSummary === undefined
+      ? {}
+      : { model_execution_summary: modelExecutionSummary }),
   };
   try {
     return raw.result_digest === sha256CanonicalJson(effectiveSummary);
@@ -2085,6 +2231,16 @@ export function decodeGroundedAnswer(value: unknown): GroundedAnswer {
   }
   const citations = Array.isArray(raw.citations) ? raw.citations : [];
   const status = answerStatus(raw.answer_status, "answer.answer_status");
+  if (raw.generation_mode !== "claude" && raw.generation_mode !== "deterministic_fallback") {
+    throw new ContractError("answer.generation_mode: unsupported mode");
+  }
+  const modelExecutionSummary = decodeModelExecutionSummary(
+    raw.model_execution_summary,
+    "answer.model_execution_summary",
+  );
+  if (modelExecutionSummary.call_count !== (raw.generation_mode === "claude" ? 1 : 0)) {
+    throw new ContractError("answer: generation mode/model execution mismatch");
+  }
   const messageId = string(raw.message_id, "answer.message_id");
   const boundResultDigest = string(raw.bound_result_digest, "answer.bound_result_digest");
   if (!SHA256.test(boundResultDigest)) throw new ContractError("answer.bound_result_digest: SHA-256 expected");
@@ -2112,6 +2268,8 @@ export function decodeGroundedAnswer(value: unknown): GroundedAnswer {
     bound_result_digest: boundResultDigest,
     status,
     claims,
+    generation_mode: raw.generation_mode,
+    model_execution_summary: modelExecutionSummary,
     snapshot_id: boundResultDigest,
     created_at: string(raw.created_at, "answer.created_at"),
   };

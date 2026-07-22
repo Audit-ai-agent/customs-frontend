@@ -147,9 +147,13 @@ textarea { resize: vertical; line-height: 1.5; }
 .uat-assertion > p, .uat-assertion > .notice { grid-column: 1 / -1; }
 .uat-assertion--pass { color: var(--positive); background: var(--positive-bg); border-color: #96d0b2; }
 .uat-assertion--fail { color: var(--negative); background: var(--negative-bg); border-color: #e2aaaa; }
+.uat-assertion--pending { color: var(--caution); background: var(--caution-bg); border-color: #d9b65d; }
+.uat-assertion--invalid { color: var(--negative); background: var(--negative-bg); border-color: var(--negative); }
 .uat-checks { display: flex; flex-wrap: wrap; gap: 0.45rem; }
 .uat-checks span { padding: 0.25rem 0.45rem; background: rgb(255 255 255 / 75%); border-radius: 0.35rem; font-size: 0.7rem; }
 .uat-checks .uat-check--fail { color: var(--negative); box-shadow: inset 0 0 0 1px #e2aaaa; }
+.uat-checks .uat-check--pending { color: var(--caution); box-shadow: inset 0 0 0 1px #d9b65d; }
+.uat-checks .uat-check--invalid { color: var(--negative); font-weight: 800; box-shadow: inset 0 0 0 2px var(--negative); }
 .uat-disposition { grid-column: 1 / -1; display: grid; grid-template-columns: auto 1fr; gap: 0.35rem 0.8rem; align-items: center; padding: 0.7rem; color: var(--ink); background: rgb(255 255 255 / 78%); border: 1px solid var(--line); border-radius: 0.55rem; }
 .uat-disposition > .uat-checks, .uat-disposition > small { grid-column: 1 / -1; }
 .uat-disposition--mismatch { border-color: var(--negative); background: var(--negative-bg); }

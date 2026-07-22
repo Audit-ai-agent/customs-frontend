@@ -1,3 +1,4 @@
+import { sha256 as nobleSha256 } from "@noble/hashes/sha2.js";
 import { ApiClient, ApiError } from "./api/v1/client";
 import type {
   AddDocumentRequest,
@@ -10,11 +11,13 @@ import type {
   CorrectionProposal,
   CorrectionProposalDecisionResponse,
   CorrectionOperation,
+  EnqueueReviewRequest,
   ExtractedField,
   GroundedAnswer,
   HumanDecisionRecord,
   JobRecord,
   LocalUatMetadata,
+  ModelExecutionSummary,
   NarrativeClaim,
   RequiredAction,
   ReviewIssue,
@@ -29,22 +32,26 @@ import type {
 } from "./api/v1/types";
 import type { OidcSession } from "./auth";
 import { badge, button, el, empty, formatDate, humanize, labeledControl } from "./dom";
-import { UAT_SCENARIOS, type LocalUatScenario } from "./uat/scenarios";
+import {
+  localUatInputManifestSha256,
+  localUatScenarioExternalReference,
+  localUatScenarioInputManifest,
+  UAT_SCENARIOS,
+  type LocalUatInputManifest,
+  type LocalUatModelExecutionExpectation,
+  type LocalUatScenario,
+} from "./uat/scenarios";
 
 const MAX_PRIMARY_DOCUMENTS = 6;
 const MAX_SUPPORTING_DOCUMENTS = 100;
 const MAX_PRIMARY_TEXT_CHARACTERS = 500_000;
 const MAX_DOCUMENT_TEXT_CHARACTERS = 200_000;
-const REVIEW_RECOVERY_STORAGE_PREFIX = "customs.workbench.review-recovery.v3";
+const REVIEW_RECOVERY_STORAGE_PREFIX = "customs.workbench.review-recovery.v4";
 const PROPOSAL_DECISION_RECOVERY_STORAGE_PREFIX = "customs.workbench.proposal-decision-recovery.v1";
 const DELIVERY_RECONCILIATION_RECOVERY_STORAGE_PREFIX = "customs.workbench.delivery-reconciliation-recovery.v1";
 const MAX_RECOVERY_RECORDS = 50;
 const MAX_TRANSIENT_POLL_FAILURES = 8;
 const MAX_POLL_DELAY_MS = 15_000;
-// SHA-256 of canonical JSON {"submitted_document_codes":[],"trade_type":"import"}.
-// The first text-only release exposes no user-controlled Review body fields.
-const DEFAULT_REVIEW_REQUEST_SHA256 = "cc9c10fbfc72c972dd063b063b033f031c43ad17f44556a835ff497b3ea52108";
-
 interface UatRuntimeDisplayMetadata {
   mode: string;
   assurance_ceiling: "diagnostic" | "production_candidate" | "production";
@@ -53,9 +60,12 @@ interface UatRuntimeDisplayMetadata {
   claude_mode: string;
   evidence_profile: string;
   evidence_scope_label: string;
+  supported_review_as_of: string | null;
   planner_mode: string;
   production_release: boolean;
 }
+
+type BoundReviewRequest = EnqueueReviewRequest & { review_as_of: string };
 
 const SAFE_UNKNOWN_UAT_METADATA: UatRuntimeDisplayMetadata = Object.freeze({
   mode: "metadata_unavailable",
@@ -65,6 +75,7 @@ const SAFE_UNKNOWN_UAT_METADATA: UatRuntimeDisplayMetadata = Object.freeze({
   claude_mode: "unknown",
   evidence_profile: "unknown",
   evidence_scope_label: "UNKNOWN",
+  supported_review_as_of: null,
   planner_mode: "unknown",
   production_release: false,
 });
@@ -77,8 +88,17 @@ interface ReviewRecoveryRecord {
   job_id: string | null;
   job_kind: "review" | "revision";
   parent_run_id: string | null;
+  review_as_of: string | null;
   request_sha256: string;
   idempotency_key: string;
+}
+
+interface UatCheck {
+  label: string;
+  expected: string;
+  actual: string;
+  pending?: boolean;
+  invalid?: boolean;
 }
 
 interface ProposalDecisionRecoveryRecord {
@@ -349,6 +369,7 @@ export class WorkbenchApp {
           className: scopeIsPartial ? "uat-runtime-fact--warning" : "",
           text: `Evidence: ${humanize(metadata.evidence_profile)} · ${evidenceScopeLabel}`,
         }),
+        el("span", { text: `Review 기준일: ${metadata.supported_review_as_of ?? "UNKNOWN"}` }),
         el("span", { text: `Planner: ${humanize(metadata.planner_mode)}` }),
         el("span", {
           className: metadata.auto_completion_enabled ? "uat-runtime-fact--danger" : "",
@@ -515,6 +536,8 @@ export class WorkbenchApp {
   }
 
   private renderInputAndRun(): HTMLElement {
+    const reviewDateReady = this.state.uatMetadataVerified
+      && this.state.uatMetadata.supported_review_as_of !== null;
     const typeSelect = el(
       "select",
       { attrs: { name: "document_type", required: "", ...disabledUnless(this.canWrite() && !this.state.busy) } },
@@ -556,7 +579,10 @@ export class WorkbenchApp {
     return el(
       "section",
       { className: "input-panel", attrs: { "aria-labelledby": "case-input-title" } },
-      el("div", { className: "section-title-row" }, el("h2", { text: "문서와 실행", attrs: { id: "case-input-title" } }), el("button", { className: "button button--primary", text: "새 심사 실행", attrs: { type: "button", ...disabledUnless(this.canWrite() && !this.state.busy && !this.jobIsActive()) }, on: { click: () => void this.enqueueReview() } })),
+      el("div", { className: "section-title-row" }, el("h2", { text: "문서와 실행", attrs: { id: "case-input-title" } }), el("button", { className: "button button--primary", text: "새 심사 실행", attrs: { type: "button", ...disabledUnless(this.canWrite() && !this.state.busy && !this.jobIsActive() && reviewDateReady) }, on: { click: () => void this.enqueueReview() } })),
+      reviewDateReady
+        ? el("p", { className: "section-help", text: `Backend 지원 기준일 ${this.state.uatMetadata.supported_review_as_of}로 고정해 심사합니다.` })
+        : el("p", { className: "notice notice--warning", text: "검증된 Backend 지원 기준일이 없어 새 심사를 차단했습니다." }),
       el("p", { className: "section-help", text: `심사 입력 ${primaryDocuments.length}/${MAX_PRIMARY_DOCUMENTS}문서 · ${primaryTextCharacters.toLocaleString()}/${MAX_PRIMARY_TEXT_CHARACTERS.toLocaleString()}자 (SUPPORTING 원문 제외)` }),
       el("details", {}, el("summary", { text: `텍스트 문서 등록 (${this.state.documents.length})` }), form),
       this.renderSupportingDocuments(),
@@ -788,6 +814,7 @@ export class WorkbenchApp {
       this.renderUatAssertion(run),
       this.renderRequiredActions(run.required_actions),
       this.renderActionTimeline(run),
+      this.renderModelExecution("Review Claude 실행 증거", run.model_execution_summary),
       this.renderParentChildDiff(run),
       this.renderThreePane(run),
       this.renderNarrative(run),
@@ -842,8 +869,14 @@ export class WorkbenchApp {
     const caseId = this.state.selectedCase?.case_id;
     const scenario = caseId ? this.scenarioByCase.get(caseId) : undefined;
     if (!scenario) return null;
-    const functionalChecks = [
+    const functionalChecks: UatCheck[] = [
+      this.uatScenarioManifestCheck(scenario),
       ...this.uatRuntimeFunctionalChecks(),
+      {
+        label: "Review 기준일 결박",
+        expected: this.state.uatMetadata.supported_review_as_of ?? "unavailable",
+        actual: run.review_as_of ?? "not_available",
+      },
       { label: "실행", expected: "succeeded", actual: run.execution_status },
       { label: "평가", expected: scenario.expected.assessment, actual: run.assessment ?? "not_available" },
       ...this.semanticUatChecks(scenario, run),
@@ -856,16 +889,27 @@ export class WorkbenchApp {
         actual: run.completion_eligibility?.unmet_reason_codes.includes(code) ? "present" : "missing",
       })),
     ];
-    const functionalPass = functionalChecks.every((check) => check.expected === check.actual);
+    const hasInvalidInput = functionalChecks.some((check) => check.invalid === true);
+    const hasFunctionalFailure = functionalChecks.some((check) => (
+      check.pending !== true && check.invalid !== true && check.expected !== check.actual
+    ));
+    const hasPendingCheck = functionalChecks.some((check) => check.pending === true);
+    const functionalState = hasInvalidInput
+      ? "invalid"
+      : hasFunctionalFailure
+        ? "fail"
+        : hasPendingCheck
+          ? "pending"
+          : "pass";
     const dispositionMatches = dispositionChecks.every((check) => check.expected === check.actual);
     return el(
       "section",
-      { className: `uat-assertion uat-assertion--${functionalPass ? "pass" : "fail"}`, attrs: { role: "status" } },
+      { className: `uat-assertion uat-assertion--${functionalState}`, attrs: { role: "status" } },
       el(
         "div",
         {},
         el("span", { className: "eyebrow", text: "SCENARIO FUNCTION ASSERTION" }),
-        el("strong", { text: `시나리오 기능: ${functionalPass ? "PASS" : "FAIL"}` }),
+        el("strong", { text: `시나리오 기능: ${functionalState.toUpperCase()}` }),
         el("small", { text: scenario.title }),
       ),
       el("div", { className: "uat-checks", attrs: { "aria-label": "기능 검증" } }, ...functionalChecks.map((check) => this.renderUatCheck(check))),
@@ -883,7 +927,62 @@ export class WorkbenchApp {
     );
   }
 
-  private uatRuntimeFunctionalChecks(): Array<{ label: string; expected: string; actual: string }> {
+  private uatScenarioManifestCheck(scenario: LocalUatScenario): UatCheck {
+    const expectedReference = localUatScenarioExternalReference(scenario);
+    const caseReference = this.state.selectedCase?.external_reference;
+    const actualManifest = this.currentUatInputManifest(scenario);
+    const expectedHash = localUatInputManifestSha256(localUatScenarioInputManifest(scenario));
+    const actualHash = actualManifest === null ? null : localUatInputManifestSha256(actualManifest);
+    const exact = caseReference === expectedReference && actualHash === expectedHash;
+    return {
+      label: "UAT 입력 manifest",
+      expected: "exact",
+      actual: exact ? "exact" : "drift",
+      invalid: !exact,
+    };
+  }
+
+  private currentUatInputManifest(scenario: LocalUatScenario): LocalUatInputManifest | null {
+    const documents = this.state.documents.map((document) => ({
+      document_type: document.document_type,
+      filename: document.filename,
+      media_type: document.media_type,
+      content_sha256: document.content_sha256,
+    })).sort((left, right) => canonicalJson(left).localeCompare(canonicalJson(right)));
+    const expectedSupporting = scenario.supporting_document;
+    if (expectedSupporting === undefined) {
+      if (this.state.supportingDocuments.length !== 0) return null;
+      return { documents, supporting_document: null };
+    }
+    if (this.state.supportingDocuments.length !== 1) return null;
+    const supporting = this.state.supportingDocuments[0]!;
+    const sourceDocuments = this.state.documents.filter((document) => document.document_id === supporting.document_id);
+    const invoiceDocuments = this.state.documents.filter((document) => document.document_type === "CI");
+    if (sourceDocuments.length !== 1 || invoiceDocuments.length !== 1) return null;
+    const source = sourceDocuments[0]!;
+    const invoice = invoiceDocuments[0]!;
+    if (
+      source.document_type !== "SUPPORTING"
+      || supporting.subject_item_ids.length !== 1
+      || supporting.subject_item_ids[0] !== `${invoice.document_id}_line_1`
+    ) return null;
+    return {
+      documents,
+      supporting_document: {
+        filename: source.filename,
+        document_code: supporting.document_code,
+        issuer: supporting.issuer,
+        document_number: supporting.document_number,
+        issued_on: supporting.issued_on,
+        valid_until: supporting.valid_until ?? "",
+        hs_codes: [...supporting.hs_codes].sort(),
+        source_sha256: supporting.source_sha256,
+        subject_item_selector: "CI#line_1",
+      },
+    };
+  }
+
+  private uatRuntimeFunctionalChecks(): UatCheck[] {
     const metadata = this.state.uatMetadata;
     const verified = this.state.uatMetadataVerified;
     const evidenceProfileKnown = metadata.evidence_profile === "synthetic-v3"
@@ -895,6 +994,11 @@ export class WorkbenchApp {
     return [
       { label: "UAT runtime identity", expected: "verified", actual: verified ? "verified" : "unverified" },
       { label: "Runtime mode", expected: "local_uat", actual: verified ? metadata.mode : "unknown" },
+      {
+        label: "Supported review date",
+        expected: "configured",
+        actual: verified && metadata.supported_review_as_of !== null ? "configured" : "unknown",
+      },
       { label: "Claude mode", expected: "actual", actual: verified ? metadata.claude_mode : "unknown" },
       {
         label: "Evidence runtime",
@@ -920,22 +1024,23 @@ export class WorkbenchApp {
     ];
   }
 
-  private renderUatCheck(check: { label: string; expected: string; actual: string }): HTMLElement {
+  private renderUatCheck(check: UatCheck): HTMLElement {
     const pass = check.expected === check.actual;
+    const result = check.invalid ? "invalid" : check.pending ? "pending" : pass ? "pass" : "fail";
     return el("span", {
-      className: pass ? "uat-check--pass" : "uat-check--fail",
+      className: `uat-check--${result}`,
       text: `${check.label}: ${humanize(check.actual)} / expected ${humanize(check.expected)}`,
-      attrs: { "data-check-result": pass ? "pass" : "fail" },
+      attrs: { "data-check-result": result },
     });
   }
 
   private semanticUatChecks(
     scenario: LocalUatScenario,
     run: ReviewRun,
-  ): Array<{ label: string; expected: string; actual: string }> {
+  ): UatCheck[] {
     const semantic = scenario.expected.semantic;
     if (!semantic) return [];
-    const checks: Array<{ label: string; expected: string; actual: string }> = [];
+    const checks: UatCheck[] = [];
     const includeCodes = (
       label: string,
       expectedCodes: string[] | undefined,
@@ -1018,11 +1123,74 @@ export class WorkbenchApp {
             : "missing",
       });
     }
+    for (const stage of semantic.review_stages?.include_completed_stages ?? []) {
+      const matchingStages = (run.review_stage_trace ?? []).filter((item) => item.stage === stage);
+      checks.push({
+        label: `필수 심사 단계 ${stage}`,
+        expected: "completed",
+        actual: matchingStages.some((item) => item.status === "completed")
+          ? "completed"
+          : matchingStages.length > 0
+            ? "not_completed"
+            : "missing",
+      });
+    }
     includeCodes(
       "기능 차단 사유",
       semantic.completion?.include_unmet_reason_codes,
       run.completion_eligibility?.unmet_reason_codes ?? [],
     );
+    if (semantic.model_execution) {
+      checks.push(...this.modelExecutionChecks(
+        "Review Claude",
+        semantic.model_execution,
+        run.model_execution_summary,
+      ));
+    }
+    if (semantic.chat) {
+      const answered = [...this.state.chat].reverse().find((message) => (
+        ("message_id" in message ? message.answer_status : message.status) === semantic.chat?.status
+      ));
+      if (answered === undefined) {
+        checks.push({
+          label: "Claude Chat 실행",
+          expected: "completed",
+          actual: "pending",
+          pending: true,
+        });
+      } else {
+        const generationMode = answered.generation_mode;
+        const execution = answered.model_execution_summary;
+        const citationIds = "message_id" in answered
+          ? answered.citations.map((citation) => citation.citation_id ?? citation.evidence_id ?? citation.source_id ?? citation.reference_id)
+          : answered.claims.flatMap((claim) => claim.citation_ids);
+        const knownIds = new Set([
+          ...run.fields.map((item) => item.field_id),
+          ...run.issues.map((item) => item.issue_id),
+          ...run.evidence.map((item) => item.evidence_id),
+          ...run.findings.map((item) => item.finding_id),
+          ...run.sources.map((item) => item.source_id),
+        ]);
+        checks.push({
+          label: "Claude Chat answered",
+          expected: "present",
+          actual: "present",
+        });
+        checks.push({
+          label: "Claude Chat generation",
+          expected: semantic.chat.generation_mode,
+          actual: generationMode ?? "not_available",
+        });
+        checks.push({
+          label: "Claude Chat grounding",
+          expected: "grounded",
+          actual: citationIds.length > 0 && citationIds.every((id) => id !== undefined && knownIds.has(id))
+            ? "grounded"
+            : "not_grounded",
+        });
+        checks.push(...this.modelExecutionChecks("Chat Claude", semantic.chat.model_execution, execution));
+      }
+    }
     if (semantic.narrative?.material_citations_complete) {
       checks.push({
         label: "XAI material citation",
@@ -1043,6 +1211,29 @@ export class WorkbenchApp {
       });
     }
     return checks;
+  }
+
+  private modelExecutionChecks(
+    label: string,
+    expected: LocalUatModelExecutionExpectation,
+    summary: ModelExecutionSummary | undefined,
+  ): UatCheck[] {
+    const minimum = (value: number | undefined, threshold: number): string => (
+      value !== undefined && value >= threshold ? "satisfied" : `only_${value ?? 0}`
+    );
+    return [
+      { label: `${label} provider`, expected: expected.provider, actual: summary?.provider ?? "not_available" },
+      { label: `${label} model`, expected: "present", actual: summary?.model_id ? "present" : "missing" },
+      { label: `${label} text-only`, expected: String(expected.text_only), actual: summary === undefined ? "not_available" : String(summary.text_only) },
+      { label: `${label} call count`, expected: "satisfied", actual: minimum(summary?.call_count, expected.minimum_call_count) },
+      { label: `${label} input tokens`, expected: "satisfied", actual: minimum(summary?.input_tokens_total, expected.minimum_input_tokens) },
+      { label: `${label} output tokens`, expected: "satisfied", actual: minimum(summary?.output_tokens_total, expected.minimum_output_tokens) },
+      { label: `${label} prompt hashes`, expected: "complete", actual: summary?.prompt_hashes_complete ? "complete" : "incomplete" },
+      { label: `${label} schema hashes`, expected: "complete", actual: summary?.schema_hashes_complete ? "complete" : "incomplete" },
+      { label: `${label} runtime identity`, expected: "matched", actual: summary?.runtime_identity_match ? "matched" : "mismatch" },
+      { label: `${label} audit`, expected: String(expected.audit_complete), actual: summary === undefined ? "not_available" : String(summary.audit_complete) },
+      { label: `${label} unmet reasons`, expected: "none", actual: summary?.unmet_reason_codes.length === 0 ? "none" : (summary?.unmet_reason_codes.join(",") ?? "not_available") },
+    ];
   }
 
   private materialNarrativeCitationsComplete(run: ReviewRun): boolean {
@@ -1099,6 +1290,41 @@ export class WorkbenchApp {
               ),
             ),
           ),
+    );
+  }
+
+  private renderModelExecution(title: string, summary: ModelExecutionSummary | undefined): HTMLElement {
+    if (!summary) {
+      return el(
+        "section",
+        { className: "card", attrs: { "aria-label": title } },
+        el("h2", { text: title }),
+        el("p", { className: "notice notice--warning", text: "Backend가 공개한 모델 실행 증거가 없습니다. 실제 Claude 실행으로 판정하지 않습니다." }),
+      );
+    }
+    const state = summary.audit_complete ? "검증 완료" : "검증 미완료";
+    return el(
+      "section",
+      { className: "card", attrs: { "aria-label": title, "data-model-audit": summary.audit_complete ? "complete" : "incomplete" } },
+      el("div", { className: "section-title-row" },
+        el("h2", { text: title }),
+        badge("실행 감사", state, summary.audit_complete ? "positive" : "negative"),
+      ),
+      el("p", { className: "section-help", text: "토큰 수와 호출 수는 Backend가 원문·credential을 제거해 공개한 실행 증거이며 모델 품질 또는 Production 승인을 뜻하지 않습니다." }),
+      el(
+        "dl",
+        { className: "identity-list" },
+        el("dt", { text: "Provider" }), el("dd", { text: summary.provider ?? "없음" }),
+        el("dt", { text: "Model" }), el("dd", { text: summary.model_id ?? "없음" }),
+        el("dt", { text: "호출 수" }), el("dd", { text: String(summary.call_count) }),
+        el("dt", { text: "입력 tokens" }), el("dd", { text: summary.input_tokens_total.toLocaleString() }),
+        el("dt", { text: "출력 tokens" }), el("dd", { text: summary.output_tokens_total.toLocaleString() }),
+        el("dt", { text: "Text-only" }), el("dd", { text: String(summary.text_only) }),
+        el("dt", { text: "Prompt hash" }), el("dd", { text: summary.prompt_hashes_complete ? "complete" : "incomplete" }),
+        el("dt", { text: "Schema hash" }), el("dd", { text: summary.schema_hashes_complete ? "complete" : "incomplete" }),
+        el("dt", { text: "Runtime identity" }), el("dd", { text: summary.runtime_identity_match ? "matched" : "mismatch" }),
+        el("dt", { text: "미충족 사유" }), el("dd", { text: summary.unmet_reason_codes.length === 0 ? "없음" : summary.unmet_reason_codes.map(humanize).join(" · ") }),
+      ),
     );
   }
 
@@ -1549,9 +1775,40 @@ export class WorkbenchApp {
 
   private renderChatMessage(message: ChatRecord | GroundedAnswer): HTMLElement {
     if ("message_id" in message) {
-      return el("article", { className: "chat-message" }, el("p", { className: "chat-question", text: message.question }), el("p", { text: message.answer }), el("span", { className: "chat-status", text: humanize(message.answer_status) }), this.renderCitationButtons(message.citations.map((citation) => citation.citation_id ?? citation.evidence_id ?? citation.source_id ?? citation.reference_id ?? "unbound-citation")));
+      return el(
+        "article",
+        { className: "chat-message" },
+        el("p", { className: "chat-question", text: message.question }),
+        el("p", { text: message.answer }),
+        el("span", { className: "chat-status", text: humanize(message.answer_status) }),
+        this.renderChatExecution(message.generation_mode, message.model_execution_summary),
+        this.renderCitationButtons(message.citations.map((citation) => citation.citation_id ?? citation.evidence_id ?? citation.source_id ?? citation.reference_id ?? "unbound-citation")),
+      );
     }
-    return el("article", { className: "chat-message" }, el("span", { className: "chat-status", text: humanize(message.status) }), ...message.claims.map((claim) => el("div", {}, el("p", { text: claim.text }), this.renderCitationButtons(claim.citation_ids))));
+    return el(
+      "article",
+      { className: "chat-message" },
+      el("span", { className: "chat-status", text: humanize(message.status) }),
+      this.renderChatExecution(message.generation_mode, message.model_execution_summary),
+      ...message.claims.map((claim) => el("div", {}, el("p", { text: claim.text }), this.renderCitationButtons(claim.citation_ids))),
+    );
+  }
+
+  private renderChatExecution(
+    generationMode: GroundedAnswer["generation_mode"],
+    summary: ModelExecutionSummary | undefined,
+  ): HTMLElement {
+    if (!generationMode || !summary) {
+      return el("p", { className: "notice notice--warning", text: "Chat 모델 실행 증거 없음" });
+    }
+    return el(
+      "p",
+      {
+        className: summary.audit_complete ? "section-help" : "notice notice--warning",
+        attrs: { "data-chat-generation": generationMode, "data-chat-model-audit": summary.audit_complete ? "complete" : "incomplete" },
+        text: `${humanize(generationMode)} · ${summary.provider ?? "provider 없음"} · ${summary.model_id ?? "model 없음"} · calls ${summary.call_count} · input ${summary.input_tokens_total.toLocaleString()} · output ${summary.output_tokens_total.toLocaleString()} tokens · audit ${summary.audit_complete ? "complete" : "incomplete"}`,
+      },
+    );
   }
 
   private renderHistory(run: ReviewRun): HTMLElement {
@@ -1626,11 +1883,15 @@ export class WorkbenchApp {
 
   private async createScenarioCase(scenario: LocalUatScenario): Promise<void> {
     await this.act(async () => {
+      const externalReference = localUatScenarioExternalReference(scenario);
       const created = await this.api.createCase({
         title: `[UAT] ${scenario.title}`,
-        external_reference: `UAT-${scenario.scenario_id}-${Date.now()}`,
+        external_reference: externalReference,
       });
-      if (created.org_id !== this.requireSession().org_id) throw new Error("생성된 UAT Case가 현재 조직에 결박되지 않았습니다.");
+      if (
+        created.org_id !== this.requireSession().org_id
+        || created.external_reference !== externalReference
+      ) throw new Error("생성된 UAT Case가 현재 조직·입력 manifest에 결박되지 않았습니다.");
       const createdDocuments: CaseDocument[] = [];
       for (const document of scenario.documents) {
         const createdDocument = await this.api.addDocument(created.case_id, document);
@@ -1787,7 +2048,7 @@ export class WorkbenchApp {
     await this.act(async () => {
       const intent = `review:${current.case_id}`;
       const session = this.requireSession();
-      const request = { trade_type: "import" as const, submitted_document_codes: [] as string[] };
+      const request = this.reviewRequest();
       const recovery: ReviewRecoveryRecord = {
         org_id: session.org_id,
         subject: session.subject,
@@ -1796,6 +2057,7 @@ export class WorkbenchApp {
         job_id: null,
         job_kind: "review",
         parent_run_id: null,
+        review_as_of: request.review_as_of,
         request_sha256: await sha256CanonicalJson(request),
         idempotency_key: this.idempotencyKey(intent),
       };
@@ -1812,22 +2074,26 @@ export class WorkbenchApp {
 
   private async submitReviewIntent(
     recovery: ReviewRecoveryRecord,
-    request = { trade_type: "import" as const, submitted_document_codes: [] as string[] },
+    request?: BoundReviewRequest,
   ): Promise<void> {
     try {
       const session = this.requireSession();
+      const boundRequest = request ?? this.reviewRequest(recovery.review_as_of ?? undefined);
+      const supportedReviewAsOf = this.requireSupportedReviewDate();
       if (
         recovery.org_id !== session.org_id
         || recovery.subject !== session.subject
         || recovery.job_kind !== "review"
         || recovery.parent_run_id !== null
-        || recovery.request_sha256 !== await sha256CanonicalJson(request)
+        || recovery.review_as_of !== supportedReviewAsOf
+        || boundRequest.review_as_of !== supportedReviewAsOf
+        || recovery.request_sha256 !== await sha256CanonicalJson(boundRequest)
       ) {
         throw new Error("저장된 Review 요청이 현재 조직·사용자·요청 본문과 정확히 결박되지 않았습니다.");
       }
       const job = await this.api.enqueueReview(
         recovery.case_id,
-        request,
+        boundRequest,
         recovery.idempotency_key,
       );
       this.assertJobRecoveryBinding(job, recovery);
@@ -1843,6 +2109,26 @@ export class WorkbenchApp {
       if (isDefinitiveRequestRejection(error)) this.removeRecovery(recovery.case_id);
       throw error;
     }
+  }
+
+  private requireSupportedReviewDate(): string {
+    const date = this.state.uatMetadata.supported_review_as_of;
+    if (!this.state.uatMetadataVerified || date === null || !isStrictIsoDate(date)) {
+      throw new Error("Backend가 검증한 LOCAL UAT review 기준일이 없어 심사를 시작할 수 없습니다.");
+    }
+    return date;
+  }
+
+  private reviewRequest(reviewAsOf = this.requireSupportedReviewDate()): BoundReviewRequest {
+    const supported = this.requireSupportedReviewDate();
+    if (reviewAsOf !== supported) {
+      throw new Error("저장된 Review 기준일이 현재 Backend 지원 기준일과 일치하지 않습니다.");
+    }
+    return {
+      review_as_of: supported,
+      trade_type: "import",
+      submitted_document_codes: [],
+    };
   }
 
   private schedulePoll(jobId: string, delayMs = 1_000): void {
@@ -1865,6 +2151,7 @@ export class WorkbenchApp {
       || record.subject !== session.subject
       || !/^[a-f0-9]{64}$/.test(record.request_sha256)
       || (record.job_kind === "review") !== (record.parent_run_id === null)
+      || (record.job_kind === "review" ? !isStrictIsoDate(record.review_as_of) : record.review_as_of !== null)
       || (record.job_kind === "revision" && record.job_id === null)
     ) {
       throw new Error("Job 복구 상태가 현재 세션과 일치하지 않습니다.");
@@ -2425,6 +2712,7 @@ export class WorkbenchApp {
           job_id: response.job.job_id,
           job_kind: "revision",
           parent_run_id: run.review_run_id,
+          review_as_of: null,
           request_sha256: recovery.request_sha256,
           idempotency_key: idempotencyKey,
         });
@@ -2503,7 +2791,7 @@ export class WorkbenchApp {
 
   private restoreScenarioMetadata(item: CaseSummary): void {
     const reference = item.external_reference ?? "";
-    const scenario = UAT_SCENARIOS.find((candidate) => reference.startsWith(`UAT-${candidate.scenario_id}-`));
+    const scenario = UAT_SCENARIOS.find((candidate) => reference === localUatScenarioExternalReference(candidate));
     if (!scenario) return;
     this.scenarioByCase.set(item.case_id, scenario);
   }
@@ -2788,6 +3076,7 @@ export class WorkbenchApp {
           job_id: job.job_id,
           job_kind: "revision",
           parent_run_id: run.review_run_id,
+          review_as_of: null,
           request_sha256: recovery.request_sha256,
           idempotency_key: recovery.idempotency_key,
         });
@@ -2889,7 +3178,7 @@ function readReviewRecoveries(session: Session): ReviewRecoveryRecord[] {
     }
     const raw = value as Record<string, unknown>;
     const keys = Object.keys(raw).sort();
-    if (keys.join(",") !== "case_id,case_revision,idempotency_key,job_id,job_kind,org_id,parent_run_id,request_sha256,subject") {
+    if (keys.join(",") !== "case_id,case_revision,idempotency_key,job_id,job_kind,org_id,parent_run_id,request_sha256,review_as_of,subject") {
       throw new Error(`Job 복구 상태 ${index + 1}번에 허용되지 않은 필드가 있습니다.`);
     }
     if (
@@ -2903,7 +3192,12 @@ function readReviewRecoveries(session: Session): ReviewRecoveryRecord[] {
       || (raw.job_kind !== "review" && raw.job_kind !== "revision")
       || (raw.parent_run_id !== null && !validResourceId(raw.parent_run_id))
       || (raw.job_kind === "review") !== (raw.parent_run_id === null)
-      || (raw.job_kind === "review" && raw.request_sha256 !== DEFAULT_REVIEW_REQUEST_SHA256)
+      || (raw.job_kind === "review" ? !isStrictIsoDate(raw.review_as_of) : raw.review_as_of !== null)
+      || (raw.job_kind === "review" && raw.request_sha256 !== sha256CanonicalJsonSync({
+        review_as_of: raw.review_as_of,
+        trade_type: "import",
+        submitted_document_codes: [],
+      }))
       || (raw.job_kind === "revision" && raw.job_id === null)
       || typeof raw.request_sha256 !== "string"
       || !/^[a-f0-9]{64}$/.test(raw.request_sha256)
@@ -2922,6 +3216,7 @@ function readReviewRecoveries(session: Session): ReviewRecoveryRecord[] {
       job_id: jobId,
       job_kind: raw.job_kind,
       parent_run_id: parentRunId,
+      review_as_of: typeof raw.review_as_of === "string" ? raw.review_as_of : null,
       request_sha256: raw.request_sha256,
       idempotency_key: raw.idempotency_key,
     };
@@ -2929,7 +3224,11 @@ function readReviewRecoveries(session: Session): ReviewRecoveryRecord[] {
 }
 
 function writeReviewRecoveries(session: Session, records: ReviewRecoveryRecord[]): void {
-  if (records.length > MAX_RECOVERY_RECORDS || records.some((item) => item.org_id !== session.org_id || item.subject !== session.subject)) {
+  if (records.length > MAX_RECOVERY_RECORDS || records.some((item) => (
+    item.org_id !== session.org_id
+    || item.subject !== session.subject
+    || (item.job_kind === "review" ? !isStrictIsoDate(item.review_as_of) : item.review_as_of !== null)
+  ))) {
     throw new Error("Job 복구 기록의 세션 범위 또는 개수 한도가 올바르지 않습니다.");
   }
   const sorted = [...records].sort((left, right) => left.case_id.localeCompare(right.case_id));
@@ -3075,6 +3374,18 @@ function validResourceId(value: unknown): boolean {
   return typeof value === "string" && /^[A-Za-z0-9._:-]{1,160}$/.test(value);
 }
 
+function isStrictIsoDate(value: unknown): value is string {
+  if (typeof value !== "string") return false;
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!match) return false;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+  const days = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+  return year >= 1 && month >= 1 && month <= 12 && day >= 1 && day <= (days[month - 1] ?? 0);
+}
+
 function isStrictIsoTimestamp(value: string): boolean {
   return /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(value) && !Number.isNaN(Date.parse(value));
 }
@@ -3083,6 +3394,12 @@ async function sha256CanonicalJson(value: unknown): Promise<string> {
   const bytes = new TextEncoder().encode(canonicalJson(value));
   const digest = await crypto.subtle.digest("SHA-256", bytes);
   return [...new Uint8Array(digest)].map((item) => item.toString(16).padStart(2, "0")).join("");
+}
+
+function sha256CanonicalJsonSync(value: unknown): string {
+  return [...nobleSha256(new TextEncoder().encode(canonicalJson(value)))]
+    .map((item) => item.toString(16).padStart(2, "0"))
+    .join("");
 }
 
 function canonicalJson(value: unknown): string {

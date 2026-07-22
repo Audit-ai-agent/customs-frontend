@@ -32,26 +32,70 @@ const canonicalJson = (value: unknown): string => {
 
 const canonicalSha256 = (value: unknown): string => createHash("sha256").update(canonicalJson(value)).digest("hex");
 
-const backendEffectiveSummary = (value: Record<string, unknown>): Record<string, unknown> => ({
-  provider_result_sha256: value.provider_result_sha256,
-  input_manifest_digest: value.input_manifest_digest,
-  input_document_manifest: value.input_document_manifest ?? [],
-  execution_status: value.execution_status,
-  assessment: value.assessment,
-  review_disposition: value.review_disposition,
-  assurance_level: value.assurance_level,
-  completion_eligibility: value.completion_eligibility,
-  required_actions: value.required_actions ?? [],
-  review_stage_trace: value.review_stage_trace ?? [],
-  auto_completion_profile: value.auto_completion_profile ?? {
-    profile_id: null,
-    approved_document_types: [],
-    approved_required_document_codes: [],
-    approval_digest: null,
-  },
-});
+const EMPTY_MODEL_EXECUTION = {
+  provider: null,
+  model_id: null,
+  text_only: false,
+  call_count: 0,
+  input_tokens_total: 0,
+  output_tokens_total: 0,
+  prompt_hashes_complete: false,
+  schema_hashes_complete: false,
+  runtime_identity_match: false,
+  audit_complete: false,
+  unmet_reason_codes: ["no_model_calls"],
+} as const;
+
+const ACTUAL_MODEL_EXECUTION = {
+  provider: "anthropic",
+  model_id: "claude-sonnet-4-20250514",
+  text_only: true,
+  call_count: 2,
+  input_tokens_total: 1_200,
+  output_tokens_total: 320,
+  prompt_hashes_complete: true,
+  schema_hashes_complete: true,
+  runtime_identity_match: true,
+  audit_complete: true,
+  unmet_reason_codes: [],
+} as const;
+
+const CHAT_MODEL_EXECUTION = {
+  ...ACTUAL_MODEL_EXECUTION,
+  call_count: 1,
+  input_tokens_total: 240,
+  output_tokens_total: 80,
+} as const;
+
+const backendEffectiveSummary = (value: Record<string, unknown>): Record<string, unknown> => {
+  const resultDetail = value.result_detail as Record<string, unknown> | undefined;
+  return {
+    provider_result_sha256: value.provider_result_sha256,
+    input_manifest_digest: value.input_manifest_digest,
+    input_document_manifest: value.input_document_manifest ?? [],
+    execution_status: value.execution_status,
+    assessment: value.assessment,
+    review_disposition: value.review_disposition,
+    assurance_level: value.assurance_level,
+    completion_eligibility: value.completion_eligibility,
+    required_actions: value.required_actions ?? [],
+    review_stage_trace: value.review_stage_trace ?? [],
+    auto_completion_profile: value.auto_completion_profile ?? {
+      profile_id: null,
+      approved_document_types: [],
+      approved_required_document_codes: [],
+      approval_digest: null,
+    },
+    ...(resultDetail?.model_execution_summary === undefined
+      ? {}
+      : { model_execution_summary: resultDetail.model_execution_summary }),
+  };
+};
 
 const reviewRunPayload = (overrides: Record<string, unknown> = {}) => {
+  const overrideResultDetail = overrides.result_detail as Record<string, unknown> | undefined;
+  const remainingOverrides = { ...overrides };
+  delete remainingOverrides.result_detail;
   const payload: Record<string, unknown> = {
     review_run_id: "run-1",
     case_id: "case-1",
@@ -82,8 +126,11 @@ const reviewRunPayload = (overrides: Record<string, unknown> = {}) => {
       approved_required_document_codes: [],
       approval_digest: null,
     },
-    result_detail: {},
-    ...overrides,
+    result_detail: {
+      model_execution_summary: EMPTY_MODEL_EXECUTION,
+      ...(overrideResultDetail ?? {}),
+    },
+    ...remainingOverrides,
   };
   payload.result_digest = overrides.result_digest ?? canonicalSha256(backendEffectiveSummary(payload));
   return payload;
@@ -99,6 +146,7 @@ describe("Backend API v1 client", () => {
       claude_mode: "actual",
       evidence_profile: "preserved-3law",
       evidence_scope_label: "REAL_3_OF_58",
+      supported_review_as_of: "2026-07-10",
       planner_mode: "shadow",
       production_release: false,
     };
@@ -115,6 +163,17 @@ describe("Backend API v1 client", () => {
 
     const attacked = vi.fn<typeof fetch>().mockResolvedValue(json({ ...metadata, provider_token: "must-not-cross" }));
     await expect(new ApiClient(attacked).getUatMetadata()).rejects.toThrow("unsupported or sensitive field");
+
+    const missingDate = { ...metadata } as Record<string, unknown>;
+    delete missingDate.supported_review_as_of;
+    await expect(new ApiClient(vi.fn<typeof fetch>().mockResolvedValue(json(missingDate))).getUatMetadata())
+      .rejects.toThrow("supported_review_as_of");
+    for (const unsupportedDate of ["2026-02-30", "2026-7-1", "2026-07-23T00:00:00Z"]) {
+      await expect(new ApiClient(vi.fn<typeof fetch>().mockResolvedValue(json({
+        ...metadata,
+        supported_review_as_of: unsupportedDate,
+      }))).getUatMetadata()).rejects.toThrow("date");
+    }
   });
 
   it("accepts the complete Backend 63079af public ReviewRun serialization without provider-private aliases", () => {
@@ -317,11 +376,16 @@ describe("Backend API v1 client", () => {
     const client = new ApiClient(fetcher, () => "token");
     await client.getSession();
 
-    const job = await client.enqueueReview("case-1", { trade_type: "import", submitted_document_codes: [] }, "idem-123");
+    const job = await client.enqueueReview("case-1", {
+      review_as_of: "2026-07-10",
+      trade_type: "import",
+      submitted_document_codes: [],
+    }, "idem-123");
 
     const [, init] = fetcher.mock.calls[1]!;
     expect(new Headers(init?.headers).get("Idempotency-Key")).toBe("idem-123");
     expect(JSON.parse(String(init?.body))).toEqual({
+      review_as_of: "2026-07-10",
       trade_type: "import",
       submitted_document_codes: [],
     });
@@ -347,9 +411,25 @@ describe("Backend API v1 client", () => {
       await client.getSession();
       await expect(client.enqueueReview(
         "case-1",
-        { trade_type: "import", submitted_document_codes: [] },
+        { review_as_of: "2026-07-10", trade_type: "import", submitted_document_codes: [] },
         "idem-attacked",
       )).rejects.toThrow(ContractError);
+    }
+  });
+
+  it("rejects missing, current-time-derived, or invalid review dates before enqueue HTTP", async () => {
+    for (const reviewAsOf of [undefined, null, "2026-02-30", new Date().toISOString()]) {
+      const fetcher = vi.fn<typeof fetch>()
+        .mockResolvedValueOnce(json({ subject: "reviewer-1", org_id: "org-1", roles: ["reviewer"] }));
+      const client = new ApiClient(fetcher, () => "token");
+      await client.getSession();
+      const payload = {
+        trade_type: "import",
+        submitted_document_codes: [],
+        ...(reviewAsOf === undefined ? {} : { review_as_of: reviewAsOf }),
+      } as Parameters<ApiClient["enqueueReview"]>[1];
+      expect(() => client.enqueueReview("case-1", payload, "idem-invalid-date")).toThrow("review_as_of");
+      expect(fetcher).toHaveBeenCalledTimes(1);
     }
   });
 
@@ -547,6 +627,29 @@ describe("Backend API v1 client", () => {
       result_detail: {},
     }));
     expect(forgedTopLevel.evidence_retrieval).toBeUndefined();
+  });
+
+  it("validates and digest-binds the safe Review model execution summary", () => {
+    const decoded = decodeReviewRun(reviewRunPayload({
+      result_detail: { model_execution_summary: ACTUAL_MODEL_EXECUTION },
+    }));
+    expect(decoded.model_execution_summary).toEqual(ACTUAL_MODEL_EXECUTION);
+
+    const forged = reviewRunPayload({
+      result_detail: { model_execution_summary: ACTUAL_MODEL_EXECUTION },
+    });
+    const detail = forged.result_detail as Record<string, unknown>;
+    detail.model_execution_summary = { ...ACTUAL_MODEL_EXECUTION, input_tokens_total: 1_201 };
+    expect(() => decodeReviewRun(forged)).toThrow("effective result digest mismatch");
+
+    expect(() => decodeReviewRun(reviewRunPayload({
+      result_detail: {
+        model_execution_summary: {
+          ...ACTUAL_MODEL_EXECUTION,
+          raw_response: "must-not-cross",
+        },
+      },
+    }))).toThrow("exact safe model execution fields");
   });
 
   it("maps actual V3 document fields and line items to FactLedger-bound correction paths", () => {
@@ -877,6 +980,7 @@ describe("Backend API v1 client", () => {
       release_identity: releaseIdentity,
       review_stage_trace: mandatoryStageTrace,
       result_detail: {
+        model_execution_summary: ACTUAL_MODEL_EXECUTION,
         review_as_of: "2026-07-21",
         trade_type: "import",
         jurisdiction: "KR",
@@ -1074,6 +1178,8 @@ describe("Backend API v1 client", () => {
       answer: "Article 1 applies.",
       answer_status: "answered",
       citations: [{ reference_id: `ev_${"7".repeat(64)}` }],
+      generation_mode: "claude",
+      model_execution_summary: CHAT_MODEL_EXECUTION,
       bound_result_digest: "d".repeat(64),
       idempotency_key: `idem_${canonicalSha256({
         endpoint: "case.answer/v1",
@@ -1100,6 +1206,8 @@ describe("Backend API v1 client", () => {
       { ...base, bound_result_digest: "e".repeat(64) },
       { ...base, idempotency_key: `idem_${"0".repeat(64)}` },
       { ...base, idempotency_request_digest: "0".repeat(64) },
+      { ...base, generation_mode: "deterministic_fallback" },
+      { ...base, model_execution_summary: { ...CHAT_MODEL_EXECUTION, input_tokens_total: 0 } },
     ]) {
       const attackedFetcher = vi.fn<typeof fetch>()
         .mockResolvedValueOnce(json({ subject: "reviewer-1", org_id: "org-1", roles: ["reviewer"] }))
@@ -1109,6 +1217,18 @@ describe("Backend API v1 client", () => {
       await expect(attackedClient.answerCaseQuestion("run-1", request, chatKey))
         .rejects.toBeInstanceOf(ContractError);
     }
+
+    const successFetcher = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(json({ subject: "reviewer-1", org_id: "org-1", roles: ["reviewer"] }))
+      .mockResolvedValueOnce(json(base));
+    const successClient = new ApiClient(successFetcher);
+    await successClient.getSession();
+    await expect(successClient.answerCaseQuestion("run-1", request, chatKey)).resolves.toMatchObject({
+      status: "answered",
+      generation_mode: "claude",
+      model_execution_summary: CHAT_MODEL_EXECUTION,
+      claims: [expect.objectContaining({ citation_ids: [`ev_${"7".repeat(64)}`] })],
+    });
   });
 
   it("rejects SSE media-type, Job identity and out-of-order sequence mutations", async () => {

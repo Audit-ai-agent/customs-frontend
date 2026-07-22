@@ -22,14 +22,14 @@
 
 ## LOCAL USER UAT 경계
 
-이 Workbench는 Backend의 `GET /api/v1/uat/metadata`만 통해 안전한 실행 상태를 읽고 화면 상단에 고정 표시한다. Browser가 Agent, Data 또는 해당 서비스의 readiness endpoint를 직접 호출하지 않는다. 표시 항목은 실제 Claude 모드, Evidence profile과 범위(`3/58` 포함), Planner 모드, text-only 여부, assurance ceiling, 자동완료 상태다. 메타데이터를 읽지 못하면 Release를 추정하지 않고 `UNKNOWN / AUTO-COMPLETION OFF / NOT PRODUCTION`으로 닫힌다.
+이 Workbench는 Backend의 `GET /api/v1/uat/metadata`만 통해 안전한 실행 상태를 읽고 화면 상단에 고정 표시한다. Browser가 Agent, Data 또는 해당 서비스의 readiness endpoint를 직접 호출하지 않는다. 표시 항목은 실제 Claude 모드, Evidence profile과 범위(`3/58` 포함), Planner 모드, text-only 여부, assurance ceiling, 자동완료 상태, Backend가 지원하는 `supported_review_as_of`다. 메타데이터나 이 기준일을 읽지 못하면 새 심사를 실행하지 않고 `UNKNOWN / AUTO-COMPLETION OFF / NOT PRODUCTION`으로 닫힌다. 모든 Review 요청은 화면에 표시된 이 날짜를 정확히 전달하며 현재 날짜를 임의로 대입하지 않는다.
 
-시나리오 결과는 서로 다른 두 판정으로 표시한다.
+시나리오 결과는 기능 Gate와 업무 처리 판정을 분리해 표시한다.
 
-- `시나리오 기능 PASS/FAIL`: 검증된 LOCAL UAT runtime identity·실제 Claude·설정된 Evidence/Planner, 실행·assessment와 시나리오가 선언한 Issue/Finding/Evidence/성공 Action/XAI citation 조건
+- `시나리오 기능 PASS/FAIL/PENDING/INVALID`: 검증된 LOCAL UAT runtime identity·고정 기준일·설정된 Evidence/Planner, 실행·assessment와 시나리오가 선언한 Issue/Finding/Evidence/필수 심사 단계/XAI citation 조건. 실제 Claude는 Backend가 제공한 비민감 `model_execution_summary`의 provider·model·호출 수·token·prompt/schema hash·runtime identity·audit이 모두 완전할 때만 PASS. Chat을 아직 실행하지 않은 정상 상태는 FAIL이 아닌 PENDING, 시나리오 입력이 Gold와 달라진 상태는 INVALID
 - `업무 처리 결과`: `human_review_required` 등 실제 disposition과 Release 차단 사유
 
-따라서 합성 정상 시나리오가 기능 PASS여도 Production 승인이나 자동완료로 표현하지 않는다. runtime metadata가 없거나 UNKNOWN이면 결과값이 맞아 보여도 기능 FAIL이다. `clean_text_no_requirement_uat`은 synthetic-v3의 HSK `7318151000` 무요건 정책을 위한 완전 정합 Positive Control이다. 이 경우 `coverage=complete`, `requirements_found=false`, 조회 대상 품목 1개 이상, Evidence 0건이 정상이며 성공한 `evidence.retrieve/v3` Action trace로 실제 조회 수행을 별도 검증한다. `clean_text_untrusted_supporting_document`는 합성 발급자를 신뢰기관으로 승격하지 않는 별도 fail-closed Control이며 해당 차단 reason code도 기능 조건으로 확인한다. child Run에서는 직접 parent Run과 상태·필드·Issue·Finding·Evidence·필수 조치의 before/after를 결정론적으로 비교한다.
+따라서 합성 정상 시나리오가 기능 PASS여도 Production 승인이나 자동완료로 표현하지 않는다. 각 시나리오는 정렬된 문서 type·filename·media type·원문 SHA-256과 요건서류 metadata의 canonical manifest hash를 Case `external_reference`에 결박한다. 현재 Case manifest를 다시 계산해 exact match가 아니면 INVALID이며, 단순히 시나리오 prefix만 모방한 Case는 Gold assertion에 연결하지 않는다. runtime metadata가 없거나 UNKNOWN이면 결과값이 맞아 보여도 기능 FAIL이다. `clean_text_no_requirement_uat`은 synthetic-v3의 HSK `7318151000` 무요건 정책을 위한 완전 정합 Positive Control이다. 이 경우 `coverage=complete`, `requirements_found=false`, 조회 대상 품목 1개 이상, Evidence 0건이 정상이며 필수 `retrieve_regulations` 심사 단계와 조회 결과를 함께 검증한다. Gap이 없는 정상 흐름에서 선택적 adaptive `evidence.retrieve/v3` Tool trace를 억지로 요구하지 않는다. 이 Positive Control은 추가로 Case Chat이 `answered`, `generation_mode=claude`, 유효한 Case citation을 가지고 Chat 실행 요약이 완전해야 PASS한다. Chat 실행 전에는 Core 심사가 정상이더라도 PENDING으로 안내한다. `clean_text_untrusted_supporting_document`는 합성 발급자를 신뢰기관으로 승격하지 않는 별도 fail-closed Control이며 해당 차단 reason code도 기능 조건으로 확인한다. child Run에서는 직접 parent Run과 상태·필드·Issue·Finding·Evidence·필수 조치의 before/after를 결정론적으로 비교한다.
 
 V3 text 입력은 일반 문서 최대 6개, 문서당 200,000자/800,000 UTF-8 bytes, 일반 문서 합계 500,000자로 제한한다. 문서 목록은 원문을 합쳐 반환하지 않고 hash·문자·byte metadata만 주며, 일반 문서만 개별 content endpoint로 제한된 범위에서 불러와 목록 metadata와 SHA-256을 재검증한다. `SUPPORTING` 원문은 별도 metadata/hash로 결박하며 Agent 분류 대상에 포함하지 않는다. 요건서류 metadata는 Case당 최대 100개다.
 
@@ -48,7 +48,7 @@ npm run dev
 
 Backend의 `/api/v1/auth/config`가 OIDC issuer/client/endpoint를 제공해야 한다. Browser에 표시되는 OIDC URL은 Workbench의 same-origin `/oidc/`를 사용하고, Vite/Nginx가 내부 Keycloak로 proxy한다. SPA callback `/auth/callback`과 proxy 경로를 분리해 callback이 Keycloak으로 오라우팅되지 않게 한다. access token은 메모리에만 저장된다. OAuth state·PKCE verifier와 미확정 Review/Proposal decision intent의 식별자·버전·digest·request hash·idempotency key만 `sessionStorage`에 둔다. 모든 복구 레코드는 `org_id`와 OIDC `subject`로 namespace를 분리하고 종류별 최대 50개로 제한한다. Proposal 승인/거절 사유, 문서 원문·결과·token은 저장하지 않으며, 새로고침 뒤 로그인하면 Backend의 Job/Proposal 원장을 재조회해 응답 유실을 대조한다.
 
-Review 복구 레코드는 `kind=review`, `parent_run_id=null`, Case revision, 현재 OIDC subject, 고정 text-only 요청의 canonical SHA-256과 정확히 일치해야 한다. Proposal decision의 직접 응답과 복구는 Backend decision 원장의 동일 Proposal/Run/Case/org, 현재 actor, 요청한 terminal status, scoped idempotency key, request digest가 모두 일치할 때만 child revision Job을 결박한다. approve에는 동일 ID의 child Job이 필수이고 reject에는 child Job이 없어야 한다. 다른 actor·key·digest가 먼저 종결한 intent는 `superseded`로 표시하며 그 child Job을 현재 raw key에 연결하지 않는다.
+Review 복구 레코드는 `kind=review`, `parent_run_id=null`, Case revision, 현재 OIDC subject, 당시 Backend가 발행한 `review_as_of`, 고정 text-only 요청의 canonical SHA-256과 정확히 일치해야 한다. 현재 메타데이터 기준일과 다른 복구 intent는 재전송하지 않는다. Proposal decision의 직접 응답과 복구는 Backend decision 원장의 동일 Proposal/Run/Case/org, 현재 actor, 요청한 terminal status, scoped idempotency key, request digest가 모두 일치할 때만 child revision Job을 결박한다. approve에는 동일 ID의 child Job이 필수이고 reject에는 child Job이 없어야 한다. 다른 actor·key·digest가 먼저 종결한 intent는 `superseded`로 표시하며 그 child Job을 현재 raw key에 연결하지 않는다.
 
 요건서류가 있는 합성 UAT Case 생성은 원문과 metadata까지만 만든다. `requires_approver` 시나리오는 같은 사용자가 즉시 스스로 검증하지 않으며 다른 `approver` 계정이 assertion을 추가해야 한다. 반대로 미신뢰 발급자 Control은 assertion 추가 전에 실행해 차단을 확인한다. Backend signer가 release-bound trust root와 일치할 때만 signed receipt가 생성되며, unsigned 진단 기록은 자동완료 근거가 아니다. 이 두 사람 절차를 거치더라도 미승인 Agent/Data Release에서는 `auto_review_complete`가 활성화되지 않는다.
 

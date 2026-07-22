@@ -30,7 +30,7 @@ Frontend container에는 runtime secret을 주입하지 않는다. Nginx는 Dock
 8. `auditor`로 조회·근거 이동·audit는 되지만 Case·문서·제안·결정 수정이 비활성인지 확인한다.
    - Backend가 Chat history GET을 403으로 제한해도 Run·Evidence·audit가 계속 표시되고 Chat은 읽기 전용 안내로 대체되어야 한다.
 9. `clean_text_production_candidate_blocked`는 실행되더라도 Release/kill-switch 요건 전에 `auto_review_complete`를 성공으로 표시하지 않는지 확인한다.
-10. Review enqueue 응답을 의도적으로 끊어 새로고침한 뒤 다시 로그인한다. 해당 Case의 새 Review가 차단되고, `sessionStorage`에는 조직·OIDC subject namespace 아래 `case_id`, `case_revision`, `job_id`, `job_kind`, `parent_run_id`, `request_sha256`, `idempotency_key`만 있어야 한다. Review는 `job_kind=review`, `parent_run_id=null`, 고정 text-only request SHA-256이어야 하며 token·원문·결과는 없어야 한다.
+10. Review enqueue 응답을 의도적으로 끊어 새로고침한 뒤 다시 로그인한다. 해당 Case의 새 Review가 차단되고, `sessionStorage`에는 조직·OIDC subject namespace 아래 `case_id`, `case_revision`, `job_id`, `job_kind`, `parent_run_id`, `review_as_of`, `request_sha256`, `idempotency_key`만 있어야 한다. Review는 `job_kind=review`, `parent_run_id=null`, Backend metadata의 정확한 `supported_review_as_of`, 그 날짜를 포함한 고정 text-only request SHA-256이어야 하며 token·원문·결과는 없어야 한다.
 11. 저장된 Job 재조회 또는 명시적 "같은 요청 키로 대조"가 동일 intent를 복구하고, network/503 polling 오류가 1·2·4초 순서의 bounded backoff를 사용하는지 확인한다.
 12. `reviewer`·`auditor`에는 전달 대조 form이 없고, `approver` 또는 `admin`에만 표시되는지 확인한다. Backend도 reviewer token의 reconciliation POST를 403으로 거절해야 한다.
 13. 단순 timeout 설명이나 확인 체크 없는 입력으로 차단을 해제할 수 없어야 한다. 64자리 소문자 SHA-256, 10자 이상 사유, 명시적 미처리 확인을 제출한 뒤 Backend가 `failed + delivery_reconciled`를 반환해야만 복구 레코드가 삭제되고 새 심사가 활성화되어야 한다.
@@ -41,6 +41,9 @@ Frontend container에는 runtime secret을 주입하지 않는다. Nginx는 Dock
 18. SSE가 `text/event-stream`이 아니거나 요청 Job ID와 다르거나 sequence가 중복·역행하면 stream을 적용하지 않고 polling 복구 경로로 전환하는지 확인한다.
 19. `human_review_required` 또는 diagnostic/production-candidate Run의 Evidence 위에 `DIAGNOSTIC EVIDENCE — NOT RELEASED`가 강하게 표시되고 각 Evidence card가 diagnostic 상태인지 확인한다. 오직 `production + auto_review_complete`만 `RELEASE-BOUND EVIDENCE`로 표시되어야 하며, 진단 Evidence를 법적 판단·자동완료 근거로 표현하면 Release를 중단한다.
 20. 저장된 Run의 `result_digest`를 한 글자 바꾸거나 effective-summary의 provider hash·manifest·상태·판정·보증·완료 자격·필수 조치·stage/profile 중 하나를 변조하면 전체 Run이 거절되는지 확인한다. 자동완료의 Retrieval item을 partial/ambiguous/error 상태로 바꾸거나 report outcome reason·narrative required action을 추가해도 거절되어야 한다. 반대로 `requirements_found=true`인 요건 Evidence라도 required code가 검증된 Supporting Document profile에 결박되고 Finding이 0이면 정상 자동완료 Evidence로 표시되어야 한다.
+21. 정상 Positive Control은 Review와 Chat 각각의 `model_execution_summary`가 Anthropic provider, 정확한 model ID, 양수의 call/token, text-only, 완전한 prompt/schema hash, runtime identity match, `audit_complete=true`를 모두 보여야 PASS한다. Chat은 추가로 `answered`, `generation_mode=claude`, 현재 Run FactLedger의 유효한 citation을 필수로 한다. 결정론적 fallback이거나 실행 요약이 누락된 결과를 실제 Claude 실행으로 표시하지 않는다.
+22. 정상 심사 후 Chat을 아직 실행하지 않았다면 시나리오는 FAIL이 아닌 PENDING이어야 한다. Chat 실행 후 실제 Claude·근거 Gate가 성공하면 PASS, fallback·근거 오류면 FAIL로 바뀐다.
+23. 시나리오 Case의 `external_reference`에 고정된 manifest SHA-256과 현재 문서·요건서류 metadata를 다시 계산한 hash가 exact match인지 확인한다. 문서 추가·교체·원문 hash 변경·요건 metadata 변경은 PASS가 아닌 INVALID이며, prefix만 모방한 수동 Case에는 시나리오 assertion을 표시하지 않는다.
 
 ## 장애와 Rollback
 

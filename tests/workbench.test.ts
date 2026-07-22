@@ -3,14 +3,47 @@ import { createHash } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
 import { WorkbenchApp, type WorkbenchAuth } from "../src/app";
 import { ApiError, type ApiClient } from "../src/api/v1/client";
-import type { CorrectionProposal, CorrectionProposalDecisionResponse, JobRecord, ReviewRun } from "../src/api/v1/types";
-import { UAT_SCENARIOS } from "../src/uat/scenarios";
+import type { CaseDocument, ChatRecord, CorrectionProposal, CorrectionProposalDecisionResponse, JobRecord, ModelExecutionSummary, ReviewRun } from "../src/api/v1/types";
+import {
+  localUatScenarioExternalReference,
+  UAT_SCENARIOS,
+  type LocalUatScenario,
+} from "../src/uat/scenarios";
+
+const SUPPORTED_REVIEW_AS_OF = "2026-07-10";
+const ACTUAL_MODEL_EXECUTION: ModelExecutionSummary = {
+  provider: "anthropic",
+  model_id: "claude-sonnet-4-20250514",
+  text_only: true,
+  call_count: 2,
+  input_tokens_total: 1_200,
+  output_tokens_total: 320,
+  prompt_hashes_complete: true,
+  schema_hashes_complete: true,
+  runtime_identity_match: true,
+  audit_complete: true,
+  unmet_reason_codes: [],
+};
+const EMPTY_MODEL_EXECUTION: ModelExecutionSummary = {
+  provider: null,
+  model_id: null,
+  text_only: false,
+  call_count: 0,
+  input_tokens_total: 0,
+  output_tokens_total: 0,
+  prompt_hashes_complete: false,
+  schema_hashes_complete: false,
+  runtime_identity_match: false,
+  audit_complete: false,
+  unmet_reason_codes: ["no_model_calls"],
+};
 
 const run: ReviewRun = {
   review_run_id: "run-001",
   case_id: "case-1",
   org_id: "org-1",
   case_revision: 1,
+  review_as_of: SUPPORTED_REVIEW_AS_OF,
   created_at: "2026-07-21T12:00:00Z",
   execution_status: "succeeded",
   assessment: "no_issue_detected",
@@ -30,6 +63,7 @@ const run: ReviewRun = {
   fields: [{ field_id: "field-1", document_id: "doc-1", name: "invoice_no", field_path: "fields.invoice_no", value: "CI-1", confidence: 0.98, source_ids: ["source-1"] }],
   issues: [],
   evidence: [{ evidence_id: "evidence-1", title: "수입 요건", law_id: "LAW-1", excerpt: "신고확인증이 필요하다.", source_uri: "https://law.example/1", source_hash: "c".repeat(64) }],
+  model_execution_summary: ACTUAL_MODEL_EXECUTION,
   findings: [],
   sources: [{ source_id: "source-1", document_id: "doc-1", label: "Invoice number", quote: "CI-1" }],
   narrative_report: {
@@ -45,6 +79,25 @@ const run: ReviewRun = {
   action_trace: [{ action_id: "action-1", cycle: 0, tool: "evidence.retrieve/v3", status: "succeeded", reason_code: "hsk_exact", input_source_ids: ["source-1"], started_at: "2026-07-21T12:00:00Z" }],
   corrections: [],
   required_actions: [],
+  review_stage_trace: [{ sequence: 7, stage: "retrieve_regulations", status: "completed", reason_ids: [] }],
+};
+
+const CLAUDE_CHAT: ChatRecord = {
+  message_id: "message-1",
+  review_run_id: "run-001",
+  case_id: "case-1",
+  org_id: "org-1",
+  question: "이 Case의 결론 근거는 무엇인가요?",
+  answer: "문서 원문의 Invoice 번호를 근거로 설명합니다.",
+  answer_status: "answered",
+  citations: [{ reference_id: "source-1" }],
+  generation_mode: "claude",
+  model_execution_summary: { ...ACTUAL_MODEL_EXECUTION, call_count: 1, input_tokens_total: 240, output_tokens_total: 80 },
+  bound_result_digest: "a".repeat(64),
+  idempotency_key: `idem_${"1".repeat(64)}`,
+  idempotency_request_digest: "2".repeat(64),
+  created_by: "reviewer-1",
+  created_at: "2026-07-21T12:00:00Z",
 };
 
 const proposal: CorrectionProposal = {
@@ -72,7 +125,61 @@ const canonicalJson = (value: unknown): string => {
 };
 
 const canonicalSha256 = (value: unknown): string => createHash("sha256").update(canonicalJson(value)).digest("hex");
-const REVIEW_REQUEST_SHA256 = canonicalSha256({ trade_type: "import", submitted_document_codes: [] });
+const REVIEW_REQUEST_SHA256 = canonicalSha256({
+  review_as_of: SUPPORTED_REVIEW_AS_OF,
+  trade_type: "import",
+  submitted_document_codes: [],
+});
+
+const CLEAN_SCENARIO = UAT_SCENARIOS.find((item) => item.scenario_id === "clean_text_no_requirement_uat")!;
+const CLEAN_SCENARIO_REFERENCE = localUatScenarioExternalReference(CLEAN_SCENARIO);
+
+function scenarioDocumentRecords(scenario: LocalUatScenario): CaseDocument[] {
+  return scenario.documents.map((document, index) => ({
+    document_id: `doc-${index + 1}`,
+    case_id: "case-1",
+    document_type: document.document_type,
+    filename: document.filename,
+    media_type: document.media_type,
+    content_text: document.content_text,
+    content_sha256: createHash("sha256").update(document.content_text).digest("hex"),
+    byte_size: Buffer.byteLength(document.content_text, "utf8"),
+    character_count: document.content_text.length,
+    created_by: "reviewer-1",
+    created_at: "2026-07-21T12:00:00Z",
+  }));
+}
+
+function bindScenarioInput(api: ApiClient, scenario: LocalUatScenario): CaseDocument[] {
+  const documents = scenarioDocumentRecords(scenario);
+  vi.mocked(api.listDocuments).mockResolvedValue(documents);
+  const expectedSupporting = scenario.supporting_document;
+  if (expectedSupporting === undefined) {
+    vi.mocked(api.listSupportingDocuments).mockResolvedValue([]);
+    return documents;
+  }
+  const source = documents.find((document) => (
+    document.document_type === "SUPPORTING" && document.filename === expectedSupporting.filename
+  ))!;
+  const invoice = documents.find((document) => document.document_type === "CI")!;
+  vi.mocked(api.listSupportingDocuments).mockResolvedValue([{
+    case_id: "case-1",
+    org_id: "org-1",
+    document_id: source.document_id,
+    document_code: expectedSupporting.document_code,
+    issuer: expectedSupporting.issuer,
+    document_number: expectedSupporting.document_number,
+    issued_on: expectedSupporting.issued_on,
+    valid_until: expectedSupporting.valid_until,
+    subject_item_ids: [`${invoice.document_id}_line_1`],
+    hs_codes: [...expectedSupporting.hs_codes],
+    source_sha256: source.content_sha256,
+    verification_assertions: [],
+    created_by: "reviewer-1",
+    created_at: "2026-07-21T12:00:00Z",
+  }]);
+  return documents;
+}
 
 function jobRecord(jobId: string, kind: "review" | "revision" = "review", createdBy = "reviewer-1"): JobRecord {
   return {
@@ -91,7 +198,7 @@ function jobRecord(jobId: string, kind: "review" | "revision" = "review", create
 }
 
 const recoveryKey = (subject = "reviewer-1"): string =>
-  `customs.workbench.review-recovery.v3:org-1:${subject}`;
+  `customs.workbench.review-recovery.v4:org-1:${subject}`;
 
 const reconciliationRecoveryKey = (subject = "reviewer-1"): string =>
   `customs.workbench.delivery-reconciliation-recovery.v1:org-1:${subject}`;
@@ -106,6 +213,7 @@ function seedRecovery(subject: string, record: Omit<Record<string, unknown>, "or
     subject,
     job_kind: jobKind,
     parent_run_id: jobKind === "revision" ? "run-001" : null,
+    review_as_of: jobKind === "review" ? SUPPORTED_REVIEW_AS_OF : null,
     request_sha256: REVIEW_REQUEST_SHA256,
     ...record,
   }]));
@@ -165,6 +273,7 @@ function fakeApi(): ApiClient {
       claude_mode: "actual",
       evidence_profile: "synthetic-v3",
       evidence_scope_label: "TEST_ONLY_V3",
+      supported_review_as_of: SUPPORTED_REVIEW_AS_OF,
       planner_mode: "shadow",
       production_release: false,
     })),
@@ -494,6 +603,21 @@ describe("review workbench", () => {
       narrative: { material_citations_complete: true },
       runtime: { evidence_profile: "synthetic-v3", evidence_scope_label: "TEST_ONLY_V3" },
     }));
+    expect(clean.expected.semantic?.model_execution).toEqual(expect.objectContaining({
+      provider: "anthropic",
+      minimum_call_count: 1,
+      minimum_input_tokens: 1,
+      minimum_output_tokens: 1,
+      audit_complete: true,
+    }));
+    expect(clean.expected.semantic?.chat).toEqual(expect.objectContaining({
+      status: "answered",
+      generation_mode: "claude",
+      grounded_citation: true,
+    }));
+    expect(clean.expected.semantic?.review_stages).toEqual({
+      include_completed_stages: ["retrieve_regulations"],
+    });
 
     const untrusted = UAT_SCENARIOS.find((item) => item.scenario_id === "clean_text_untrusted_supporting_document")!;
     expect(untrusted.supporting_document?.issuer).toBe("Synthetic Test Issuer");
@@ -512,11 +636,12 @@ describe("review workbench", () => {
     const root = document.createElement("div");
     document.body.append(root);
     const api = fakeApi();
+    bindScenarioInput(api, CLEAN_SCENARIO);
     const cleanCase = {
       case_id: "case-1",
       org_id: "org-1",
       title: "합성 무요건 정상 Case",
-      external_reference: "UAT-clean_text_no_requirement_uat-1",
+      external_reference: CLEAN_SCENARIO_REFERENCE,
       status: "open" as const,
       revision: 1,
       updated_at: "2026-07-21T12:00:00Z",
@@ -535,10 +660,12 @@ describe("review workbench", () => {
         requirements_found: false,
         result_count: 1,
       },
+      model_execution_summary: ACTUAL_MODEL_EXECUTION,
       narrative_report: { ...run.narrative_report!, regulatory_review: [] },
     };
     vi.mocked(api.listReviewRuns).mockResolvedValue([noRequirementRun]);
     vi.mocked(api.getReviewRun).mockResolvedValue(noRequirementRun);
+    vi.mocked(api.listChat).mockResolvedValue([CLAUDE_CHAT]);
     const app = new WorkbenchApp(root, api, auth(true));
 
     await app.start();
@@ -552,25 +679,190 @@ describe("review workbench", () => {
     expect(root.textContent).toContain("Evidence coverage: complete / expected complete");
     expect(root.textContent).toContain("요건 검색 결과: false / expected false");
     expect(root.textContent).toContain("Evidence 대상 품목: satisfied / expected satisfied");
-    expect(root.textContent).toContain("Agent Tool evidence.retrieve/v3: succeeded / expected succeeded");
     expect(root.textContent).toContain("XAI material citation: complete / expected complete");
     expect(root.textContent).toContain("Evidence profile: synthetic-v3 / expected synthetic-v3");
     expect(root.textContent).toContain("Evidence scope: TEST ONLY V3 / expected TEST ONLY V3");
+    expect(root.textContent).toContain("필수 심사 단계 retrieve_regulations: completed / expected completed");
+    expect(root.textContent).toContain(`Review 기준일 결박: ${SUPPORTED_REVIEW_AS_OF} / expected ${SUPPORTED_REVIEW_AS_OF}`);
+    expect(root.textContent).toContain("Review Claude provider: anthropic / expected anthropic");
+    expect(root.textContent).toContain("Review Claude input tokens: satisfied / expected satisfied");
+    expect(root.textContent).toContain("Claude Chat answered: present / expected present");
+    expect(root.textContent).toContain("Claude Chat generation: claude / expected claude");
+    expect(root.textContent).toContain("Claude Chat grounding: grounded / expected grounded");
+    expect(root.textContent).toContain("Chat Claude audit: true / expected true");
+    expect(root.textContent).toContain("claude · anthropic · claude-sonnet-4-20250514 · calls 1");
     expect(root.textContent).toContain("업무 처리 결과: human review required");
     expect(root.textContent).toContain("업무 disposition은 기능 PASS/FAIL 계산에 포함되지 않습니다");
     app.destroy();
+  });
+
+  it("does not pass the full positive control with deterministic Chat fallback", async () => {
+    const root = document.createElement("div");
+    document.body.append(root);
+    const api = fakeApi();
+    bindScenarioInput(api, CLEAN_SCENARIO);
+    const cleanCase = {
+      case_id: "case-1",
+      org_id: "org-1",
+      title: "합성 무요건 정상 Case",
+      external_reference: CLEAN_SCENARIO_REFERENCE,
+      status: "open" as const,
+      revision: 1,
+      updated_at: "2026-07-21T12:00:00Z",
+      created_at: "2026-07-21T12:00:00Z",
+      documents: [],
+      runs: [],
+    };
+    const noRequirementRun: ReviewRun = {
+      ...run,
+      evidence: [],
+      evidence_retrieval: { status: "ok", coverage: "complete", requirements_found: false, result_count: 1 },
+      narrative_report: { ...run.narrative_report!, regulatory_review: [] },
+    };
+    vi.mocked(api.listCases).mockResolvedValue({ items: [cleanCase] });
+    vi.mocked(api.getCase).mockResolvedValue(cleanCase);
+    vi.mocked(api.listReviewRuns).mockResolvedValue([noRequirementRun]);
+    vi.mocked(api.getReviewRun).mockResolvedValue(noRequirementRun);
+    vi.mocked(api.listChat).mockResolvedValue([{
+      ...CLAUDE_CHAT,
+      generation_mode: "deterministic_fallback",
+      model_execution_summary: EMPTY_MODEL_EXECUTION,
+    }]);
+    const app = new WorkbenchApp(root, api, auth(true));
+
+    await app.start();
+    [...root.querySelectorAll<HTMLButtonElement>("button")]
+      .find((item) => item.textContent?.includes("합성 무요건 정상 Case"))
+      ?.click();
+    await vi.waitFor(() => expect(root.textContent).toContain("시나리오 기능: FAIL"));
+
+    expect(root.textContent).toContain("Claude Chat generation: deterministic fallback / expected claude");
+    expect(root.textContent).toContain("Chat Claude call count: only 0 / expected satisfied");
+    expect(root.textContent).toContain("Chat Claude audit: false / expected true");
+    app.destroy();
+  });
+
+  it("shows the clean Core review as PENDING until the required Claude Chat is exercised", async () => {
+    const root = document.createElement("div");
+    document.body.append(root);
+    const api = fakeApi();
+    bindScenarioInput(api, CLEAN_SCENARIO);
+    const cleanCase = {
+      case_id: "case-1",
+      org_id: "org-1",
+      title: "합성 무요건 정상 Case",
+      external_reference: CLEAN_SCENARIO_REFERENCE,
+      status: "open" as const,
+      revision: 1,
+      updated_at: "2026-07-21T12:00:00Z",
+      created_at: "2026-07-21T12:00:00Z",
+      documents: [],
+      runs: [],
+    };
+    const noRequirementRun: ReviewRun = {
+      ...run,
+      evidence: [],
+      evidence_retrieval: { status: "ok", coverage: "complete", requirements_found: false, result_count: 1 },
+      narrative_report: { ...run.narrative_report!, regulatory_review: [] },
+    };
+    vi.mocked(api.listCases).mockResolvedValue({ items: [cleanCase] });
+    vi.mocked(api.getCase).mockResolvedValue(cleanCase);
+    vi.mocked(api.listReviewRuns).mockResolvedValue([noRequirementRun]);
+    vi.mocked(api.getReviewRun).mockResolvedValue(noRequirementRun);
+    vi.mocked(api.listChat).mockResolvedValue([]);
+    const app = new WorkbenchApp(root, api, auth(true));
+
+    await app.start();
+    [...root.querySelectorAll<HTMLButtonElement>("button")]
+      .find((item) => item.textContent?.includes("합성 무요건 정상 Case"))
+      ?.click();
+    await vi.waitFor(() => expect(root.textContent).toContain("시나리오 기능: PENDING"));
+
+    expect(root.textContent).toContain("UAT 입력 manifest: exact / expected exact");
+    expect(root.textContent).toContain("Claude Chat 실행: pending / expected completed");
+    expect(root.textContent).not.toContain("시나리오 기능: FAIL");
+    expect(root.querySelector('[data-check-result="pending"]')).not.toBeNull();
+    app.destroy();
+  });
+
+  it("marks a scenario with document drift INVALID and ignores a forged prefix-only association", async () => {
+    const root = document.createElement("div");
+    document.body.append(root);
+    const api = fakeApi();
+    const documents = bindScenarioInput(api, CLEAN_SCENARIO);
+    documents.push({
+      ...documents[0]!,
+      document_id: "doc-extra",
+      filename: "unexpected.txt",
+      content_text: "unexpected",
+      content_sha256: createHash("sha256").update("unexpected").digest("hex"),
+      byte_size: 10,
+      character_count: 10,
+    });
+    const cleanCase = {
+      case_id: "case-1",
+      org_id: "org-1",
+      title: "합성 무요건 정상 Case",
+      external_reference: CLEAN_SCENARIO_REFERENCE,
+      status: "open" as const,
+      revision: 1,
+      updated_at: "2026-07-21T12:00:00Z",
+      created_at: "2026-07-21T12:00:00Z",
+      documents: [],
+      runs: [],
+    };
+    const driftRun: ReviewRun = {
+      ...run,
+      evidence: [],
+      evidence_retrieval: { status: "ok", coverage: "complete", requirements_found: false, result_count: 1 },
+    };
+    vi.mocked(api.listCases).mockResolvedValue({ items: [cleanCase] });
+    vi.mocked(api.getCase).mockResolvedValue(cleanCase);
+    vi.mocked(api.listReviewRuns).mockResolvedValue([driftRun]);
+    vi.mocked(api.getReviewRun).mockResolvedValue(driftRun);
+    vi.mocked(api.listChat).mockResolvedValue([CLAUDE_CHAT]);
+    const app = new WorkbenchApp(root, api, auth(true));
+
+    await app.start();
+    [...root.querySelectorAll<HTMLButtonElement>("button")]
+      .find((item) => item.textContent?.includes("합성 무요건 정상 Case"))
+      ?.click();
+    await vi.waitFor(() => expect(root.textContent).toContain("시나리오 기능: INVALID"));
+    expect(root.textContent).toContain("UAT 입력 manifest: drift / expected exact");
+    expect(root.querySelector('[data-check-result="invalid"]')).not.toBeNull();
+    app.destroy();
+
+    const forgedRoot = document.createElement("div");
+    document.body.append(forgedRoot);
+    const forgedApi = fakeApi();
+    bindScenarioInput(forgedApi, CLEAN_SCENARIO);
+    const forgedCase = {
+      ...cleanCase,
+      external_reference: "UAT-clean_text_no_requirement_uat-forged-prefix",
+    };
+    vi.mocked(forgedApi.listCases).mockResolvedValue({ items: [forgedCase] });
+    vi.mocked(forgedApi.getCase).mockResolvedValue(forgedCase);
+    const forgedApp = new WorkbenchApp(forgedRoot, forgedApi, auth(true));
+    await forgedApp.start();
+    [...forgedRoot.querySelectorAll<HTMLButtonElement>("button")]
+      .find((item) => item.textContent?.includes("합성 무요건 정상 Case"))
+      ?.click();
+    await vi.waitFor(() => expect(forgedRoot.textContent).toContain("run-001"));
+    expect(forgedRoot.textContent).not.toContain("SCENARIO FUNCTION ASSERTION");
+    forgedApp.destroy();
   });
 
   it("falls back to a visible UNKNOWN/OFF boundary when UAT metadata is unavailable", async () => {
     const root = document.createElement("div");
     document.body.append(root);
     const api = fakeApi();
+    bindScenarioInput(api, CLEAN_SCENARIO);
     vi.mocked(api.getUatMetadata).mockRejectedValue(new ApiError("not installed", 404));
     const cleanCase = {
       case_id: "case-1",
       org_id: "org-1",
       title: "합성 무요건 정상 Case",
-      external_reference: "UAT-clean_text_no_requirement_uat-metadata-failure",
+      external_reference: CLEAN_SCENARIO_REFERENCE,
       status: "open" as const,
       revision: 1,
       updated_at: "2026-07-21T12:00:00Z",
@@ -600,6 +892,11 @@ describe("review workbench", () => {
     expect(root.textContent).toContain("Auto-completion: OFF");
     expect(root.textContent).toContain("NOT PRODUCTION");
     expect(root.textContent).toContain("UAT runtime identity: unverified / expected verified");
+    const reviewButton = [...root.querySelectorAll<HTMLButtonElement>("button")]
+      .find((item) => item.textContent === "새 심사 실행");
+    expect(reviewButton?.disabled).toBe(true);
+    reviewButton?.click();
+    expect(api.enqueueReview).not.toHaveBeenCalled();
     expect(root.querySelector('[data-uat-metadata="unknown"]')).not.toBeNull();
     app.destroy();
   });
@@ -608,11 +905,12 @@ describe("review workbench", () => {
     const root = document.createElement("div");
     document.body.append(root);
     const api = fakeApi();
+    bindScenarioInput(api, CLEAN_SCENARIO);
     const cleanCase = {
       case_id: "case-1",
       org_id: "org-1",
       title: "합성 무요건 정상 Case",
-      external_reference: "UAT-clean_text_no_requirement_uat-retrieval-failure",
+      external_reference: CLEAN_SCENARIO_REFERENCE,
       status: "open" as const,
       revision: 1,
       updated_at: "2026-07-21T12:00:00Z",
@@ -638,7 +936,7 @@ describe("review workbench", () => {
     await vi.waitFor(() => expect(root.textContent).toContain("시나리오 기능: FAIL"));
 
     expect(root.textContent).toContain("Evidence 조회 상태: failed / expected ok");
-    expect(root.textContent).toContain("Agent Tool evidence.retrieve/v3: not succeeded / expected succeeded");
+    expect(root.textContent).toContain("필수 심사 단계 retrieve_regulations: completed / expected completed");
     app.destroy();
   });
 
@@ -654,6 +952,7 @@ describe("review workbench", () => {
       claude_mode: "actual",
       evidence_profile: "preserved-3law",
       evidence_scope_label: "REAL_3_OF_58",
+      supported_review_as_of: SUPPORTED_REVIEW_AS_OF,
       planner_mode: "diagnostic_active",
       production_release: false,
     });
@@ -662,6 +961,7 @@ describe("review workbench", () => {
     await app.start();
 
     expect(root.textContent).toContain("Evidence: preserved-3law · REAL 3/58");
+    expect(root.textContent).toContain(`Review 기준일: ${SUPPORTED_REVIEW_AS_OF}`);
     expect(root.textContent).toContain("Planner: diagnostic active");
     expect(root.querySelector(".uat-runtime-fact--warning")).not.toBeNull();
     app.destroy();
@@ -678,12 +978,16 @@ describe("review workbench", () => {
     const root = document.createElement("div");
     document.body.append(root);
     const api = fakeApi();
+    const selectedScenario = UAT_SCENARIOS.find((item) => item.scenario_id === "clean_text_production_candidate_blocked")!;
+    const externalReference = localUatScenarioExternalReference(selectedScenario);
+    const supportingSource = selectedScenario.documents.find((document) => document.document_type === "SUPPORTING")!;
+    const supportingSourceSha256 = createHash("sha256").update(supportingSource.content_text).digest("hex");
     const createdDocuments: Array<Awaited<ReturnType<ApiClient["addDocument"]>>> = [];
     const caseDetail = {
       case_id: "case-uat",
       org_id: "org-1",
       title: "[UAT] 정상 Production 후보 · Release Gate 차단",
-      external_reference: "UAT-clean_text_production_candidate_blocked-1",
+      external_reference: externalReference,
       status: "open" as const,
       revision: 0,
       updated_at: "2026-07-21T12:00:00Z",
@@ -700,7 +1004,7 @@ describe("review workbench", () => {
       valid_until: "2026-12-31",
       subject_item_ids: ["doc-ci_line_1"],
       hs_codes: ["0303540000"],
-      source_sha256: "e".repeat(64),
+      source_sha256: supportingSourceSha256,
       case_id: "case-uat",
       org_id: "org-1",
       verification_assertions: [],
@@ -717,7 +1021,7 @@ describe("review workbench", () => {
         document_id: payload.document_type === "SUPPORTING" ? "doc-supporting" : `doc-${payload.document_type.toLowerCase()}`,
         case_id: "case-uat",
         ...payload,
-        content_sha256: payload.document_type === "SUPPORTING" ? "e".repeat(64) : "d".repeat(64),
+        content_sha256: createHash("sha256").update(payload.content_text).digest("hex"),
         byte_size: new TextEncoder().encode(payload.content_text).length,
         character_count: payload.content_text.length,
         created_by: "reviewer-1",
@@ -740,6 +1044,10 @@ describe("review workbench", () => {
     scenarioForm.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
 
     await vi.waitFor(() => expect(api.addSupportingDocument).toHaveBeenCalledOnce());
+    expect(api.createCase).toHaveBeenCalledWith({
+      title: `[UAT] ${selectedScenario.title}`,
+      external_reference: externalReference,
+    });
     expect(api.addDocument).toHaveBeenCalledTimes(5);
     expect(api.addSupportingDocument).toHaveBeenCalledWith("case-uat", {
       document_id: "doc-supporting",
@@ -750,7 +1058,7 @@ describe("review workbench", () => {
       valid_until: "2026-12-31",
       subject_item_ids: ["doc-ci_line_1"],
       hs_codes: ["0303540000"],
-      source_sha256: "e".repeat(64),
+      source_sha256: supportingSourceSha256,
     });
     expect(api.addSupportingAssertion).not.toHaveBeenCalled();
     expect(root.textContent).toContain("작성자와 다른 approver가 요건서류를 검증한 뒤 실행하세요");
@@ -762,7 +1070,7 @@ describe("review workbench", () => {
     await vi.waitFor(() => expect(api.enqueueReview).toHaveBeenCalledOnce());
     expect(api.enqueueReview).toHaveBeenCalledWith(
       "case-uat",
-      { trade_type: "import", submitted_document_codes: [] },
+      { review_as_of: SUPPORTED_REVIEW_AS_OF, trade_type: "import", submitted_document_codes: [] },
       expect.stringMatching(/^[0-9a-f-]{36}$/),
     );
     app.destroy();
@@ -792,10 +1100,11 @@ describe("review workbench", () => {
     expect([...root.querySelectorAll<HTMLButtonElement>("button")].find((item) => item.textContent === "새 심사 실행")?.disabled).toBe(true);
     const stored = JSON.parse(window.sessionStorage.getItem(recoveryKey()) ?? "null") as Array<Record<string, unknown>>;
     expect(stored).toEqual([expect.objectContaining({ case_id: "case-1", case_revision: 1, job_id: "job-uncertain" })]);
-    expect(Object.keys(stored[0]!).sort()).toEqual(["case_id", "case_revision", "idempotency_key", "job_id", "job_kind", "org_id", "parent_run_id", "request_sha256", "subject"]);
+    expect(Object.keys(stored[0]!).sort()).toEqual(["case_id", "case_revision", "idempotency_key", "job_id", "job_kind", "org_id", "parent_run_id", "request_sha256", "review_as_of", "subject"]);
     expect(stored[0]).toEqual(expect.objectContaining({
       job_kind: "review",
       parent_run_id: null,
+      review_as_of: SUPPORTED_REVIEW_AS_OF,
       request_sha256: REVIEW_REQUEST_SHA256,
     }));
     expect(JSON.stringify(stored)).not.toMatch(/token|authorization|bearer/i);
