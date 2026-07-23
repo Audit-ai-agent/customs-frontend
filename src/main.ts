@@ -12,7 +12,7 @@ async function bootstrap(): Promise<void> {
   try {
     oidc.configure(await bootstrapClient.getAuthConfig());
     await oidc.finishCallbackIfPresent();
-    const app = createWorkbench(root, new ApiClient(fetch, oidc.accessToken), oidc);
+    const app = createWorkbench(root, new ApiClient(fetch, oidc.freshAccessToken), oidc);
     await app.start();
   } catch (error) {
     const main = document.createElement("main");

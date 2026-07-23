@@ -53,6 +53,7 @@ const DELIVERY_RECONCILIATION_RECOVERY_STORAGE_PREFIX = "customs.workbench.deliv
 const MAX_RECOVERY_RECORDS = 50;
 const MAX_TRANSIENT_POLL_FAILURES = 8;
 const MAX_POLL_DELAY_MS = 15_000;
+const JOB_TRACKING_TIMEOUT_MS = 12 * 60_000;
 interface UatRuntimeDisplayMetadata {
   mode: string;
   assurance_ceiling: "diagnostic" | "production_candidate" | "production";
@@ -233,7 +234,8 @@ export class WorkbenchApp {
     uatMetadataVerified: false,
   };
   private pollTimer: number | undefined;
-  private pollAttempts = 0;
+  private trackedJobId: string | undefined;
+  private jobTrackingStartedAtMs: number | undefined;
   private transientPollFailures = 0;
   private streamAbort: AbortController | undefined;
   private readonly idempotencyKeys = new Map<string, string>();
@@ -290,6 +292,7 @@ export class WorkbenchApp {
   destroy(): void {
     if (this.pollTimer !== undefined) window.clearTimeout(this.pollTimer);
     this.streamAbort?.abort();
+    this.resetJobTracking();
   }
 
   private renderLogin(): void {
@@ -2379,7 +2382,6 @@ export class WorkbenchApp {
       const intent = `review:${recovery.case_id}`;
       this.jobIntentById.set(job.job_id, intent);
       this.state.job = job;
-      this.pollAttempts = 0;
       this.transientPollFailures = 0;
       if (job.status === "queued" || job.status === "running") await this.startJobTracking(job.job_id);
       else await this.handleTerminalJob(job);
@@ -2412,6 +2414,33 @@ export class WorkbenchApp {
   private schedulePoll(jobId: string, delayMs = 1_000): void {
     if (this.pollTimer !== undefined) window.clearTimeout(this.pollTimer);
     this.pollTimer = window.setTimeout(() => void this.pollJob(jobId), delayMs);
+  }
+
+  private beginJobTracking(jobId: string, force = false): void {
+    if (force || this.trackedJobId !== jobId || this.jobTrackingStartedAtMs === undefined) {
+      this.trackedJobId = jobId;
+      this.jobTrackingStartedAtMs = Date.now();
+    }
+  }
+
+  private resetJobTracking(jobId?: string): void {
+    if (jobId !== undefined && this.trackedJobId !== jobId) return;
+    this.trackedJobId = undefined;
+    this.jobTrackingStartedAtMs = undefined;
+  }
+
+  private stopIfJobTrackingExpired(jobId: string): boolean {
+    this.beginJobTracking(jobId);
+    if (
+      this.jobTrackingStartedAtMs === undefined
+      || Date.now() - this.jobTrackingStartedAtMs < JOB_TRACKING_TIMEOUT_MS
+    ) {
+      return false;
+    }
+    this.streamAbort?.abort();
+    this.state.error = "12분 동안 심사가 완료되지 않았습니다. 실행 결과를 실패로 단정하지 않고 저장된 동일 Job 상태를 다시 확인해야 합니다.";
+    this.render();
+    return true;
   }
 
   private idempotencyKey(intent: string): string {
@@ -2597,6 +2626,7 @@ export class WorkbenchApp {
   }
 
   private async startJobTracking(jobId: string): Promise<void> {
+    this.beginJobTracking(jobId);
     this.streamAbort?.abort();
     this.streamAbort = new AbortController();
     try {
@@ -2627,11 +2657,12 @@ export class WorkbenchApp {
   }
 
   private async pollJob(jobId: string): Promise<void> {
+    this.pollTimer = undefined;
     const selectedCaseId = this.state.selectedCase?.case_id;
     const selectedRecovery = selectedCaseId ? this.recoveryByCase.get(selectedCaseId) : undefined;
     const trackedJobId = this.state.job?.job_id ?? selectedRecovery?.job_id;
     if (!selectedCaseId || trackedJobId !== jobId) return;
-    this.pollAttempts += 1;
+    this.beginJobTracking(jobId);
     try {
       const job = await this.api.getJob(jobId);
       if (job.job_id !== jobId || job.case_id !== selectedCaseId) {
@@ -2665,15 +2696,13 @@ export class WorkbenchApp {
         await this.handleTerminalJob(job);
         return;
       }
-      if (this.pollAttempts >= 180) {
-        this.state.error = "3분 안에 심사가 완료되지 않았습니다. Job 상태를 다시 확인하세요.";
-        this.render();
-        return;
-      }
+      if (this.stopIfJobTrackingExpired(jobId)) return;
       this.render();
       this.schedulePoll(jobId);
     } catch (error) {
-      if (isTransientJobPollingError(error) && this.transientPollFailures < MAX_TRANSIENT_POLL_FAILURES && this.pollAttempts < 180) {
+      const transient = isTransientJobPollingError(error);
+      if (transient && this.stopIfJobTrackingExpired(jobId)) return;
+      if (transient && this.transientPollFailures < MAX_TRANSIENT_POLL_FAILURES) {
         this.transientPollFailures += 1;
         const delay = Math.min(2 ** (this.transientPollFailures - 1) * 1_000, MAX_POLL_DELAY_MS);
         this.state.notice = `Job 상태 조회가 일시적으로 실패했습니다. ${Math.ceil(delay / 1_000)}초 후 저장된 Job에 재연결합니다 (${this.transientPollFailures}/${MAX_TRANSIENT_POLL_FAILURES}).`;
@@ -2681,7 +2710,7 @@ export class WorkbenchApp {
         this.schedulePoll(jobId, delay);
         return;
       }
-      if (isTransientJobPollingError(error)) {
+      if (transient) {
         this.state.error = "Job 자동 재연결 한도를 소진했습니다. 새 심사는 계속 차단되며, 저장된 Job 상태를 다시 확인해야 합니다.";
         this.render();
         return;
@@ -2692,6 +2721,7 @@ export class WorkbenchApp {
 
   private async handleTerminalJob(job: JobRecord): Promise<void> {
     this.streamAbort?.abort();
+    this.resetJobTracking(job.job_id);
     const recovery = this.recoveryByCase.get(job.case_id);
     if (recovery?.job_id === job.job_id) this.assertJobRecoveryBinding(job, recovery);
     if (job.status === "succeeded") {
@@ -2737,6 +2767,7 @@ export class WorkbenchApp {
       this.render();
       return;
     }
+    this.beginJobTracking(jobId, true);
     await this.act(async () => this.pollJob(jobId));
   }
 
@@ -2996,7 +3027,6 @@ export class WorkbenchApp {
         });
         this.jobIntentById.set(response.job.job_id, intent);
         this.state.job = response.job;
-        this.pollAttempts = 0;
         this.transientPollFailures = 0;
         if (response.job.status === "queued" || response.job.status === "running") await this.startJobTracking(response.job.job_id);
         else await this.handleTerminalJob(response.job);
@@ -3079,7 +3109,7 @@ export class WorkbenchApp {
     this.streamAbort?.abort();
     this.state.job = undefined;
     this.state.liveStages = [];
-    this.pollAttempts = 0;
+    this.resetJobTracking();
     this.transientPollFailures = 0;
     const [caseDetail, documentRecords, supportingDocuments, runs, audit] = await Promise.all([
       this.api.getCase(caseId),

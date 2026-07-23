@@ -1622,6 +1622,53 @@ describe("review workbench", () => {
     app.destroy();
   });
 
+  it("tracks a long Claude Job past 267 seconds and preserves recovery at the 12-minute UI boundary", async () => {
+    const root = document.createElement("div");
+    document.body.append(root);
+    seedRecovery("reviewer-1", {
+      case_id: "case-1",
+      case_revision: 1,
+      job_id: "job-long-claude",
+      idempotency_key: crypto.randomUUID(),
+    });
+    const api = fakeApi();
+    vi.mocked(api.getJob).mockResolvedValue({
+      ...jobRecord("job-long-claude"),
+      status: "running",
+      agent_call_state: "started",
+    });
+    const now = vi.spyOn(Date, "now").mockReturnValue(1_000_000);
+    const timeout = vi.spyOn(window, "setTimeout");
+    const app = new WorkbenchApp(root, api, auth(true));
+    await app.start();
+    [...root.querySelectorAll<HTMLButtonElement>("button")]
+      .find((item) => item.textContent?.includes("<img src=x"))
+      ?.click();
+    await vi.waitFor(() => expect(api.getJob).toHaveBeenCalledWith("job-long-claude"));
+
+    const tracked = app as unknown as {
+      jobTrackingStartedAtMs: number;
+      pollJob(jobId: string): Promise<void>;
+    };
+    tracked.jobTrackingStartedAtMs = 1_000_000 - 267_596;
+    await tracked.pollJob("job-long-claude");
+    expect(root.textContent).not.toContain("12분 동안 심사가 완료되지 않았습니다");
+    expect(timeout.mock.calls.some((call) => call[1] === 1_000)).toBe(true);
+    expect(window.sessionStorage.getItem(recoveryKey())).not.toBeNull();
+
+    tracked.jobTrackingStartedAtMs = 1_000_000 - (12 * 60_000);
+    await tracked.pollJob("job-long-claude");
+    expect(root.textContent).toContain("12분 동안 심사가 완료되지 않았습니다");
+    expect(root.textContent).toContain("실행 결과를 실패로 단정하지 않고");
+    expect(window.sessionStorage.getItem(recoveryKey())).not.toBeNull();
+    expect([...root.querySelectorAll<HTMLButtonElement>("button")]
+      .find((item) => item.textContent === "새 심사 실행")?.disabled).toBe(true);
+
+    app.destroy();
+    timeout.mockRestore();
+    now.mockRestore();
+  });
+
   it("binds confirm, supporting-document, and terminal actions to typed revision proposals", async () => {
     const root = document.createElement("div");
     document.body.append(root);

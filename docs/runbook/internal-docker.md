@@ -23,6 +23,8 @@ Frontend container에는 runtime secret을 주입하지 않는다. Nginx는 Dock
 1. `/healthz`가 200인지 확인한다.
 2. 응답 CSP의 `connect-src`와 `form-action`이 `'self'`만 허용하는지 확인한다.
 3. 로그인 후 Browser storage에서 `localStorage`가 비어 있는지 확인한다.
+   - access token 수명보다 오래 root Review와 child Review를 실행하고, 중간 재로그인 없이 보호 API가 계속 성공하는지 확인한다.
+   - 갱신 전후 access/id/refresh token 문자열이 `localStorage`와 `sessionStorage`에 없고 OIDC subject·조직이 바뀌지 않아야 한다.
 4. DevTools Network에서 제품 데이터 요청이 `/api/v1` 외부로 나가지 않는지 확인한다.
 5. `.pdf`·이미지 file input이 없고 text-only 경고가 보이는지 확인한다.
 6. `reviewer`로 Supporting Document·typed Revision Proposal을 등록하고 직접 child Run을 만들 수 없는지 확인한다. 다섯 action(`confirm_field`, `correct_field`, `add_supporting_document`, `approve_review`, `reject_review`)을 각각 확인한다.
@@ -49,6 +51,7 @@ Frontend container에는 runtime secret을 주입하지 않는다. Nginx는 Dock
 
 - OIDC callback 실패: Backend auth config의 public `/oidc/` issuer, `KC_HTTP_RELATIVE_PATH`, Keycloak hostname, redirect URI, proxy header를 비교한다.
 - 401: 새로고침으로 memory token이 사라졌는지 확인하고 다시 로그인한다.
+- 12분 Job 추적 초과: Agent 실패로 단정하거나 recovery를 삭제하지 않는다. 저장된 동일 Job을 명시적으로 다시 조회하고 Backend 원장을 확인한다.
 - 409: Case/Run을 새로 불러온 뒤 correction을 다시 작성한다.
 - 422: Evidence·판정·Release identity처럼 수정 금지 경로를 요청했는지 확인한다.
 - `delivery_uncertain` 또는 enqueue 응답 유실: 해당 Case의 새 Review를 만들지 않는다. 저장된 Job을 먼저 재조회하고, Job ID조차 받지 못했다면 UI의 명시적 복구 동작으로 **같은 Idempotency-Key**만 재전송한다. 새 key를 발급해 재실행하지 않는다. Backend audit/outbox와 Agent replay ledger를 대조해 성공/실패가 확정된 뒤 차단이 해제된다.

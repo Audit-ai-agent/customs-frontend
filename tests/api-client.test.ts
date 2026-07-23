@@ -386,6 +386,65 @@ describe("Backend API v1 client", () => {
     expect(window.localStorage).toHaveLength(0);
   });
 
+  it("awaits an async memory token before sending a protected request", async () => {
+    let release: ((token: string) => void) | undefined;
+    const token = new Promise<string>((resolve) => {
+      release = resolve;
+    });
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(
+      json({ items: [{ case_id: "case-1", org_id: "org-1", title: "Test", status: "open", revision: 0, updated_at: "2026-07-21T00:00:00Z" }] }),
+    );
+    const client = new ApiClient(fetcher, () => token);
+    const request = client.listCases();
+
+    expect(fetcher).not.toHaveBeenCalled();
+    release?.("renewed-memory-token");
+    await expect(request).resolves.toMatchObject({ items: [{ case_id: "case-1" }] });
+    expect(new Headers(fetcher.mock.calls[0]?.[1]?.headers).get("Authorization"))
+      .toBe("Bearer renewed-memory-token");
+  });
+
+  it("fails before network I/O when a bound authentication provider cannot supply a token", async () => {
+    for (const provider of [
+      async () => undefined,
+      async () => {
+        throw new Error("secret provider detail");
+      },
+    ]) {
+      const fetcher = vi.fn<typeof fetch>();
+      const client = new ApiClient(fetcher, provider);
+
+      await expect(client.listCases()).rejects.toMatchObject({
+        status: 401,
+        code: "oidc_session_unavailable",
+      });
+      expect(fetcher).not.toHaveBeenCalled();
+    }
+  });
+
+  it("does not consult a token provider for the public OIDC bootstrap contract", async () => {
+    const provider = vi.fn(async () => {
+      throw new Error("must not run");
+    });
+    const origin = window.location.origin;
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(json({
+      issuer: `${origin}/oidc/realms/customs`,
+      audience: "customs-api",
+      client_id: "customs-spa",
+      authorization_endpoint: `${origin}/oidc/realms/customs/protocol/openid-connect/auth`,
+      token_endpoint: `${origin}/oidc/realms/customs/protocol/openid-connect/token`,
+      end_session_endpoint: `${origin}/oidc/realms/customs/protocol/openid-connect/logout`,
+      scopes: ["openid"],
+      flow: "authorization_code_pkce_s256",
+      token_storage: "memory_only",
+    }));
+
+    await expect(new ApiClient(fetcher, provider).getAuthConfig()).resolves.toMatchObject({
+      token_storage: "memory_only",
+    });
+    expect(provider).not.toHaveBeenCalled();
+  });
+
   it("requires an explicit evidence-bound terminal state for delivery reconciliation", async () => {
     const reconciled = {
       ...jobPayload("job-uncertain"),
@@ -1432,8 +1491,10 @@ describe("Backend API v1 client", () => {
     });
     const fetcher = vi.fn<typeof fetch>().mockResolvedValue(new Response(body, { status: 200, headers: { "content-type": "text/event-stream" } }));
     const events: string[] = [];
-    await new ApiClient(fetcher, () => "memory-token").streamJobEvents("job-1", (event) => events.push(event.event_id), new AbortController().signal);
+    const token = vi.fn(async () => "memory-token");
+    await new ApiClient(fetcher, token).streamJobEvents("job-1", (event) => events.push(event.event_id), new AbortController().signal);
     expect(events).toEqual(["evt-1"]);
+    expect(token).toHaveBeenCalledOnce();
     expect(new Headers(fetcher.mock.calls[0]?.[1]?.headers).get("Authorization")).toBe("Bearer memory-token");
   });
 

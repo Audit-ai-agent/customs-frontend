@@ -50,13 +50,15 @@ $env:OIDC_BACKEND_ORIGIN='http://127.0.0.1:8082'
 npm run dev
 ```
 
-Backend의 `/api/v1/auth/config`가 OIDC issuer/client/endpoint를 제공해야 한다. Browser에 표시되는 OIDC URL은 Workbench의 same-origin `/oidc/`를 사용하고, Vite/Nginx가 내부 Keycloak로 proxy한다. SPA callback `/auth/callback`과 proxy 경로를 분리해 callback이 Keycloak으로 오라우팅되지 않게 한다. access token은 메모리에만 저장된다. OAuth state·PKCE verifier와 미확정 Review/Proposal decision intent의 식별자·버전·digest·request hash·idempotency key만 `sessionStorage`에 둔다. 모든 복구 레코드는 `org_id`와 OIDC `subject`로 namespace를 분리하고 종류별 최대 50개로 제한한다. Proposal 승인/거절 사유, 문서 원문·결과·token은 저장하지 않으며, 새로고침 뒤 로그인하면 Backend의 Job/Proposal 원장을 재조회해 응답 유실을 대조한다.
+Backend의 `/api/v1/auth/config`가 OIDC issuer/client/endpoint를 제공해야 한다. Browser에 표시되는 OIDC URL은 Workbench의 same-origin `/oidc/`를 사용하고, Vite/Nginx가 내부 Keycloak로 proxy한다. SPA callback `/auth/callback`과 proxy 경로를 분리해 callback이 Keycloak으로 오라우팅되지 않게 한다. access/id/refresh token은 메모리에만 저장한다. 보호 API 요청 직전에 만료가 가까우면 refresh token을 single-flight로 갱신하며 subject가 바뀌거나 갱신이 실패하면 세션을 폐기한다. OAuth state·PKCE verifier와 미확정 Review/Proposal decision intent의 식별자·버전·digest·request hash·idempotency key만 `sessionStorage`에 둔다. 모든 복구 레코드는 `org_id`와 OIDC `subject`로 namespace를 분리하고 종류별 최대 50개로 제한한다. Proposal 승인/거절 사유, 문서 원문·결과·token은 저장하지 않으며, 새로고침 뒤 로그인하면 Backend의 Job/Proposal 원장을 재조회해 응답 유실을 대조한다.
 
 Review 복구 레코드는 `kind=review`, `parent_run_id=null`, Case revision, 현재 OIDC subject, 당시 Backend가 발행한 `review_as_of`, 고정 text-only 요청의 canonical SHA-256과 정확히 일치해야 한다. 현재 메타데이터 기준일과 다른 복구 intent는 재전송하지 않는다. Proposal decision의 직접 응답과 복구는 Backend decision 원장의 동일 Proposal/Run/Case/org, 현재 actor, 요청한 terminal status, scoped idempotency key, request digest가 모두 일치할 때만 child revision Job을 결박한다. approve에는 동일 ID의 child Job이 필수이고 reject에는 child Job이 없어야 한다. 다른 actor·key·digest가 먼저 종결한 intent는 `superseded`로 표시하며 그 child Job을 현재 raw key에 연결하지 않는다.
 
 요건서류가 있는 합성 UAT Case 생성은 원문과 metadata까지만 만든다. `requires_approver` 시나리오는 같은 사용자가 즉시 스스로 검증하지 않으며 다른 `approver` 계정이 assertion을 추가해야 한다. 반대로 미신뢰 발급자 Control은 assertion 추가 전에 실행해 차단을 확인한다. Backend signer가 release-bound trust root와 일치할 때만 signed receipt가 생성되며, unsigned 진단 기록은 자동완료 근거가 아니다. 이 두 사람 절차를 거치더라도 미승인 Agent/Data Release에서는 `auto_review_complete`가 활성화되지 않는다.
 
 `delivery_uncertain`은 실패로 추정하거나 단순 timeout만으로 해제하지 않는다. 저장된 Job을 먼저 재조회하고, 여전히 불확실하면 Backend가 승인한 `approver` 또는 `admin`만 Agent 미수신을 입증하는 독립 운영 증거의 SHA-256·사유·명시적 확인을 제출할 수 있다. 대조 POST 직전에 민감 내용을 제외한 request hash를 `sessionStorage`에 저장한다. 응답을 잃으면 다음 POST 전에 반드시 권위 Job GET을 수행하고, 여전히 `delivery_uncertain`이며 요청 hash가 같을 때만 재전송한다. Backend가 `failed + delivery_reconciled`를 반환해야 브라우저가 복구 레코드를 지우고 새 심사를 허용한다.
+
+각 Review 또는 child Revision Job은 브라우저에서 최대 12분 동안 wall-clock 기준으로 추적한다. 이 시간은 실제 Claude 실행과 Backend 10분 Job lease보다 길게 잡은 UI 관찰 한도이며, 초과를 Agent 실패로 해석하거나 recovery/idempotency 결박을 삭제하지 않는다. 사용자가 저장된 동일 Job을 명시적으로 재조회해야 한다.
 
 ## 검증
 

@@ -74,6 +74,7 @@ export class ApiError extends Error {
 }
 
 type Decoder<T> = (value: unknown) => T;
+type AccessTokenProvider = () => string | undefined | Promise<string | undefined>;
 
 export class ApiClient {
   private session: Session | undefined;
@@ -81,7 +82,7 @@ export class ApiClient {
 
   constructor(
     fetcher: typeof fetch = globalThis.fetch,
-    private readonly accessToken: () => string | undefined = () => undefined,
+    private readonly accessToken?: AccessTokenProvider,
   ) {
     // Chrome's Window.fetch Web IDL implementation rejects an ApiClient
     // instance as its receiver. Normalizing both the default and an explicitly
@@ -292,7 +293,7 @@ export class ApiClient {
   ): Promise<void> {
     const url = `${API_BASE}/jobs/${segment(jobId)}/events/stream`;
     const headers = new Headers({ Accept: "text/event-stream" });
-    const token = this.accessToken();
+    const token = await this.requireAccessToken();
     if (token) headers.set("Authorization", `Bearer ${token}`);
     const boundedSignal = AbortSignal.any([signal, AbortSignal.timeout(SSE_CONNECTION_TIMEOUT_MS)]);
     const response = await this.fetcher(url, {
@@ -532,7 +533,7 @@ export class ApiClient {
     if (!url.startsWith("/api/v1/")) throw new Error("Frontend API boundary violation");
     const headers = new Headers(init.headers);
     headers.set("Accept", "application/json");
-    const token = this.accessToken();
+    const token = authenticated ? await this.requireAccessToken() : undefined;
     if (authenticated && token) headers.set("Authorization", `Bearer ${token}`);
     const response = await this.fetcher(url, {
       ...init,
@@ -561,6 +562,28 @@ export class ApiClient {
       throw new ContractError("Backend success response must use application/json");
     }
     return decoder(value);
+  }
+
+  private async requireAccessToken(): Promise<string | undefined> {
+    // Unit-level contract tests may intentionally construct a client without an
+    // authentication adapter. Once a provider is bound (the browser product
+    // path), a protected request must never leave this process without a
+    // subject-bound bearer token.
+    if (!this.accessToken) return undefined;
+    let token: string | undefined;
+    try {
+      token = await this.accessToken();
+    } catch {
+      token = undefined;
+    }
+    if (!token) {
+      throw new ApiError(
+        "인증 세션을 안전하게 갱신할 수 없습니다.",
+        401,
+        "oidc_session_unavailable",
+      );
+    }
+    return token;
   }
 
   private assertIdentity(actual: string, expected: string, context: string): void {
