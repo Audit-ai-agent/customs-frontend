@@ -190,7 +190,6 @@ type WorkbenchApi = Pick<
 interface WorkbenchState {
   session: Session | undefined;
   cases: CaseSummary[];
-  caseListHasMore: boolean;
   selectedCase: CaseDetail | undefined;
   documents: CaseDocument[];
   supportingDocuments: SupportingDocumentRecord[];
@@ -214,7 +213,6 @@ interface WorkbenchState {
 export class WorkbenchApp {
   private state: WorkbenchState = {
     cases: [],
-    caseListHasMore: false,
     documents: [],
     supportingDocuments: [],
     runs: [],
@@ -751,7 +749,7 @@ export class WorkbenchApp {
         el("div", {}, el("p", { className: "eyebrow", text: "REVIEW QUEUE" }), el("h2", { text: "심사 업무함" })),
         el("span", {
           className: "case-count",
-          text: `표시 ${this.state.cases.length}건${this.state.caseListHasMore ? "+" : ""}`,
+          text: `표시 ${this.state.cases.length}건`,
         }),
       ),
       labeledControl("Case 검색", caseSearch),
@@ -777,12 +775,6 @@ export class WorkbenchApp {
           ),
         ),
       ),
-      this.state.caseListHasMore
-        ? el("p", {
-            className: "section-help",
-            text: "Backend가 추가 Case가 있음을 알렸습니다. 현재 화면은 불러온 목록만 검색·표시합니다.",
-          })
-        : null,
       el("details", { className: "sidebar-panel sidebar-panel--create" }, el("summary", { text: "새 Case 만들기" }), createForm),
       el("details", { className: "sidebar-panel sidebar-panel--test-lab" }, el("summary", { text: "Test Lab · UAT 시나리오" }), scenarioForm),
       el("p", { className: "diagnostic-label", text: "UAT 데이터는 합성 자료이며 법적 판단 자료가 아닙니다." }),
@@ -816,7 +808,10 @@ export class WorkbenchApp {
               },
             },
           }),
-          el("span", { text: `현재 업무함 ${this.state.cases.length}건`, className: "welcome-case-count" }),
+          el("span", {
+            text: `현재 표시 ${this.state.cases.length}건`,
+            className: "welcome-case-count",
+          }),
         ),
       ),
       el(
@@ -862,9 +857,7 @@ export class WorkbenchApp {
   private renderCase(): HTMLElement {
     const caseItem = this.state.selectedCase;
     if (!caseItem) return empty("Case가 선택되지 않았습니다.");
-    const jobIsActive = this.state.job !== undefined
-      && ["queued", "running", "delivery_uncertain"].includes(this.state.job.status);
-    const activeStage = jobIsActive ? 2 : this.state.selectedRun ? 3 : 1;
+    const activeStage = this.jobIsActive() ? 2 : this.state.selectedRun ? 3 : 1;
     const step = (index: number, title: string, description: string): HTMLElement =>
       el(
         "li",
@@ -3435,7 +3428,6 @@ export class WorkbenchApp {
   private async refreshCases(): Promise<void> {
     const page = await this.api.listCases();
     this.state.cases = page.items;
-    this.state.caseListHasMore = typeof page.next_cursor === "string" && page.next_cursor.length > 0;
     const session = this.requireSession();
     if (this.state.cases.some((item) => item.org_id !== session.org_id)) {
       throw new Error("Backend Case 목록에 다른 조직의 항목이 포함되었습니다.");

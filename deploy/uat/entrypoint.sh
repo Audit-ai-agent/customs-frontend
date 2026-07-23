@@ -5,7 +5,11 @@ set -eu
 : "${OIDC_BACKEND_ORIGIN:?OIDC_BACKEND_ORIGIN is required for same-origin /oidc proxying}"
 
 for name in BACKEND_ORIGIN OIDC_BACKEND_ORIGIN; do
-  value="$(printenv "$name")"
+  case "$name" in
+    BACKEND_ORIGIN) value="$BACKEND_ORIGIN" ;;
+    OIDC_BACKEND_ORIGIN) value="$OIDC_BACKEND_ORIGIN" ;;
+    *) echo "unexpected origin variable" >&2; exit 1 ;;
+  esac
   if [ "$(printf '%s' "$value" | wc -l | tr -d ' ')" -ne 0 ]; then
     echo "$name must not contain line breaks" >&2
     exit 1

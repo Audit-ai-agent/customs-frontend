@@ -108,6 +108,11 @@ export class ApiClient {
   listCases(): Promise<Paged<CaseSummary>> {
     return this.request("/cases", { method: "GET" }, (value) => {
       const page = pageOrArray(value, decodeCaseSummary);
+      if (page.next_cursor !== undefined) {
+        throw new ContractError(
+          "Case pagination is not part of the pinned Backend OpenAPI contract",
+        );
+      }
       page.items.forEach((item, index) => this.assertOrg(item.org_id, `cases[${index}]`));
       return page;
     });

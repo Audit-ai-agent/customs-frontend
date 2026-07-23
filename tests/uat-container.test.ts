@@ -21,7 +21,8 @@ describe("LOCAL USER UAT frontend container", () => {
     expect(nginx).toContain("style-src 'self'");
     expect(nginx).not.toContain("'unsafe-inline'");
     expect(nginx).toContain("location /assets/");
-    expect(nginx).toContain("try_files $uri =404");
+    expect(nginx).toContain("try_files $uri @asset_not_found");
+    expect(nginx).toContain('return 404 "asset not found\\n"');
   });
 
   it("requires only Backend-owned same-origin proxy targets", async () => {
@@ -33,9 +34,13 @@ describe("LOCAL USER UAT frontend container", () => {
     expect(entrypoint).toContain("OIDC_BACKEND_ORIGIN is required");
     expect(nginx).toContain("proxy_pass ${BACKEND_ORIGIN}");
     expect(nginx).toContain("proxy_pass ${OIDC_BACKEND_ORIGIN}");
+    expect(nginx).toContain('add_header X-Customs-OIDC-Policy "keycloak-upstream" always');
     expect(nginx).toContain("proxy_set_header Host $http_host");
     expect(entrypoint).toContain("port must be between 1 and 65535");
     expect(entrypoint).toContain("must not contain line breaks");
+    expect(entrypoint).toContain('BACKEND_ORIGIN) value="$BACKEND_ORIGIN"');
+    expect(entrypoint).toContain('OIDC_BACKEND_ORIGIN) value="$OIDC_BACKEND_ORIGIN"');
+    expect(entrypoint).not.toContain('printenv "$name"');
     expect(readme).toContain('127.0.0.1:18088:5173');
     expect(nginx).not.toMatch(/\/internal\/agent|\/evidence/);
   });

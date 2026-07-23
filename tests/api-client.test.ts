@@ -386,6 +386,25 @@ describe("Backend API v1 client", () => {
     expect(window.localStorage).toHaveLength(0);
   });
 
+  it("fails closed if Case pagination appears outside the pinned Backend contract", async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(
+      json({
+        items: [{
+          case_id: "case-1",
+          org_id: "org-1",
+          title: "Test",
+          status: "open",
+          revision: 0,
+          updated_at: "2026-07-21T00:00:00Z",
+        }],
+        next_cursor: "uncontracted-cursor",
+      }),
+    );
+
+    await expect(new ApiClient(fetcher, () => "token").listCases())
+      .rejects.toThrow("not part of the pinned Backend OpenAPI contract");
+  });
+
   it("awaits an async memory token before sending a protected request", async () => {
     let release: ((token: string) => void) | undefined;
     const token = new Promise<string>((resolve) => {

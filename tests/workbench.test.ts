@@ -439,7 +439,7 @@ describe("review workbench", () => {
     unsafeApp.destroy();
   });
 
-  it("labels a partial Case list honestly and limits search wording to loaded items", async () => {
+  it("labels the contract-complete Case response as displayed items without an inferred workload total", async () => {
     const root = document.createElement("div");
     document.body.append(root);
     const api = fakeApi();
@@ -452,13 +452,12 @@ describe("review workbench", () => {
         revision: 1,
         updated_at: "2026-07-21T12:00:00Z",
       }],
-      next_cursor: "opaque-next-page",
     });
     const app = new WorkbenchApp(root, api, auth(true));
     await app.start();
 
-    expect(root.textContent).toContain("표시 1건+");
-    expect(root.textContent).toContain("현재 화면은 불러온 목록만 검색·표시합니다.");
+    expect(root.textContent).toContain("표시 1건");
+    expect(root.textContent).toContain("현재 표시 1건");
     expect(root.querySelector<HTMLInputElement>('input[type="search"]')?.placeholder)
       .toContain("현재 목록");
     app.destroy();
@@ -481,6 +480,29 @@ describe("review workbench", () => {
     };
     internal.state.job = jobRecord("job-new-review");
     internal.render();
+
+    const steps = root.querySelectorAll(".case-step");
+    expect(steps[1]?.classList.contains("case-step--active")).toBe(true);
+    expect(steps[2]?.classList.contains("case-step--active")).toBe(false);
+    app.destroy();
+  });
+
+  it("keeps a response-uncertain recovered review in the execution step", async () => {
+    const root = document.createElement("div");
+    document.body.append(root);
+    seedRecovery("reviewer-1", {
+      case_id: "case-1",
+      case_revision: 1,
+      job_id: null,
+      idempotency_key: crypto.randomUUID(),
+    });
+    const api = fakeApi();
+    const app = new WorkbenchApp(root, api, auth(true));
+    await app.start();
+    [...root.querySelectorAll<HTMLButtonElement>("button")]
+      .find((item) => item.textContent?.includes("<img src=x"))
+      ?.click();
+    await vi.waitFor(() => expect(root.textContent).toContain("심사 요청 응답 확인 필요"));
 
     const steps = root.querySelectorAll(".case-step");
     expect(steps[1]?.classList.contains("case-step--active")).toBe(true);
