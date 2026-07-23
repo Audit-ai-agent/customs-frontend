@@ -338,6 +338,10 @@ describe("review workbench", () => {
 
     expect(root.textContent).toContain("조직 계정으로 로그인");
     expect(root.textContent).toContain("PDF/이미지/OCR 입력은 명시적으로 거절됩니다");
+    expect(root.querySelector(".login-hero")).not.toBeNull();
+    expect(root.querySelector(".brand-mark")?.textContent).toBe("CA");
+    expect(root.querySelectorAll(".login-benefits article")).toHaveLength(3);
+    expect(root.querySelector("details.security-note")).not.toBeNull();
     expect(root.querySelector('input[type="file"]')).toBeNull();
     const results = await axe.run(root);
     expect(results.violations).toEqual([]);
@@ -355,6 +359,9 @@ describe("review workbench", () => {
     expect(root.textContent).toContain("Planner: shadow");
     expect(root.textContent).toContain("Auto-completion: OFF");
     expect(root.querySelector('[data-uat-metadata="verified"]')).not.toBeNull();
+    expect(root.querySelector("header.topbar .brand-lockup")).not.toBeNull();
+    expect(root.querySelector("details.uat-environment-details")).not.toBeNull();
+    expect(root.querySelector('input[type="search"][aria-label="현재 Case 목록 검색"]')).not.toBeNull();
     expect(root.querySelector<HTMLOptionElement>(
       'option[value="actual_3law_structured_requirement_human_only"]',
     )?.disabled).toBe(true);
@@ -366,6 +373,8 @@ describe("review workbench", () => {
     expect(caseButton).toBeDefined();
     caseButton!.click();
     await vi.waitFor(() => expect(root.textContent).toContain("문서 정합성 문제가 없습니다."));
+    expect(root.querySelectorAll(".case-stepper .case-step")).toHaveLength(3);
+    expect(root.querySelectorAll(".review-section-nav a")).toHaveLength(6);
     expect(root.textContent).toContain("Claude 표현 · 코드 검증");
 
     expect(root.querySelector("img")).toBeNull();
@@ -388,6 +397,115 @@ describe("review workbench", () => {
     expect((document.activeElement as HTMLElement | null)?.dataset.sourceId).toBe("source-1");
     const accessibility = await axe.run(root);
     expect(accessibility.violations).toEqual([]);
+  });
+
+  it("shows unverified or unsafe runtime identity as a visible blocking state", async () => {
+    const unknownRoot = document.createElement("div");
+    document.body.append(unknownRoot);
+    const unknownApi = fakeApi();
+    vi.mocked(unknownApi.getUatMetadata).mockRejectedValue(new ApiError("unavailable", 503));
+    const unknownApp = new WorkbenchApp(unknownRoot, unknownApi, auth(true));
+    await unknownApp.start();
+
+    const unknownBanner = unknownRoot.querySelector(".uat-runtime-banner--unknown");
+    expect(unknownBanner?.getAttribute("role")).toBe("alert");
+    expect(unknownBanner?.textContent).toContain("실행 환경 확인 불가");
+    expect(unknownBanner?.textContent).toContain("Evidence 상태 미확인");
+    unknownApp.destroy();
+
+    const unsafeRoot = document.createElement("div");
+    document.body.append(unsafeRoot);
+    const unsafeApi = fakeApi();
+    vi.mocked(unsafeApi.getUatMetadata).mockResolvedValue({
+      mode: "local_uat",
+      assurance_ceiling: "diagnostic",
+      text_only: true,
+      auto_completion_enabled: true,
+      claude_mode: "actual",
+      evidence_profile: "synthetic-v3",
+      evidence_scope_label: "TEST_ONLY_V3",
+      evidence_dataset: SYNTHETIC_EVIDENCE_DATASET,
+      supported_review_as_of: SUPPORTED_REVIEW_AS_OF,
+      planner_mode: "shadow",
+      production_release: false,
+    } as unknown as Awaited<ReturnType<ApiClient["getUatMetadata"]>>);
+    const unsafeApp = new WorkbenchApp(unsafeRoot, unsafeApi, auth(true));
+    await unsafeApp.start();
+
+    const unsafeBanner = unsafeRoot.querySelector(".uat-runtime-banner--unsafe");
+    expect(unsafeBanner?.getAttribute("role")).toBe("alert");
+    expect(unsafeBanner?.textContent).toContain("UAT 안전 경계 위반");
+    expect(unsafeBanner?.textContent).toContain("자동완료 ON");
+    unsafeApp.destroy();
+  });
+
+  it("labels a partial Case list honestly and limits search wording to loaded items", async () => {
+    const root = document.createElement("div");
+    document.body.append(root);
+    const api = fakeApi();
+    vi.mocked(api.listCases).mockResolvedValue({
+      items: [{
+        case_id: "case-1",
+        org_id: "org-1",
+        title: "표시된 Case",
+        status: "open",
+        revision: 1,
+        updated_at: "2026-07-21T12:00:00Z",
+      }],
+      next_cursor: "opaque-next-page",
+    });
+    const app = new WorkbenchApp(root, api, auth(true));
+    await app.start();
+
+    expect(root.textContent).toContain("표시 1건+");
+    expect(root.textContent).toContain("현재 화면은 불러온 목록만 검색·표시합니다.");
+    expect(root.querySelector<HTMLInputElement>('input[type="search"]')?.placeholder)
+      .toContain("현재 목록");
+    app.destroy();
+  });
+
+  it("prioritizes an active new Job over an older selected Run in the Case stepper", async () => {
+    const root = document.createElement("div");
+    document.body.append(root);
+    const api = fakeApi();
+    const app = new WorkbenchApp(root, api, auth(true));
+    await app.start();
+    [...root.querySelectorAll<HTMLButtonElement>("button")]
+      .find((item) => item.textContent?.includes("<img src=x"))
+      ?.click();
+    await vi.waitFor(() => expect(root.querySelector(".case-stepper")).not.toBeNull());
+
+    const internal = app as unknown as {
+      state: { job: JobRecord | undefined };
+      render(): void;
+    };
+    internal.state.job = jobRecord("job-new-review");
+    internal.render();
+
+    const steps = root.querySelectorAll(".case-step");
+    expect(steps[1]?.classList.contains("case-step--active")).toBe(true);
+    expect(steps[2]?.classList.contains("case-step--active")).toBe(false);
+    app.destroy();
+  });
+
+  it("keeps the report navigation target when a degraded Run has no narrative", async () => {
+    const root = document.createElement("div");
+    document.body.append(root);
+    const api = fakeApi();
+    const degradedRun: ReviewRun = { ...run };
+    delete degradedRun.narrative_report;
+    vi.mocked(api.listReviewRuns).mockResolvedValue([degradedRun]);
+    vi.mocked(api.getReviewRun).mockResolvedValue(degradedRun);
+    const app = new WorkbenchApp(root, api, auth(true));
+    await app.start();
+    [...root.querySelectorAll<HTMLButtonElement>("button")]
+      .find((item) => item.textContent?.includes("<img src=x"))
+      ?.click();
+    await vi.waitFor(() => expect(root.querySelector("#review-report")).not.toBeNull());
+
+    expect(root.querySelector('a[href="#review-report"]')).not.toBeNull();
+    expect(root.querySelector("#review-report")?.textContent).toContain("근거 결박 보고서가 생성되지 않았습니다.");
+    app.destroy();
   });
 
   it("labels a Backend policy-overlaid V3 narrative without presenting it as Claude prose", async () => {

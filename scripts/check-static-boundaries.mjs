@@ -94,13 +94,25 @@ for (const marker of ['com.customs.runtime="local-user-uat-diagnostic"', 'com.cu
   if (!uatDockerfile.includes(marker)) violations.push(`LOCAL UAT image boundary marker is missing: ${marker}`);
 }
 if (!uatDockerfile.includes("EXPOSE 5173") || !uatDockerfile.includes("HEALTHCHECK")) {
-  violations.push("LOCAL UAT image must expose and healthcheck only its internal Vite port");
+  violations.push("LOCAL UAT image must expose and healthcheck only its internal static runtime port");
 }
-for (const marker of ["BACKEND_ORIGIN", "OIDC_BACKEND_ORIGIN", "--host 0.0.0.0", "--port 5173", "--strictPort", 'process.version !== "v22.23.1"', 'npm --version)" != "10.9.8"']) {
+if (!uatDockerfile.includes("RUN npm run build")
+  || !uatDockerfile.includes("COPY --from=build /workspace/dist /usr/share/nginx/html")
+  || uatDockerfile.includes("vite --host")) {
+  violations.push("LOCAL UAT must serve built external assets instead of Vite development style injection");
+}
+for (const marker of ["BACKEND_ORIGIN", "OIDC_BACKEND_ORIGIN", "BUILT ASSETS / STRICT CSP"]) {
   if (!uatEntrypoint.includes(marker)) violations.push(`LOCAL UAT fail-closed entrypoint marker is missing: ${marker}`);
 }
 if (uatDockerfile.includes("18088") || !uatReadme.includes('127.0.0.1:18088:5173')) {
   violations.push("Host port 18088 must be loopback-published by Compose documentation, never bound by the image");
+}
+const uatNginx = await readFile(new URL("../deploy/uat/default.conf.template", import.meta.url), "utf8");
+if (!uatNginx.includes("proxy_pass ${BACKEND_ORIGIN}") || !uatNginx.includes("proxy_pass ${OIDC_BACKEND_ORIGIN}")) {
+  violations.push("LOCAL UAT Nginx must proxy only the Backend and same-origin OIDC boundaries");
+}
+if (!uatNginx.includes("style-src 'self'") || uatNginx.includes("'unsafe-inline'")) {
+  violations.push("LOCAL UAT Nginx must keep an external-style-only CSP");
 }
 const nginx = await readFile(new URL("../deploy/default.conf.template", import.meta.url), "utf8");
 if (!nginx.includes('Cache-Control "no-store, max-age=0"')) violations.push("SPA shell requires no-store cache policy");

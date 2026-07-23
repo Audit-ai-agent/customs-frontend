@@ -190,6 +190,7 @@ type WorkbenchApi = Pick<
 interface WorkbenchState {
   session: Session | undefined;
   cases: CaseSummary[];
+  caseListHasMore: boolean;
   selectedCase: CaseDetail | undefined;
   documents: CaseDocument[];
   supportingDocuments: SupportingDocumentRecord[];
@@ -213,6 +214,7 @@ interface WorkbenchState {
 export class WorkbenchApp {
   private state: WorkbenchState = {
     cases: [],
+    caseListHasMore: false,
     documents: [],
     supportingDocuments: [],
     runs: [],
@@ -316,21 +318,73 @@ export class WorkbenchApp {
         { className: "login-shell", attrs: { id: "main-content" } },
         el(
           "section",
+          { className: "login-hero", attrs: { "aria-label": "서비스 소개" } },
+          el(
+            "div",
+            { className: "brand-lockup brand-lockup--login" },
+            el("span", { className: "brand-mark", text: "CA", attrs: { "aria-hidden": "true" } }),
+            el(
+              "div",
+              {},
+              el("span", { className: "brand-kicker", text: "CUSTOMS ASSURANCE" }),
+              el("strong", { className: "brand-name", text: "Trade Review Intelligence" }),
+            ),
+          ),
+          el("p", { className: "eyebrow", text: "AI-ASSISTED CUSTOMS REVIEW" }),
+          el("h1", { text: "통관 검토를 더 빠르고, 근거 있게." }),
+          el("p", {
+            className: "login-hero__lead",
+            text: "문서 정합성부터 법령 근거, 사람 승인 이력까지 하나의 안전한 심사 흐름으로 연결합니다.",
+          }),
+          el(
+            "div",
+            { className: "login-benefits" },
+            el(
+              "article",
+              {},
+              el("span", { className: "benefit-icon", text: "01", attrs: { "aria-hidden": "true" } }),
+              el("strong", { text: "문서 교차검증" }),
+              el("p", { text: "CI·PL·B/L·C/O의 핵심 필드와 불일치를 한 화면에서 검토합니다." }),
+            ),
+            el(
+              "article",
+              {},
+              el("span", { className: "benefit-icon", text: "02", attrs: { "aria-hidden": "true" } }),
+              el("strong", { text: "근거 기반 설명" }),
+              el("p", { text: "법령 Evidence와 원문 인용에 결박된 사전심사 보고서를 제공합니다." }),
+            ),
+            el(
+              "article",
+              {},
+              el("span", { className: "benefit-icon", text: "03", attrs: { "aria-hidden": "true" } }),
+              el("strong", { text: "검토 이력 보존" }),
+              el("p", { text: "수정 제안, 독립 승인, 재심사 결과를 변경 불가능한 이력으로 남깁니다." }),
+            ),
+          ),
+          el("p", { className: "login-hero__boundary", text: "LOCAL USER UAT · TEXT ONLY · NOT PRODUCTION" }),
+        ),
+        el(
+          "section",
           { className: "login-card", attrs: { "aria-labelledby": "login-title" } },
-          el("p", { className: "eyebrow", text: "INTERNAL REVIEW WORKBENCH" }),
+          el("span", { className: "login-card__status", text: "INTERNAL ACCESS" }),
+          el("p", { className: "eyebrow", text: "REVIEWER WORKBENCH" }),
           el("h1", { text: "통관 AI 사전심사 작업대", attrs: { id: "login-title" } }),
           el("p", {
             className: "lead",
-            text: "문서 정합성, 적용 근거, 사람 검토 이력을 한 Case 안에서 확인합니다.",
+            text: "조직 계정으로 로그인하여 배정된 Case와 AI 사전심사 결과를 확인하세요.",
           }),
           this.renderUatRuntimeBanner(),
           this.state.error ? el("div", { className: "notice notice--danger", text: this.state.error, attrs: { role: "alert", tabindex: "-1" } }) : null,
-          el("div", { className: "notice notice--warning", text: "LOCAL UAT는 text-only입니다. PDF/이미지/OCR 입력은 명시적으로 거절됩니다." }),
           button("조직 계정으로 로그인", () => void this.auth.login(), "primary"),
-          el("p", {
-            className: "fine-print",
-            text: "Authorization Code + PKCE를 사용하며 access token은 브라우저 메모리에만 유지합니다.",
-          }),
+          el(
+            "details",
+            { className: "security-note" },
+            el("summary", { text: "보안 및 입력 범위 안내" }),
+            el("p", {
+              className: "fine-print",
+              text: "Authorization Code + PKCE를 사용하며 access token은 브라우저 메모리에만 유지합니다. LOCAL UAT는 text-only입니다. PDF/이미지/OCR 입력은 명시적으로 거절됩니다.",
+            }),
+          ),
         ),
       ),
     );
@@ -370,15 +424,26 @@ export class WorkbenchApp {
       { className: "topbar" },
       el(
         "div",
-        {},
-        el("p", { className: "eyebrow", text: "CUSTOMS REVIEW" }),
-        el("strong", { className: "brand", text: "AI 사전심사 작업대" }),
+        { className: "brand-lockup" },
+        el("span", { className: "brand-mark", text: "CA", attrs: { "aria-hidden": "true" } }),
+        el(
+          "div",
+          {},
+          el("span", { className: "brand-kicker", text: "CUSTOMS ASSURANCE" }),
+          el("strong", { className: "brand", text: "AI 사전심사 작업대" }),
+        ),
       ),
-      el("div", { className: "release-flag", text: "LOCAL UAT · NOT PRODUCTION" }),
+      el(
+        "div",
+        { className: "topbar-context" },
+        el("span", { className: "topbar-context__label", text: "심사 업무함" }),
+        el("div", { className: "release-flag", text: "LOCAL UAT · NOT PRODUCTION" }),
+      ),
       el(
         "div",
         { className: "user-block" },
-        el("span", { text: session?.subject ?? "—" }),
+        el("span", { className: "user-avatar", text: (session?.subject ?? "U").slice(0, 1).toUpperCase(), attrs: { "aria-hidden": "true" } }),
+        el("span", { className: "user-name", text: session?.subject ?? "—" }),
         el("small", { text: session ? `${session.org_id} · ${session.roles.join(", ")}` : "" }),
         button("로그아웃", () => void this.auth.logout(), "quiet"),
       ),
@@ -387,8 +452,10 @@ export class WorkbenchApp {
 
   private renderUatRuntimeBanner(): HTMLElement {
     const metadata = this.state.uatMetadata;
-    const modeLabel = this.state.uatMetadataVerified ? humanize(metadata.mode) : "UNKNOWN — METADATA UNAVAILABLE";
-    const actualThreeLawRag = metadata.evidence_profile === "preserved-3law-v3-diagnostic"
+    const metadataVerified = this.state.uatMetadataVerified;
+    const modeLabel = metadataVerified ? humanize(metadata.mode) : "UNKNOWN — METADATA UNAVAILABLE";
+    const actualThreeLawRag = metadataVerified
+      && metadata.evidence_profile === "preserved-3law-v3-diagnostic"
       && metadata.evidence_scope_label === "ACTUAL_3_LAW_RAG_3_OF_58";
     const evidenceScopeLabel = actualThreeLawRag
       ? "ACTUAL 3-LAW RAG · 3 OF 58"
@@ -398,6 +465,14 @@ export class WorkbenchApp {
     const scopeIsPartial = actualThreeLawRag;
     const dataset = metadata.evidence_dataset;
     const unsafe = metadata.auto_completion_enabled || metadata.production_release || !metadata.text_only;
+    const runtimeState = !metadataVerified ? "unknown" : unsafe ? "unsafe" : "safe";
+    const boundaryTitle = runtimeState === "unknown"
+      ? "실행 환경 확인 불가 · 결과 사용 중지 · NOT PRODUCTION"
+      : runtimeState === "unsafe"
+        ? "UAT 안전 경계 위반 · 결과 사용 금지 · NOT PRODUCTION"
+        : actualThreeLawRag
+          ? "ACTUAL 3-LAW RAG · 3 OF 58 · DIAGNOSTIC · TEXT ONLY · AUTO OFF · NOT PRODUCTION"
+          : "LOCAL UAT / DIAGNOSTIC · TEXT ONLY · NOT PRODUCTION";
     const profileCard = (
       profile: "synthetic-v3" | "preserved-3law-v3-diagnostic",
       title: string,
@@ -422,81 +497,114 @@ export class WorkbenchApp {
     return el(
       "section",
       {
-        className: `uat-runtime-banner${unsafe ? " uat-runtime-banner--unsafe" : ""}${actualThreeLawRag ? " uat-runtime-banner--actual-rag" : ""}`,
+        className: `uat-runtime-banner uat-runtime-banner--${runtimeState}${actualThreeLawRag ? " uat-runtime-banner--actual-rag" : ""}`,
         attrs: {
-          role: unsafe ? "alert" : "status",
+          role: runtimeState === "safe" ? "status" : "alert",
           "aria-label": "LOCAL UAT 실행 경계",
           "data-uat-metadata": this.state.uatMetadataVerified ? "verified" : "unknown",
           "data-active-evidence-profile": metadata.evidence_profile,
         },
       },
-      el("strong", {
-        text: actualThreeLawRag
-          ? "ACTUAL 3-LAW RAG · 3 OF 58 · DIAGNOSTIC · TEXT ONLY · AUTO OFF · NOT PRODUCTION"
-          : "LOCAL UAT / DIAGNOSTIC · TEXT ONLY · NOT PRODUCTION",
-      }),
       el(
         "div",
-        { className: "uat-runtime-facts" },
-        el("span", { text: `Runtime: ${modeLabel}` }),
-        el("span", { text: `Claude: ${humanize(metadata.claude_mode)}` }),
-        el("span", {
-          className: scopeIsPartial ? "uat-runtime-fact--warning" : "",
-          text: `Evidence: ${humanize(metadata.evidence_profile)} · ${evidenceScopeLabel}`,
-        }),
-        el("span", {
-          className: scopeIsPartial ? "uat-runtime-fact--warning" : "",
-          text: `Data: ${dataset.observed_law_count}/${dataset.expected_production_law_count} laws · ${dataset.observed_article_count} articles`,
-        }),
-        el("span", {
-          className: "uat-runtime-fact--warning",
-          text: `RAG quality evaluated: ${dataset.rag_quality_evaluated ? "YES" : "NO"}`,
-        }),
-        el("span", { text: `Review 기준일: ${metadata.supported_review_as_of ?? "UNKNOWN"}` }),
-        el("span", { text: `Planner: ${humanize(metadata.planner_mode)}` }),
-        el("span", {
-          className: metadata.auto_completion_enabled ? "uat-runtime-fact--danger" : "",
-          text: `Auto-completion: ${metadata.auto_completion_enabled ? "UNSAFE ON" : "OFF"}`,
-        }),
-        el("span", { text: `Assurance ceiling: ${humanize(metadata.assurance_ceiling)}` }),
+        { className: "uat-runtime-summary" },
+        el(
+          "div",
+          { className: "uat-runtime-heading" },
+          el("span", { className: "runtime-status-dot", attrs: { "aria-hidden": "true" } }),
+          el(
+            "div",
+            {},
+            el("span", { className: "uat-runtime-heading__label", text: "현재 검증 환경" }),
+            el("strong", { text: boundaryTitle }),
+          ),
+        ),
+        el(
+          "div",
+          { className: "uat-runtime-core-facts" },
+          el("span", { text: metadataVerified
+            ? metadata.claude_mode === "actual" ? "Claude 실제 호출" : `Claude ${humanize(metadata.claude_mode)}`
+            : "Claude 상태 미확인" }),
+          el("span", { text: metadataVerified
+            ? actualThreeLawRag ? "실제 3법령 RAG" : "합성 Evidence"
+            : "Evidence 상태 미확인" }),
+          el("span", { text: metadataVerified
+            ? `${dataset.observed_law_count}/${dataset.expected_production_law_count} 법령`
+            : "법령 범위 미확인" }),
+          el("span", { text: metadataVerified
+            ? metadata.auto_completion_enabled ? "자동완료 ON" : "자동완료 OFF"
+            : "자동완료 상태 미확인" }),
+        ),
       ),
       el(
-        "div",
-        { className: "uat-profile-grid", attrs: { "aria-label": "Evidence 실행 프로필" } },
-        profileCard(
-          "synthetic-v3",
-          "Synthetic V3",
-          "실제 HTTP 계약·XAI·Chat·HITL 사용자 흐름을 검증하지만 Data DB 검색은 수행하지 않습니다.",
+        "details",
+        { className: "uat-environment-details" },
+        el("summary", { text: "실행 환경 및 안전 경계 상세" }),
+        el(
+          "div",
+          { className: "uat-runtime-facts" },
+          el("span", { text: `Runtime: ${modeLabel}` }),
+          el("span", { text: `Claude: ${humanize(metadata.claude_mode)}` }),
+          el("span", {
+            className: scopeIsPartial ? "uat-runtime-fact--warning" : "",
+            text: `Evidence: ${humanize(metadata.evidence_profile)} · ${evidenceScopeLabel}`,
+          }),
+          el("span", {
+            className: scopeIsPartial ? "uat-runtime-fact--warning" : "",
+            text: `Data: ${dataset.observed_law_count}/${dataset.expected_production_law_count} laws · ${dataset.observed_article_count} articles`,
+          }),
+          el("span", {
+            className: "uat-runtime-fact--warning",
+            text: `RAG quality evaluated: ${dataset.rag_quality_evaluated ? "YES" : "NO"}`,
+          }),
+          el("span", { text: `Review 기준일: ${metadata.supported_review_as_of ?? "UNKNOWN"}` }),
+          el("span", { text: `Planner: ${humanize(metadata.planner_mode)}` }),
+          el("span", {
+            className: metadata.auto_completion_enabled ? "uat-runtime-fact--danger" : "",
+            text: `Auto-completion: ${metadata.auto_completion_enabled ? "UNSAFE ON" : "OFF"}`,
+          }),
+          el("span", { text: `Assurance ceiling: ${humanize(metadata.assurance_ceiling)}` }),
         ),
-        profileCard(
-          "preserved-3law-v3-diagnostic",
-          "Actual 3-Law RAG",
-          "보존 PostgreSQL structured lookup, Qdrant dense/BM25, Neo4j graph 확장을 실제 실행합니다.",
+        el(
+          "div",
+          { className: "uat-profile-grid", attrs: { "aria-label": "Evidence 실행 프로필" } },
+          profileCard(
+            "synthetic-v3",
+            "Synthetic V3",
+            "실제 HTTP 계약·XAI·Chat·HITL 사용자 흐름을 검증하지만 Data DB 검색은 수행하지 않습니다.",
+          ),
+          profileCard(
+            "preserved-3law-v3-diagnostic",
+            "Actual 3-Law RAG",
+            "보존 PostgreSQL structured lookup, Qdrant dense/BM25, Neo4j graph 확장을 실제 실행합니다.",
+          ),
         ),
+        el("p", {
+          className: "uat-profile-note",
+          text: "Evidence 프로필은 Review별 선택값이 아니라 UAT 시작 시 결박되는 실행 환경입니다. 다른 프로필은 Harness로 UAT를 재시작해야 하며 임의 URL이나 credential은 브라우저에서 입력할 수 없습니다.",
+        }),
+        actualThreeLawRag
+          ? el(
+              "dl",
+              { className: "uat-store-counts", attrs: { "aria-label": "실제 Data 저장소 관측값" } },
+              el("dt", { text: "Data source" }),
+              el("dd", { text: dataset.data_source }),
+              el("dt", { text: "PostgreSQL" }),
+              el("dd", { text: `${dataset.store_counts.postgresql_article_count} articles` }),
+              el("dt", { text: "Qdrant" }),
+              el("dd", { text: `${dataset.store_counts.qdrant_point_count} points` }),
+              el("dt", { text: "Neo4j" }),
+              el("dd", { text: `${dataset.store_counts.neo4j_article_count} articles` }),
+            )
+          : null,
+        runtimeState === "unknown"
+          ? el("p", { className: "notice notice--danger", text: "Backend 실행 metadata를 검증하지 못했습니다. 환경을 복구하기 전에는 심사 결과를 사용하지 마세요." })
+          : unsafe
+          ? el("p", { className: "notice notice--danger", text: "UAT 안전 불변식이 깨졌습니다. 이 화면의 결과를 신뢰하거나 Production 근거로 사용하지 마세요." })
+          : actualThreeLawRag
+            ? el("p", { className: "uat-scope-warning", text: "실제 검색 경로의 기능 진단입니다. 55개 법령이 누락되어 전체 법적 coverage와 Production RAG 품질은 입증하지 않습니다." })
+            : el("p", { className: "uat-scope-warning", text: "시나리오 기능 PASS는 업무 disposition 또는 Production 승인과 별개입니다." }),
       ),
-      el("p", {
-        className: "uat-profile-note",
-        text: "Evidence 프로필은 Review별 선택값이 아니라 UAT 시작 시 결박되는 실행 환경입니다. 다른 프로필은 Harness로 UAT를 재시작해야 하며 임의 URL이나 credential은 브라우저에서 입력할 수 없습니다.",
-      }),
-      actualThreeLawRag
-        ? el(
-            "dl",
-            { className: "uat-store-counts", attrs: { "aria-label": "실제 Data 저장소 관측값" } },
-            el("dt", { text: "Data source" }),
-            el("dd", { text: dataset.data_source }),
-            el("dt", { text: "PostgreSQL" }),
-            el("dd", { text: `${dataset.store_counts.postgresql_article_count} articles` }),
-            el("dt", { text: "Qdrant" }),
-            el("dd", { text: `${dataset.store_counts.qdrant_point_count} points` }),
-            el("dt", { text: "Neo4j" }),
-            el("dd", { text: `${dataset.store_counts.neo4j_article_count} articles` }),
-          )
-        : null,
-      unsafe
-        ? el("p", { text: "UAT 안전 불변식이 깨졌습니다. 이 화면의 결과를 신뢰하거나 Production 근거로 사용하지 마세요." })
-        : actualThreeLawRag
-          ? el("p", { text: "실제 검색 경로의 기능 진단입니다. 55개 법령이 누락되어 전체 법적 coverage와 Production RAG 품질은 입증하지 않습니다." })
-          : el("p", { text: "시나리오 기능 PASS는 업무 disposition 또는 Production 승인과 별개입니다." }),
     );
   }
 
@@ -580,6 +688,24 @@ export class WorkbenchApp {
   }
 
   private renderSidebar(): HTMLElement {
+    const caseSearch = el("input", {
+      attrs: {
+        type: "search",
+        placeholder: "현재 목록에서 제목·참조번호 검색",
+        "aria-label": "현재 Case 목록 검색",
+        autocomplete: "off",
+      },
+      on: {
+        input: (event) => {
+          const query = event.currentTarget instanceof HTMLInputElement
+            ? event.currentTarget.value.trim().toLocaleLowerCase("ko-KR")
+            : "";
+          for (const card of this.root.querySelectorAll<HTMLElement>(".case-card[data-search]")) {
+            card.hidden = query.length > 0 && !String(card.dataset.search ?? "").includes(query);
+          }
+        },
+      },
+    });
     const createForm = el(
       "form",
       {
@@ -619,7 +745,16 @@ export class WorkbenchApp {
     return el(
       "aside",
       { className: "sidebar", attrs: { "aria-label": "Case 탐색" } },
-      el("h2", { text: "Cases" }),
+      el(
+        "div",
+        { className: "sidebar-heading" },
+        el("div", {}, el("p", { className: "eyebrow", text: "REVIEW QUEUE" }), el("h2", { text: "심사 업무함" })),
+        el("span", {
+          className: "case-count",
+          text: `표시 ${this.state.cases.length}건${this.state.caseListHasMore ? "+" : ""}`,
+        }),
+      ),
+      labeledControl("Case 검색", caseSearch),
       el(
         "nav",
         { className: "case-list", attrs: { "aria-label": "Case 목록" } },
@@ -629,10 +764,11 @@ export class WorkbenchApp {
             {
               className: `case-card${this.state.selectedCase?.case_id === item.case_id ? " is-selected" : ""}`,
               attrs: {
-                type: "button",
-                "aria-current": this.state.selectedCase?.case_id === item.case_id ? "page" : "false",
-                ...disabledUnless(!this.state.busy),
-              },
+                 type: "button",
+                 "aria-current": this.state.selectedCase?.case_id === item.case_id ? "page" : "false",
+                 "data-search": `${item.title} ${item.external_reference ?? item.case_id}`.toLocaleLowerCase("ko-KR"),
+                 ...disabledUnless(!this.state.busy),
+               },
               on: { click: () => void this.openCase(item.case_id) },
             },
             el("strong", { text: item.title }),
@@ -641,8 +777,14 @@ export class WorkbenchApp {
           ),
         ),
       ),
-      el("details", {}, el("summary", { text: "새 Case" }), createForm),
-      el("details", {}, el("summary", { text: "UAT 시나리오" }), scenarioForm),
+      this.state.caseListHasMore
+        ? el("p", {
+            className: "section-help",
+            text: "Backend가 추가 Case가 있음을 알렸습니다. 현재 화면은 불러온 목록만 검색·표시합니다.",
+          })
+        : null,
+      el("details", { className: "sidebar-panel sidebar-panel--create" }, el("summary", { text: "새 Case 만들기" }), createForm),
+      el("details", { className: "sidebar-panel sidebar-panel--test-lab" }, el("summary", { text: "Test Lab · UAT 시나리오" }), scenarioForm),
       el("p", { className: "diagnostic-label", text: "UAT 데이터는 합성 자료이며 법적 판단 자료가 아닙니다." }),
       !this.canWrite() ? el("p", { className: "section-help", text: "현재 역할은 읽기 전용이므로 Case나 심사를 생성할 수 없습니다." }) : null,
     );
@@ -652,23 +794,113 @@ export class WorkbenchApp {
     return el(
       "section",
       { className: "welcome" },
-      el("p", { className: "eyebrow", text: "SELECT A CASE" }),
-      el("h1", { text: "Case를 선택하거나 새로 생성하세요." }),
-      el("p", { text: "원문, 추출값, 문서 불일치, Evidence와 사람 결정을 하나의 변경 불가능한 Run 이력으로 검토합니다." }),
+      el(
+        "div",
+        { className: "welcome-hero" },
+        el("p", { className: "eyebrow", text: "REVIEW OPERATIONS" }),
+        el("h1", { text: "오늘의 통관 사전심사를 시작하세요." }),
+        el("p", { className: "welcome-lead", text: "문서 원문, 추출값, 불일치, 법령 Evidence와 사람 결정을 하나의 검증 가능한 Run 이력으로 검토합니다." }),
+        el(
+          "div",
+          { className: "welcome-actions" },
+          el("button", {
+            className: "button button--primary",
+            text: "새 Case 시작",
+            attrs: { type: "button", ...disabledUnless(this.canWrite() && !this.state.busy) },
+            on: {
+              click: () => {
+                const panel = this.root.querySelector<HTMLDetailsElement>(".sidebar-panel--create");
+                if (!panel) return;
+                panel.open = true;
+                panel.querySelector<HTMLInputElement>('input[name="title"]')?.focus();
+              },
+            },
+          }),
+          el("span", { text: `현재 업무함 ${this.state.cases.length}건`, className: "welcome-case-count" }),
+        ),
+      ),
+      el(
+        "div",
+        { className: "welcome-capabilities", attrs: { "aria-label": "주요 심사 기능" } },
+        el(
+          "article",
+          { className: "capability-card" },
+          el("span", { className: "capability-card__index", text: "01" }),
+          el("h2", { text: "문서 준비" }),
+          el("p", { text: "CI·PL·B/L·C/O 텍스트와 요건서류를 Case 단위로 등록합니다." }),
+        ),
+        el(
+          "article",
+          { className: "capability-card" },
+          el("span", { className: "capability-card__index", text: "02" }),
+          el("h2", { text: "AI 사전심사" }),
+          el("p", { text: "Claude 분석, 결정론적 정합성 검증, 법령 Evidence 조회를 실행합니다." }),
+        ),
+        el(
+          "article",
+          { className: "capability-card" },
+          el("span", { className: "capability-card__index", text: "03" }),
+          el("h2", { text: "검토와 결정" }),
+          el("p", { text: "XAI 보고서, 수정 제안, 독립 승인과 재심사 이력을 확인합니다." }),
+        ),
+      ),
+      el(
+        "section",
+        { className: "welcome-guide", attrs: { "aria-labelledby": "welcome-guide-title" } },
+        el("div", {}, el("p", { className: "eyebrow", text: "HOW IT WORKS" }), el("h2", { text: "검증 가능한 3단계 심사 흐름", attrs: { id: "welcome-guide-title" } })),
+        el(
+          "ol",
+          { className: "workflow-guide" },
+          el("li", {}, el("strong", { text: "Case와 문서를 준비합니다." }), el("span", { text: "원문 hash와 문서 유형을 Backend 원장에 보존" })),
+          el("li", {}, el("strong", { text: "Agent가 분석하고 근거를 조회합니다." }), el("span", { text: "분류·추출·검증·Evidence·설명 단계 실행" })),
+          el("li", {}, el("strong", { text: "사람이 확인하고 후속 조치를 결정합니다." }), el("span", { text: "maker-checker 승인과 child Run lineage 유지" })),
+        ),
+      ),
     );
   }
 
   private renderCase(): HTMLElement {
     const caseItem = this.state.selectedCase;
     if (!caseItem) return empty("Case가 선택되지 않았습니다.");
+    const jobIsActive = this.state.job !== undefined
+      && ["queued", "running", "delivery_uncertain"].includes(this.state.job.status);
+    const activeStage = jobIsActive ? 2 : this.state.selectedRun ? 3 : 1;
+    const step = (index: number, title: string, description: string): HTMLElement =>
+      el(
+        "li",
+        {
+          className: `case-step${index < activeStage ? " case-step--complete" : ""}${index === activeStage ? " case-step--active" : ""}`,
+          attrs: { "aria-current": index === activeStage ? "step" : "false" },
+        },
+        el("span", { className: "case-step__number", text: index < activeStage ? "✓" : String(index), attrs: { "aria-hidden": "true" } }),
+        el("div", {}, el("strong", { text: title }), el("small", { text: description })),
+      );
     return el(
       "div",
       { className: "case-workspace" },
       el(
         "section",
         { className: "case-heading" },
-        el("div", {}, el("p", { className: "eyebrow", text: caseItem.external_reference ?? caseItem.case_id }), el("h1", { text: caseItem.title })),
-        el("div", { className: "case-meta", text: `revision ${caseItem.revision} · ${humanize(caseItem.status)}` }),
+        el(
+          "div",
+          { className: "case-heading__title" },
+          el("nav", { className: "breadcrumbs", attrs: { "aria-label": "현재 위치" } }, el("span", { text: "심사 업무함" }), el("span", { text: "/" }), el("span", { text: caseItem.external_reference ?? caseItem.case_id })),
+          el("h1", { text: caseItem.title }),
+          el("p", { text: "문서 준비부터 AI 사전심사, 사람의 최종 검토까지 이 Case의 모든 변경 이력을 관리합니다." }),
+        ),
+        el(
+          "div",
+          { className: "case-heading__meta" },
+          el("span", { className: `case-status case-status--${caseItem.status}`, text: humanize(caseItem.status) }),
+          el("span", { className: "case-meta", text: `Revision ${caseItem.revision}` }),
+        ),
+      ),
+      el(
+        "ol",
+        { className: "case-stepper", attrs: { "aria-label": "Case 심사 진행 단계" } },
+        step(1, "문서 준비", "원문과 요건서류 등록"),
+        step(2, "AI 사전심사", "분석·정합성·Evidence 조회"),
+        step(3, "검토와 결정", "보고서·HITL·이력 확인"),
       ),
       el("div", { className: "text-only-boundary", text: "현재 Release는 텍스트 문서만 처리합니다. PDF·이미지·OCR 업로드는 차단되어 있습니다." }),
       this.renderInputAndRun(),
@@ -951,6 +1183,16 @@ export class WorkbenchApp {
     return el(
       "div",
       { className: "review-stack" },
+      el(
+        "nav",
+        { className: "review-section-nav", attrs: { "aria-label": "심사 결과 섹션" } },
+        el("a", { text: "판정 요약", attrs: { href: "#review-summary" } }),
+        el("a", { text: "통합 검토", attrs: { href: "#review-workspace" } }),
+        el("a", { text: "사전심사 보고서", attrs: { href: "#review-report" } }),
+        el("a", { text: "사람 검토", attrs: { href: "#review-actions" } }),
+        el("a", { text: "Case Chat", attrs: { href: "#review-chat" } }),
+        el("a", { text: "이력·감사", attrs: { href: "#review-history" } }),
+      ),
       this.renderStatus(run),
       this.renderUatAssertion(run),
       this.renderRequiredActions(run.required_actions),
@@ -992,7 +1234,7 @@ export class WorkbenchApp {
     };
     return el(
       "section",
-      { className: "status-grid", attrs: { "aria-label": "분리된 심사 상태" } },
+      { className: "status-grid", attrs: { id: "review-summary", "aria-label": "분리된 심사 상태" } },
       badge("Agent 심사 완결성", run.execution_status, tone(run.execution_status)),
       badge("문서·규정 평가", run.assessment, tone(run.assessment)),
       badge("업무 처리", run.review_disposition, tone(run.review_disposition)),
@@ -1553,7 +1795,7 @@ export class WorkbenchApp {
     );
     return el(
       "section",
-      { className: "three-pane", attrs: { "aria-label": "통합 심사 화면" } },
+      { className: "three-pane", attrs: { id: "review-workspace", "aria-label": "통합 심사 화면" } },
       el(
         "article",
         { className: "review-pane" },
@@ -1848,7 +2090,12 @@ export class WorkbenchApp {
 
   private renderNarrative(run: ReviewRun): HTMLElement {
     const report = run.narrative_report;
-    if (!report) return el("section", { className: "card" }, el("h2", { text: "사용자용 XAI 보고서" }), empty("근거 결박 보고서가 생성되지 않았습니다."));
+    if (!report) return el(
+      "section",
+      { className: "card", attrs: { id: "review-report", "aria-labelledby": "report-title" } },
+      el("h2", { text: "사용자용 XAI 보고서", attrs: { id: "report-title" } }),
+      empty("근거 결박 보고서가 생성되지 않았습니다."),
+    );
     const section = (title: string, claims: NarrativeClaim[] | undefined): HTMLElement =>
       el(
         "section",
@@ -1858,7 +2105,7 @@ export class WorkbenchApp {
       );
     return el(
       "section",
-      { className: "card report", attrs: { "aria-labelledby": "report-title" } },
+      { className: "card report", attrs: { id: "review-report", "aria-labelledby": "report-title" } },
       el(
         "div",
         { className: "section-title-row" },
@@ -1984,7 +2231,7 @@ export class WorkbenchApp {
     };
     return el(
       "section",
-      { className: "card", attrs: { "aria-labelledby": "hitl-title" } },
+      { className: "card", attrs: { id: "review-actions", "aria-labelledby": "hitl-title" } },
       el("h2", { text: "사람 검토 · 수정 · 재심사", attrs: { id: "hitl-title" } }),
       el("p", { className: "section-help", text: "원본 Run은 변경하지 않습니다. Reviewer는 확인·수정·서류추가·승인/거절을 typed proposal로만 제안하고, 다른 Approver가 parent digest와 Case revision을 재검증해야 child Run이 생성됩니다." }),
       el(
@@ -2050,7 +2297,7 @@ export class WorkbenchApp {
     );
     return el(
       "section",
-      { className: "card", attrs: { "aria-labelledby": "chat-title" } },
+      { className: "card", attrs: { id: "review-chat", "aria-labelledby": "chat-title" } },
       el("h2", { text: "Evidence-bound Case Chat", attrs: { id: "chat-title" } }),
       el("p", { className: "section-help", text: "현재 Run과 Knowledge snapshot 밖의 질문은 거절됩니다. 답변은 심사 결과를 변경하지 않습니다." }),
       el(
@@ -2105,7 +2352,7 @@ export class WorkbenchApp {
   private renderHistory(run: ReviewRun): HTMLElement {
     return el(
       "section",
-      { className: "history-grid" },
+      { className: "history-grid", attrs: { id: "review-history" } },
       el(
         "article",
         { className: "card" },
@@ -3186,7 +3433,9 @@ export class WorkbenchApp {
   }
 
   private async refreshCases(): Promise<void> {
-    this.state.cases = (await this.api.listCases()).items;
+    const page = await this.api.listCases();
+    this.state.cases = page.items;
+    this.state.caseListHasMore = typeof page.next_cursor === "string" && page.next_cursor.length > 0;
     const session = this.requireSession();
     if (this.state.cases.some((item) => item.org_id !== session.org_id)) {
       throw new Error("Backend Case 목록에 다른 조직의 항목이 포함되었습니다.");
