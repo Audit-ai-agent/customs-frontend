@@ -234,6 +234,15 @@ export class WorkbenchApp {
     uatMetadataVerified: false,
   };
   private pollTimer: number | undefined;
+  private pollFlight:
+    | {
+        jobId: string;
+        lifecycleEpoch: number;
+        promise: Promise<void>;
+      }
+    | undefined;
+  private destroyed = false;
+  private lifecycleEpoch = 0;
   private trackedJobId: string | undefined;
   private jobTrackingStartedAtMs: number | undefined;
   private transientPollFailures = 0;
@@ -253,6 +262,7 @@ export class WorkbenchApp {
   }
 
   async start(): Promise<void> {
+    if (this.destroyed) return;
     if (!this.auth.isAuthenticated()) {
       this.renderLogin();
       return;
@@ -290,8 +300,12 @@ export class WorkbenchApp {
   }
 
   destroy(): void {
-    if (this.pollTimer !== undefined) window.clearTimeout(this.pollTimer);
+    if (this.destroyed) return;
+    this.destroyed = true;
+    this.lifecycleEpoch += 1;
+    this.cancelPollTimer();
     this.streamAbort?.abort();
+    this.streamAbort = undefined;
     this.resetJobTracking();
   }
 
@@ -324,6 +338,7 @@ export class WorkbenchApp {
   }
 
   private render(): void {
+    if (this.destroyed) return;
     if (!this.state.session) {
       this.renderLogin();
       return;
@@ -2411,9 +2426,35 @@ export class WorkbenchApp {
     };
   }
 
-  private schedulePoll(jobId: string, delayMs = 1_000): void {
-    if (this.pollTimer !== undefined) window.clearTimeout(this.pollTimer);
-    this.pollTimer = window.setTimeout(() => void this.pollJob(jobId), delayMs);
+  private cancelPollTimer(): void {
+    if (this.pollTimer === undefined) return;
+    window.clearTimeout(this.pollTimer);
+    this.pollTimer = undefined;
+  }
+
+  private invalidateJobLifecycle(): number {
+    this.lifecycleEpoch += 1;
+    this.cancelPollTimer();
+    this.streamAbort?.abort();
+    this.streamAbort = undefined;
+    return this.lifecycleEpoch;
+  }
+
+  private isJobLifecycleActive(lifecycleEpoch: number): boolean {
+    return !this.destroyed && this.lifecycleEpoch === lifecycleEpoch;
+  }
+
+  private schedulePoll(jobId: string, delayMs = 1_000, lifecycleEpoch = this.lifecycleEpoch): void {
+    this.cancelPollTimer();
+    if (!this.isJobLifecycleActive(lifecycleEpoch)) return;
+    const timer = window.setTimeout(() => {
+      if (this.pollTimer === timer) this.pollTimer = undefined;
+      if (!this.isJobLifecycleActive(lifecycleEpoch)) return;
+      void this.pollJob(jobId, lifecycleEpoch).catch((error: unknown) => {
+        if (this.isJobLifecycleActive(lifecycleEpoch)) this.showError(error);
+      });
+    }, delayMs);
+    this.pollTimer = timer;
   }
 
   private beginJobTracking(jobId: string, force = false): void {
@@ -2617,7 +2658,13 @@ export class WorkbenchApp {
     this.removeDeliveryReconciliationRecovery(job.job_id);
   }
 
-  private mergeStageEvent(event: ReviewStageEvent): void {
+  private mergeStageEvent(event: ReviewStageEvent, jobId: string, lifecycleEpoch: number): void {
+    if (
+      !this.isJobLifecycleActive(lifecycleEpoch)
+      || this.state.job?.job_id !== jobId
+    ) {
+      return;
+    }
     const existing = this.state.liveStages.findIndex((item) => item.event_id === event.event_id);
     if (existing >= 0) this.state.liveStages[existing] = event;
     else this.state.liveStages.push(event);
@@ -2626,38 +2673,87 @@ export class WorkbenchApp {
   }
 
   private async startJobTracking(jobId: string): Promise<void> {
+    if (this.destroyed) return;
+    const lifecycleEpoch = this.invalidateJobLifecycle();
     this.beginJobTracking(jobId);
-    this.streamAbort?.abort();
     this.streamAbort = new AbortController();
+    const streamAbort = this.streamAbort;
     try {
-      this.state.liveStages = await this.api.listJobEvents(jobId);
+      const liveStages = await this.api.listJobEvents(jobId);
+      if (!this.isJobLifecycleActive(lifecycleEpoch)) return;
+      this.state.liveStages = liveStages;
     } catch (error) {
+      if (!this.isJobLifecycleActive(lifecycleEpoch)) return;
       // Stage events are an observability channel. A transient event-endpoint
       // failure must not hide or cancel the authoritative Job state machine.
       if (error instanceof ApiError && error.status === 401) throw error;
       this.state.liveStages = [];
     }
-    void this.consumeStageStream(jobId, this.streamAbort.signal);
-    this.schedulePoll(jobId);
+    if (!this.isJobLifecycleActive(lifecycleEpoch)) return;
+    void this.consumeStageStream(jobId, streamAbort.signal, lifecycleEpoch);
+    this.schedulePoll(jobId, 1_000, lifecycleEpoch);
   }
 
-  private async consumeStageStream(jobId: string, signal: AbortSignal): Promise<void> {
-    while (!signal.aborted && this.state.job?.job_id === jobId && this.jobNeedsPolling()) {
+  private async consumeStageStream(
+    jobId: string,
+    signal: AbortSignal,
+    lifecycleEpoch: number,
+  ): Promise<void> {
+    while (
+      this.isJobLifecycleActive(lifecycleEpoch)
+      && !signal.aborted
+      && this.state.job?.job_id === jobId
+      && this.jobNeedsPolling()
+    ) {
       try {
-        await this.api.streamJobEvents(jobId, (event) => this.mergeStageEvent(event), signal);
+        await this.api.streamJobEvents(
+          jobId,
+          (event) => this.mergeStageEvent(event, jobId, lifecycleEpoch),
+          signal,
+        );
+        if (!this.isJobLifecycleActive(lifecycleEpoch)) return;
       } catch (error) {
-        if (signal.aborted) return;
+        if (!this.isJobLifecycleActive(lifecycleEpoch) || signal.aborted) return;
         if (error instanceof ApiError && error.status === 401) {
           this.showError(error);
           return;
         }
       }
-      if (!signal.aborted && this.jobNeedsPolling()) await new Promise((resolve) => window.setTimeout(resolve, 750));
+      if (
+        this.isJobLifecycleActive(lifecycleEpoch)
+        && !signal.aborted
+        && this.jobNeedsPolling()
+      ) {
+        await new Promise((resolve) => window.setTimeout(resolve, 750));
+        if (!this.isJobLifecycleActive(lifecycleEpoch)) return;
+      }
     }
   }
 
-  private async pollJob(jobId: string): Promise<void> {
-    this.pollTimer = undefined;
+  private async pollJob(jobId: string, lifecycleEpoch = this.lifecycleEpoch): Promise<void> {
+    this.cancelPollTimer();
+    if (!this.isJobLifecycleActive(lifecycleEpoch)) return;
+    const existingFlight = this.pollFlight;
+    if (
+      existingFlight
+      && existingFlight.jobId === jobId
+      && existingFlight.lifecycleEpoch === lifecycleEpoch
+    ) {
+      await existingFlight.promise;
+      return;
+    }
+    const promise = this.runPollJob(jobId, lifecycleEpoch);
+    const flight = { jobId, lifecycleEpoch, promise };
+    this.pollFlight = flight;
+    try {
+      await promise;
+    } finally {
+      if (this.pollFlight === flight) this.pollFlight = undefined;
+    }
+  }
+
+  private async runPollJob(jobId: string, lifecycleEpoch: number): Promise<void> {
+    if (!this.isJobLifecycleActive(lifecycleEpoch)) return;
     const selectedCaseId = this.state.selectedCase?.case_id;
     const selectedRecovery = selectedCaseId ? this.recoveryByCase.get(selectedCaseId) : undefined;
     const trackedJobId = this.state.job?.job_id ?? selectedRecovery?.job_id;
@@ -2665,6 +2761,7 @@ export class WorkbenchApp {
     this.beginJobTracking(jobId);
     try {
       const job = await this.api.getJob(jobId);
+      if (!this.isJobLifecycleActive(lifecycleEpoch)) return;
       if (job.job_id !== jobId || job.case_id !== selectedCaseId) {
         throw new Error("Backend Job이 현재 Case의 추적 대상과 일치하지 않습니다.");
       }
@@ -2676,8 +2773,11 @@ export class WorkbenchApp {
       this.state.job = job;
       this.transientPollFailures = 0;
       try {
-        this.state.liveStages = await this.api.listJobEvents(jobId);
+        const liveStages = await this.api.listJobEvents(jobId);
+        if (!this.isJobLifecycleActive(lifecycleEpoch)) return;
+        this.state.liveStages = liveStages;
       } catch (error) {
+        if (!this.isJobLifecycleActive(lifecycleEpoch)) return;
         if (error instanceof ApiError && error.status === 401) throw error;
         // Polling Job status remains authoritative when the optional event
         // ledger is temporarily unavailable.
@@ -2689,17 +2789,19 @@ export class WorkbenchApp {
           this.render();
           return;
         }
-        await this.handleTerminalJob(job);
+        await this.handleTerminalJob(job, lifecycleEpoch);
         return;
       }
       if (job.status === "failed" || job.status === "delivery_uncertain") {
-        await this.handleTerminalJob(job);
+        await this.handleTerminalJob(job, lifecycleEpoch);
         return;
       }
+      if (!this.isJobLifecycleActive(lifecycleEpoch)) return;
       if (this.stopIfJobTrackingExpired(jobId)) return;
       this.render();
-      this.schedulePoll(jobId);
+      this.schedulePoll(jobId, 1_000, lifecycleEpoch);
     } catch (error) {
+      if (!this.isJobLifecycleActive(lifecycleEpoch)) return;
       const transient = isTransientJobPollingError(error);
       if (transient && this.stopIfJobTrackingExpired(jobId)) return;
       if (transient && this.transientPollFailures < MAX_TRANSIENT_POLL_FAILURES) {
@@ -2707,7 +2809,7 @@ export class WorkbenchApp {
         const delay = Math.min(2 ** (this.transientPollFailures - 1) * 1_000, MAX_POLL_DELAY_MS);
         this.state.notice = `Job 상태 조회가 일시적으로 실패했습니다. ${Math.ceil(delay / 1_000)}초 후 저장된 Job에 재연결합니다 (${this.transientPollFailures}/${MAX_TRANSIENT_POLL_FAILURES}).`;
         this.render();
-        this.schedulePoll(jobId, delay);
+        this.schedulePoll(jobId, delay, lifecycleEpoch);
         return;
       }
       if (transient) {
@@ -2719,7 +2821,9 @@ export class WorkbenchApp {
     }
   }
 
-  private async handleTerminalJob(job: JobRecord): Promise<void> {
+  private async handleTerminalJob(job: JobRecord, lifecycleEpoch = this.lifecycleEpoch): Promise<void> {
+    if (!this.isJobLifecycleActive(lifecycleEpoch)) return;
+    this.cancelPollTimer();
     this.streamAbort?.abort();
     this.resetJobTracking(job.job_id);
     const recovery = this.recoveryByCase.get(job.case_id);
@@ -2727,8 +2831,11 @@ export class WorkbenchApp {
     if (job.status === "succeeded") {
       this.clearIdempotencyKeysForJob(job);
       if (job.review_run_id) {
-        await this.selectRun(job.review_run_id);
-        if (this.state.selectedCase) await this.selectCase(this.state.selectedCase.case_id, job.review_run_id);
+        await this.selectRun(job.review_run_id, lifecycleEpoch);
+        if (!this.isJobLifecycleActive(lifecycleEpoch)) return;
+        if (this.state.selectedCase) {
+          await this.selectCase(this.state.selectedCase.case_id, job.review_run_id);
+        }
       }
       return;
     }
@@ -3105,8 +3212,8 @@ export class WorkbenchApp {
   }
 
   private async selectCase(caseId: string, preferredRunId?: string): Promise<void> {
-    if (this.pollTimer !== undefined) window.clearTimeout(this.pollTimer);
-    this.streamAbort?.abort();
+    if (this.destroyed) return;
+    const lifecycleEpoch = this.invalidateJobLifecycle();
     this.state.job = undefined;
     this.state.liveStages = [];
     this.resetJobTracking();
@@ -3118,6 +3225,7 @@ export class WorkbenchApp {
       this.api.listReviewRuns(caseId),
       this.api.getAuditEvents(caseId),
     ]);
+    if (!this.isJobLifecycleActive(lifecycleEpoch)) return;
     const documents = await Promise.all(documentRecords.map(async (record) => {
       if (record.document_type === "SUPPORTING" || record.content_text !== undefined) return record;
       const hydrated = await this.api.getDocumentContent(caseId, record.document_id);
@@ -3135,6 +3243,7 @@ export class WorkbenchApp {
       }
       return hydrated;
     }));
+    if (!this.isJobLifecycleActive(lifecycleEpoch)) return;
     this.assertCaseAggregate(caseId, caseDetail, documents, supportingDocuments, runs, audit);
     this.state.selectedCase = { ...caseDetail, documents, runs };
     this.state.documents = documents;
@@ -3143,7 +3252,10 @@ export class WorkbenchApp {
     this.state.audit = audit;
     this.state.selectedDocumentId = documents[0]?.document_id;
     const runId = preferredRunId ?? runs[0]?.review_run_id;
-    if (runId) await this.selectRun(runId);
+    if (runId) {
+      await this.selectRun(runId, lifecycleEpoch);
+      if (!this.isJobLifecycleActive(lifecycleEpoch)) return;
+    }
     else {
       this.state.selectedRun = undefined;
       this.state.parentRun = undefined;
@@ -3183,8 +3295,20 @@ export class WorkbenchApp {
     }
   }
 
-  private async selectRun(runId: string): Promise<void> {
+  private async selectRun(runId: string, lifecycleEpoch?: number): Promise<void> {
+    if (
+      this.destroyed
+      || (lifecycleEpoch !== undefined && !this.isJobLifecycleActive(lifecycleEpoch))
+    ) {
+      return;
+    }
     const run = await this.api.getReviewRun(runId);
+    if (
+      this.destroyed
+      || (lifecycleEpoch !== undefined && !this.isJobLifecycleActive(lifecycleEpoch))
+    ) {
+      return;
+    }
     const current = this.state.selectedCase;
     const session = this.requireSession();
     if (!current || run.review_run_id !== runId || run.case_id !== current.case_id || run.org_id !== session.org_id) {
@@ -3196,6 +3320,12 @@ export class WorkbenchApp {
       this.api.listRevisionProposals(runId),
       run.parent_run_id ? this.api.getReviewRun(run.parent_run_id) : Promise.resolve(undefined),
     ]);
+    if (
+      this.destroyed
+      || (lifecycleEpoch !== undefined && !this.isJobLifecycleActive(lifecycleEpoch))
+    ) {
+      return;
+    }
     if (run.parent_run_id) {
       const parentSummary = this.state.runs.find((item) => item.review_run_id === run.parent_run_id);
       if (
@@ -3410,6 +3540,7 @@ export class WorkbenchApp {
   }
 
   private async act(action: () => Promise<void>): Promise<void> {
+    if (this.destroyed) return;
     this.state.busy = true;
     this.state.error = undefined;
     this.state.notice = undefined;
@@ -3419,12 +3550,15 @@ export class WorkbenchApp {
     } catch (error) {
       this.showError(error, false);
     } finally {
-      this.state.busy = false;
-      this.render();
+      if (!this.destroyed) {
+        this.state.busy = false;
+        this.render();
+      }
     }
   }
 
   private showError(error: unknown, render = true): void {
+    if (this.destroyed) return;
     if (error instanceof ApiError) {
       const suffix = error.requestId ? ` (요청 ${error.requestId})` : "";
       this.state.error = `${error.message}${suffix}`;

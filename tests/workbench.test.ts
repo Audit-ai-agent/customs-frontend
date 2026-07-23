@@ -1669,6 +1669,70 @@ describe("review workbench", () => {
     now.mockRestore();
   });
 
+  it("cancels the reserved timer, single-flights the same Job, and discards a response after destroy", async () => {
+    const root = document.createElement("div");
+    document.body.append(root);
+    seedRecovery("reviewer-1", {
+      case_id: "case-1",
+      case_revision: 1,
+      job_id: "job-disposed",
+      idempotency_key: crypto.randomUUID(),
+    });
+    const api = fakeApi();
+    vi.mocked(api.getJob).mockResolvedValueOnce({
+      ...jobRecord("job-disposed"),
+      status: "running",
+      agent_call_state: "started",
+    });
+    const app = new WorkbenchApp(root, api, auth(true));
+    await app.start();
+    [...root.querySelectorAll<HTMLButtonElement>("button")]
+      .find((item) => item.textContent?.includes("<img src=x"))
+      ?.click();
+    await vi.waitFor(() => expect(api.listJobEvents).toHaveBeenCalledWith("job-disposed"));
+
+    const tracked = app as unknown as {
+      pollJob(jobId: string): Promise<void>;
+      pollTimer: number | undefined;
+      pollFlight: unknown;
+      state: { job: JobRecord | undefined };
+    };
+    const reservedTimer = tracked.pollTimer;
+    expect(reservedTimer).toBeDefined();
+    const clearTimeout = vi.spyOn(window, "clearTimeout");
+    let resolveLateJob!: (job: JobRecord) => void;
+    vi.mocked(api.getJob).mockImplementation(
+      () => new Promise<JobRecord>((resolve) => {
+        resolveLateJob = resolve;
+      }),
+    );
+
+    const firstPoll = tracked.pollJob("job-disposed");
+    const secondPoll = tracked.pollJob("job-disposed");
+    expect(clearTimeout).toHaveBeenCalledWith(reservedTimer);
+    expect(api.getJob).toHaveBeenCalledTimes(2);
+    const htmlBeforeDestroy = root.innerHTML;
+    const statusBeforeDestroy = tracked.state.job?.status;
+
+    app.destroy();
+    resolveLateJob({
+      ...jobRecord("job-disposed"),
+      status: "failed",
+      agent_call_state: "delivery_reconciled",
+      error_code: "late-response-must-be-discarded",
+    });
+    await Promise.all([firstPoll, secondPoll]);
+    await Promise.resolve();
+
+    expect(api.getJob).toHaveBeenCalledTimes(2);
+    expect(api.listJobEvents).toHaveBeenCalledTimes(1);
+    expect(tracked.pollTimer).toBeUndefined();
+    expect(tracked.pollFlight).toBeUndefined();
+    expect(tracked.state.job?.status).toBe(statusBeforeDestroy);
+    expect(root.innerHTML).toBe(htmlBeforeDestroy);
+    clearTimeout.mockRestore();
+  });
+
   it("binds confirm, supporting-document, and terminal actions to typed revision proposals", async () => {
     const root = document.createElement("div");
     document.body.append(root);
