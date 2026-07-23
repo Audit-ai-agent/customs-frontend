@@ -37,6 +37,7 @@ import {
   localUatScenarioExternalReference,
   localUatScenarioInputManifest,
   UAT_SCENARIOS,
+  type LocalUatEvidenceProfile,
   type LocalUatInputManifest,
   type LocalUatModelExecutionExpectation,
   type LocalUatScenario,
@@ -60,6 +61,18 @@ interface UatRuntimeDisplayMetadata {
   claude_mode: string;
   evidence_profile: string;
   evidence_scope_label: string;
+  evidence_dataset: {
+    data_source: string;
+    expected_production_law_count: number;
+    observed_law_count: number;
+    observed_article_count: number;
+    store_counts: {
+      postgresql_article_count: number;
+      qdrant_point_count: number;
+      neo4j_article_count: number;
+    };
+    rag_quality_evaluated: false;
+  };
   supported_review_as_of: string | null;
   planner_mode: string;
   production_release: boolean;
@@ -75,6 +88,18 @@ const SAFE_UNKNOWN_UAT_METADATA: UatRuntimeDisplayMetadata = Object.freeze({
   claude_mode: "unknown",
   evidence_profile: "unknown",
   evidence_scope_label: "UNKNOWN",
+  evidence_dataset: {
+    data_source: "UNKNOWN",
+    expected_production_law_count: 58,
+    observed_law_count: 0,
+    observed_article_count: 0,
+    store_counts: {
+      postgresql_article_count: 0,
+      qdrant_point_count: 0,
+      neo4j_article_count: 0,
+    },
+    rag_quality_evaluated: false as const,
+  },
   supported_review_as_of: null,
   planner_mode: "unknown",
   production_release: false,
@@ -345,24 +370,53 @@ export class WorkbenchApp {
   private renderUatRuntimeBanner(): HTMLElement {
     const metadata = this.state.uatMetadata;
     const modeLabel = this.state.uatMetadataVerified ? humanize(metadata.mode) : "UNKNOWN — METADATA UNAVAILABLE";
-    const evidenceScopeLabel = metadata.evidence_scope_label === "REAL_3_OF_58"
-      ? "REAL 3/58"
+    const actualThreeLawRag = metadata.evidence_profile === "preserved-3law-v3-diagnostic"
+      && metadata.evidence_scope_label === "ACTUAL_3_LAW_RAG_3_OF_58";
+    const evidenceScopeLabel = actualThreeLawRag
+      ? "ACTUAL 3-LAW RAG · 3 OF 58"
       : metadata.evidence_scope_label === "TEST_ONLY_V3"
         ? "TEST-ONLY V3"
         : metadata.evidence_scope_label;
-    const scopeIsPartial = evidenceScopeLabel.includes("3/58");
+    const scopeIsPartial = actualThreeLawRag;
+    const dataset = metadata.evidence_dataset;
     const unsafe = metadata.auto_completion_enabled || metadata.production_release || !metadata.text_only;
+    const profileCard = (
+      profile: "synthetic-v3" | "preserved-3law-v3-diagnostic",
+      title: string,
+      description: string,
+    ): HTMLElement => {
+      const active = metadata.evidence_profile === profile && this.state.uatMetadataVerified;
+      return el(
+        "article",
+        {
+          className: `uat-profile-card${active ? " uat-profile-card--active" : ""}`,
+          attrs: {
+            "data-evidence-profile": profile,
+            "data-profile-active": String(active),
+            "aria-current": active ? "true" : "false",
+          },
+        },
+        el("span", { className: "uat-profile-card__state", text: active ? "현재 실행 중" : "UAT 재시작 필요" }),
+        el("strong", { text: title }),
+        el("p", { text: description }),
+      );
+    };
     return el(
       "section",
       {
-        className: `uat-runtime-banner${unsafe ? " uat-runtime-banner--unsafe" : ""}`,
+        className: `uat-runtime-banner${unsafe ? " uat-runtime-banner--unsafe" : ""}${actualThreeLawRag ? " uat-runtime-banner--actual-rag" : ""}`,
         attrs: {
           role: unsafe ? "alert" : "status",
           "aria-label": "LOCAL UAT 실행 경계",
           "data-uat-metadata": this.state.uatMetadataVerified ? "verified" : "unknown",
+          "data-active-evidence-profile": metadata.evidence_profile,
         },
       },
-      el("strong", { text: "LOCAL UAT / DIAGNOSTIC · TEXT ONLY · NOT PRODUCTION" }),
+      el("strong", {
+        text: actualThreeLawRag
+          ? "ACTUAL 3-LAW RAG · 3 OF 58 · DIAGNOSTIC · AUTO OFF"
+          : "LOCAL UAT / DIAGNOSTIC · TEXT ONLY · NOT PRODUCTION",
+      }),
       el(
         "div",
         { className: "uat-runtime-facts" },
@@ -372,6 +426,14 @@ export class WorkbenchApp {
           className: scopeIsPartial ? "uat-runtime-fact--warning" : "",
           text: `Evidence: ${humanize(metadata.evidence_profile)} · ${evidenceScopeLabel}`,
         }),
+        el("span", {
+          className: scopeIsPartial ? "uat-runtime-fact--warning" : "",
+          text: `Data: ${dataset.observed_law_count}/${dataset.expected_production_law_count} laws · ${dataset.observed_article_count} articles`,
+        }),
+        el("span", {
+          className: "uat-runtime-fact--warning",
+          text: `RAG quality evaluated: ${dataset.rag_quality_evaluated ? "YES" : "NO"}`,
+        }),
         el("span", { text: `Review 기준일: ${metadata.supported_review_as_of ?? "UNKNOWN"}` }),
         el("span", { text: `Planner: ${humanize(metadata.planner_mode)}` }),
         el("span", {
@@ -380,9 +442,43 @@ export class WorkbenchApp {
         }),
         el("span", { text: `Assurance ceiling: ${humanize(metadata.assurance_ceiling)}` }),
       ),
+      el(
+        "div",
+        { className: "uat-profile-grid", attrs: { "aria-label": "Evidence 실행 프로필" } },
+        profileCard(
+          "synthetic-v3",
+          "Synthetic V3",
+          "실제 HTTP 계약·XAI·Chat·HITL 사용자 흐름을 검증하지만 Data DB 검색은 수행하지 않습니다.",
+        ),
+        profileCard(
+          "preserved-3law-v3-diagnostic",
+          "Actual 3-Law RAG",
+          "보존 PostgreSQL structured lookup, Qdrant dense/BM25, Neo4j graph 확장을 실제 실행합니다.",
+        ),
+      ),
+      el("p", {
+        className: "uat-profile-note",
+        text: "Evidence 프로필은 Review별 선택값이 아니라 UAT 시작 시 결박되는 실행 환경입니다. 다른 프로필은 Harness로 UAT를 재시작해야 하며 임의 URL이나 credential은 브라우저에서 입력할 수 없습니다.",
+      }),
+      actualThreeLawRag
+        ? el(
+            "dl",
+            { className: "uat-store-counts", attrs: { "aria-label": "실제 Data 저장소 관측값" } },
+            el("dt", { text: "Data source" }),
+            el("dd", { text: dataset.data_source }),
+            el("dt", { text: "PostgreSQL" }),
+            el("dd", { text: `${dataset.store_counts.postgresql_article_count} articles` }),
+            el("dt", { text: "Qdrant" }),
+            el("dd", { text: `${dataset.store_counts.qdrant_point_count} points` }),
+            el("dt", { text: "Neo4j" }),
+            el("dd", { text: `${dataset.store_counts.neo4j_article_count} articles` }),
+          )
+        : null,
       unsafe
         ? el("p", { text: "UAT 안전 불변식이 깨졌습니다. 이 화면의 결과를 신뢰하거나 Production 근거로 사용하지 마세요." })
-        : el("p", { text: "시나리오 기능 PASS는 업무 disposition 또는 Production 승인과 별개입니다." }),
+        : actualThreeLawRag
+          ? el("p", { text: "실제 검색 경로의 기능 진단입니다. 55개 법령이 누락되어 전체 법적 coverage와 Production RAG 품질은 입증하지 않습니다." })
+          : el("p", { text: "시나리오 기능 PASS는 업무 disposition 또는 Production 승인과 별개입니다." }),
     );
   }
 
@@ -397,6 +493,19 @@ export class WorkbenchApp {
 
   private canWrite(): boolean {
     return this.hasRole("reviewer", "approver", "admin");
+  }
+
+  private activeUatEvidenceProfile(): LocalUatEvidenceProfile | null {
+    if (!this.state.uatMetadataVerified) return null;
+    const profile = this.state.uatMetadata.evidence_profile;
+    return profile === "synthetic-v3" || profile === "preserved-3law-v3-diagnostic"
+      ? profile
+      : null;
+  }
+
+  private scenarioSupportsActiveProfile(scenario: LocalUatScenario): boolean {
+    const profile = this.activeUatEvidenceProfile();
+    return profile !== null && scenario.supported_evidence_profiles.includes(profile);
   }
 
   private canApprove(): boolean {
@@ -466,10 +575,21 @@ export class WorkbenchApp {
     const scenarioSelect = el(
       "select",
       { attrs: { name: "scenario", "aria-label": "UAT 시나리오", ...disabledUnless(this.canWrite() && !this.state.busy) } },
-      ...UAT_SCENARIOS.map((scenario) => el("option", {
-        text: `${scenario.title}${scenario.requires_approver ? " · 별도 approver 검증 필요" : ""}`,
-        attrs: { value: scenario.scenario_id },
-      })),
+      ...UAT_SCENARIOS.map((scenario) => {
+        const compatible = this.scenarioSupportsActiveProfile(scenario);
+        const profileLabel = scenario.supported_evidence_profiles.length === 2
+          ? "현재 프로필"
+          : scenario.supported_evidence_profiles[0] === "preserved-3law-v3-diagnostic"
+            ? "Actual 3-Law 전용"
+            : "Synthetic 전용";
+        return el("option", {
+          text: `${scenario.title} · ${profileLabel}${scenario.requires_approver ? " · 별도 approver 검증 필요" : ""}${compatible ? "" : " · 현재 비활성"}`,
+          attrs: {
+            value: scenario.scenario_id,
+            ...(compatible ? {} : { disabled: "" }),
+          },
+        });
+      }),
     );
     const scenarioForm = el(
       "form",
@@ -885,6 +1005,12 @@ export class WorkbenchApp {
     if (!scenario) return null;
     const functionalChecks: UatCheck[] = [
       this.uatScenarioManifestCheck(scenario),
+      {
+        label: "시나리오 Evidence 프로필",
+        expected: "compatible",
+        actual: this.scenarioSupportsActiveProfile(scenario) ? "compatible" : "incompatible",
+        invalid: !this.scenarioSupportsActiveProfile(scenario),
+      },
       ...this.uatRuntimeFunctionalChecks(),
       {
         label: "Review 기준일 결박",
@@ -941,8 +1067,9 @@ export class WorkbenchApp {
         el("small", { text: "업무 disposition은 기능 PASS/FAIL 계산에 포함되지 않습니다." }),
       ),
       el("p", { text: scenario.description }),
+      el("p", { className: "scenario-observation", text: `확인할 진단 관측값: ${scenario.diagnostic_observation}` }),
       scenario.production_blocked_reason ? el("p", { className: "notice notice--warning", text: `PRODUCTION BLOCKED: ${scenario.production_blocked_reason}` }) : null,
-      el("small", { text: "합성 시나리오 assertion은 기능 회귀용이며 실제 법적·Production 품질 승인이 아닙니다." }),
+      el("small", { text: "UAT 시나리오 assertion은 제한된 기능 진단이며 실제 법적·Production 품질 승인이 아닙니다." }),
     );
   }
 
@@ -1005,9 +1132,9 @@ export class WorkbenchApp {
     const metadata = this.state.uatMetadata;
     const verified = this.state.uatMetadataVerified;
     const evidenceProfileKnown = metadata.evidence_profile === "synthetic-v3"
-      || metadata.evidence_profile === "preserved-3law";
+      || metadata.evidence_profile === "preserved-3law-v3-diagnostic";
     const evidenceScopeKnown = metadata.evidence_scope_label === "TEST_ONLY_V3"
-      || metadata.evidence_scope_label === "REAL_3_OF_58";
+      || metadata.evidence_scope_label === "ACTUAL_3_LAW_RAG_3_OF_58";
     const plannerConfigured = metadata.planner_mode === "shadow"
       || metadata.planner_mode === "diagnostic_active";
     return [
@@ -1057,7 +1184,11 @@ export class WorkbenchApp {
     scenario: LocalUatScenario,
     run: ReviewRun,
   ): UatCheck[] {
-    const semantic = scenario.expected.semantic;
+    const activeProfile = this.activeUatEvidenceProfile();
+    const semantic = activeProfile === null
+      ? scenario.expected.semantic
+      : scenario.expected.semantic_by_evidence_profile?.[activeProfile]
+        ?? scenario.expected.semantic;
     if (!semantic) return [];
     const checks: UatCheck[] = [];
     const includeCodes = (
@@ -1215,18 +1346,6 @@ export class WorkbenchApp {
         label: "XAI material citation",
         expected: "complete",
         actual: this.materialNarrativeCitationsComplete(run) ? "complete" : "incomplete",
-      });
-    }
-    if (semantic.runtime) {
-      checks.push({
-        label: "Evidence profile",
-        expected: semantic.runtime.evidence_profile,
-        actual: this.state.uatMetadataVerified ? this.state.uatMetadata.evidence_profile : "unknown",
-      });
-      checks.push({
-        label: "Evidence scope",
-        expected: semantic.runtime.evidence_scope_label,
-        actual: this.state.uatMetadataVerified ? this.state.uatMetadata.evidence_scope_label : "UNKNOWN",
       });
     }
     return checks;
@@ -1553,6 +1672,10 @@ export class WorkbenchApp {
 
   private renderEvidence(run: ReviewRun): HTMLElement {
     const items = run.evidence;
+    const provenance = run.evidence_provenance;
+    const actualThreeLawRag = this.state.uatMetadataVerified
+      && this.state.uatMetadata.evidence_profile === "preserved-3law-v3-diagnostic"
+      && this.state.uatMetadata.evidence_scope_label === "ACTUAL_3_LAW_RAG_3_OF_58";
     const isReleasedForAutomaticReview = run.assurance_level === "production"
       && run.review_disposition === "auto_review_complete";
     const releaseState = isReleasedForAutomaticReview ? "release-bound" : "diagnostic";
@@ -1567,21 +1690,140 @@ export class WorkbenchApp {
           "div",
           { className: "evidence-boundary evidence-boundary--diagnostic", attrs: { role: "alert", "data-evidence-release-state": releaseState } },
           el("strong", { text: "DIAGNOSTIC EVIDENCE — NOT RELEASED" }),
-          el("p", { text: "법령 검색 기능 확인용 결과입니다. 법적 판단 또는 Production 자동완료 근거로 사용할 수 없습니다." }),
+           el("p", { text: "법령 검색 기능 확인용 결과입니다. 법적 판단 또는 Production 자동완료 근거로 사용할 수 없습니다." }),
+         );
+    const queryPanel = provenance === undefined
+      ? el(
+          "div",
+          {
+            className: "rag-provenance rag-provenance--missing",
+            attrs: { role: actualThreeLawRag ? "alert" : "note" },
+          },
+          el("strong", { text: "검색 provenance 미표시" }),
+          el("p", {
+            text: actualThreeLawRag
+              ? "Actual RAG 프로필인데 Backend의 안전한 검색 provenance가 없습니다. 이 Run을 실제 RAG 확인 근거로 사용하지 마세요."
+              : "이 Run에는 Backend가 검증한 검색 query·HSK·rank projection이 없습니다.",
+          }),
+        )
+      : el(
+          "section",
+          {
+            className: "rag-provenance",
+            attrs: {
+              "aria-label": "RAG 검색 provenance",
+              "data-rag-provenance": "verified-backend-projection",
+            },
+          },
+          el(
+            "div",
+            { className: "rag-provenance__heading" },
+            el("strong", { text: actualThreeLawRag ? "ACTUAL 3-LAW RAG 실행 근거" : "Evidence 조회 근거" }),
+            el("span", { text: `Query intent · ${provenance.query_intent ?? "미제공"}` }),
+          ),
+          ...provenance.items.map((query) =>
+            el(
+              "article",
+              { className: "rag-query", attrs: { "data-rag-item-id": query.item_id } },
+              el("strong", { text: query.query_description }),
+              el(
+                "dl",
+                { className: "rag-query__facts" },
+                el("dt", { text: "요청 HS" }),
+                el("dd", { text: query.requested_hs_code ?? "없음" }),
+                el("dt", { text: "해소 HSK10" }),
+                el("dd", { text: query.resolved_hsk10 ?? "해소되지 않음" }),
+                el("dt", { text: "Structured 해소" }),
+                el("dd", { text: humanize(query.hs_resolution) }),
+                el("dt", { text: "Coverage" }),
+                el("dd", { text: humanize(query.coverage) }),
+                el("dt", { text: "요건서류" }),
+                el("dd", { text: query.requirements_found ? "발견됨" : "없음" }),
+              ),
+            ),
+          ),
         );
+    const rankedByEvidenceId = new Map(
+      provenance?.ranked_evidence.map((item) => [item.evidence_id, item] as const) ?? [],
+    );
     return el(
       "div",
       { className: `evidence-list evidence-list--${releaseState}`, attrs: { "data-evidence-release-state": releaseState } },
       boundary,
+      actualThreeLawRag
+        ? el(
+            "div",
+            { className: "actual-rag-warning", attrs: { role: "status" } },
+            el("strong", { text: "ACTUAL 3-LAW RAG · POSTGRESQL + QDRANT + NEO4J" }),
+            el("span", { text: "3 OF 58 · DIAGNOSTIC · AUTO OFF · NOT PRODUCTION" }),
+          )
+        : el("span", { className: "visually-hidden", text: "Synthetic Evidence profile" }),
+      queryPanel,
       ...(items.length === 0 ? [empty("검증된 Evidence가 없습니다. 자동완료 근거로 사용할 수 없습니다.")] : items.map((item) =>
-        el(
-          "article",
-          { className: `evidence evidence--${releaseState}`, attrs: { "data-source-id": item.evidence_id, "data-evidence-release-state": releaseState, tabindex: "-1" } },
-          el("span", { className: "evidence__law", text: `${item.law_id}${item.article ? ` · ${item.article}` : ""}` }),
-          el("strong", { text: item.title }),
-          el("p", { text: item.excerpt }),
-          el("small", { text: `source hash ${item.source_hash.slice(0, 12)}… · ${item.effective_date ?? "시행일 미표시"}` }),
-        ),
+        (() => {
+          const ranked = rankedByEvidenceId.get(item.evidence_id);
+          const scoreSummary = ranked === undefined
+            ? "score 미표시"
+            : [
+                ...(ranked.score === null ? [] : [`final ${ranked.score.toFixed(6)}`]),
+                ...Object.entries(ranked.raw_scores).map(([method, score]) => `${method} ${score.toFixed(6)}`),
+              ].join(" · ") || "score 없음";
+          return el(
+            "article",
+            {
+              className: `evidence evidence--${releaseState}`,
+              attrs: {
+                "data-source-id": item.evidence_id,
+                "data-evidence-release-state": releaseState,
+                "data-retrieval-rank": ranked === undefined ? "" : String(ranked.rank),
+                tabindex: "-1",
+              },
+            },
+            el(
+              "div",
+              { className: "evidence__heading" },
+              el("span", {
+                className: "evidence__rank",
+                text: ranked === undefined ? "순위 미표시" : `#${ranked.rank}`,
+              }),
+              el("span", {
+                className: "evidence__law",
+                text: `${ranked?.law_name ?? ranked?.law_id ?? item.law_id}${
+                  (ranked?.article_no ?? item.article)
+                    ? ` · ${ranked?.article_no ?? item.article}`
+                    : ""
+                }`,
+              }),
+            ),
+            el("strong", { text: item.title }),
+            ranked === undefined
+              ? el("p", { className: "retrieval-methods", text: "검색 방식 provenance 없음" })
+              : el(
+                  "div",
+                  { className: "retrieval-methods", attrs: { "aria-label": "검색 방식" } },
+                  ...ranked.retrieval_methods.map((method) =>
+                    el("span", { className: `retrieval-method retrieval-method--${method}`, text: method }),
+                  ),
+                ),
+            el("p", { text: item.excerpt }),
+            el("small", { className: "evidence__score", text: scoreSummary }),
+            el("small", {
+              text: `version ${ranked?.version_hash.slice(0, 12) ?? item.source_hash.slice(0, 12)}… · ${item.effective_date ?? "시행일 미표시"}`,
+            }),
+            el(
+              "a",
+              {
+                className: "evidence__source-link",
+                text: "공식 출처 열기",
+                attrs: {
+                  href: ranked?.source_uri ?? item.source_uri,
+                  target: "_blank",
+                  rel: "noopener noreferrer",
+                },
+              },
+            ),
+          );
+        })(),
       )),
     );
   }
@@ -1909,6 +2151,11 @@ export class WorkbenchApp {
     const data = new FormData(event.currentTarget as HTMLFormElement);
     const scenario = UAT_SCENARIOS.find((item) => item.scenario_id === value(data, "scenario"));
     if (!scenario) return;
+    if (!this.scenarioSupportsActiveProfile(scenario)) {
+      this.state.notice = "현재 process-level Evidence 프로필과 호환되지 않는 시나리오입니다. Harness로 올바른 프로필을 재시작하세요.";
+      this.render();
+      return;
+    }
     await this.createScenarioCase(scenario);
   }
 

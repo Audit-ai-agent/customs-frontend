@@ -12,7 +12,18 @@ describe("pinned Backend OpenAPI contract", () => {
     expect(createHash("sha256").update(snapshot).digest("hex")).toBe(lock.openapi_sha256);
     expect(createHash("sha256").update(generated).digest("hex")).toBe(lock.generated_types_sha256);
     expect(Object.keys(openapi.paths).every((path) => path.startsWith("/api/v1/") || path.startsWith("/health/"))).toBe(true);
-    expect(JSON.stringify(openapi)).not.toMatch(/internal\/agent|qdrant|neo4j/i);
+    const serialized = JSON.stringify(openapi);
+    expect(serialized).not.toMatch(/internal\/agent/i);
+    expect(serialized).not.toMatch(
+      /qdrant_(url|uri|host|port|api_key)|neo4j_(url|uri|host|port|user|password)|qdrant:|bolt:/i,
+    );
+    expect(
+      Object.keys(openapi.components.schemas.UatEvidenceStoreCountsResponse.properties).sort(),
+    ).toEqual([
+      "neo4j_article_count",
+      "postgresql_article_count",
+      "qdrant_point_count",
+    ]);
   });
 
   it("accepts the provider's bounded 64-entry review stage trace", () => {

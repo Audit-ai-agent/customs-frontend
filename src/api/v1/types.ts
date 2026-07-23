@@ -131,6 +131,42 @@ export interface EvidenceItem {
   effective_date?: string;
 }
 
+export type EvidenceRetrievalMethod = "exact_hs" | "dense" | "bm25" | "graph";
+
+export interface EvidenceQueryProvenance {
+  item_id: string;
+  query_description: string;
+  requested_hs_code: string | null;
+  hs_resolution: "exact" | "unique_descendant" | "ambiguous" | "invalid" | "missing";
+  resolved_hsk10: string | null;
+  coverage: "complete" | "partial" | "unknown";
+  requirements_found: boolean;
+}
+
+export interface RankedEvidenceProvenance {
+  evidence_id: string;
+  item_id: string;
+  rank: number;
+  source_type: "law_article" | "customs_requirement" | "hsk_entry" | "notice";
+  retrieval_methods: EvidenceRetrievalMethod[];
+  score: number | null;
+  raw_scores: Partial<Record<
+    "exact_hs" | "dense" | "bm25" | "graph" | "rrf" | "lexical_overlap",
+    number
+  >>;
+  law_id: string | null;
+  law_name: string | null;
+  article_no: string | null;
+  version_hash: string;
+  source_uri: string;
+}
+
+export interface EvidenceRetrievalProvenance {
+  query_intent: string | null;
+  items: EvidenceQueryProvenance[];
+  ranked_evidence: RankedEvidenceProvenance[];
+}
+
 export interface ComplianceFinding {
   finding_id: string;
   code: string;
@@ -272,6 +308,8 @@ export interface ReviewRun extends RunSummary {
     requirements_found: boolean | null;
     result_count: number;
   };
+  /** Backend-owned bounded projection of the exact Agent retrieval request/result. */
+  evidence_provenance?: EvidenceRetrievalProvenance;
   /** Safe Backend projection of the Agent provider-call audit. */
   model_execution_summary?: ModelExecutionSummary;
   /** Safe Backend projection of the V3 narrative Claude-call audit. */

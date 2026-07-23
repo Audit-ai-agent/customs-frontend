@@ -14,7 +14,8 @@ for (const file of files.filter((name) => [".ts", ".css"].includes(extname(name)
   for (const [pattern, message] of [
     [/\.innerHTML\s*=/g, "unsafe innerHTML assignment"],
     [/\blocalStorage\b/g, "persistent browser secret storage"],
-    [/["'`]\/(?:internal\/agent|evidence)(?:\/|["'`])|qdrant|neo4j/gi, "direct Agent/Data boundary reference"],
+    [/["'`]\/(?:internal\/agent|evidence)(?:\/|["'`])/gi, "direct Agent/Data boundary reference"],
+    [/(?:qdrant|neo4j)(?:\+s)?:\/\/|(?:fetch|WebSocket)\s*\([^)]*(?:qdrant|neo4j)/gi, "direct Data-store network reference"],
     [/fetch\(\s*["'`]https?:/g, "direct absolute network call"],
     [/dangerouslySetInnerHTML/g, "unsafe HTML rendering escape hatch"],
   ]) {

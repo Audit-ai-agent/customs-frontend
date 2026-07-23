@@ -1247,6 +1247,36 @@ export interface components {
              */
             media_type: "text/plain";
         };
+        /** UatEvidenceDatasetResponse */
+        UatEvidenceDatasetResponse: {
+            /**
+             * Data Source
+             * @enum {string}
+             */
+            data_source: "SYNTHETIC_V3_NO_RAG_QUALITY" | "ACTUAL_POSTGRESQL_QDRANT_NEO4J_READ_ONLY" | "UNKNOWN";
+            /** Expected Production Law Count */
+            expected_production_law_count: number;
+            /** Observed Article Count */
+            observed_article_count: number;
+            /** Observed Law Count */
+            observed_law_count: number;
+            /**
+             * Rag Quality Evaluated
+             * @default false
+             * @constant
+             */
+            rag_quality_evaluated: false;
+            store_counts: components["schemas"]["UatEvidenceStoreCountsResponse"];
+        };
+        /** UatEvidenceStoreCountsResponse */
+        UatEvidenceStoreCountsResponse: {
+            /** Neo4J Article Count */
+            neo4j_article_count: number;
+            /** Postgresql Article Count */
+            postgresql_article_count: number;
+            /** Qdrant Point Count */
+            qdrant_point_count: number;
+        };
         /** UatMetadataResponse */
         UatMetadataResponse: {
             /**
@@ -1267,16 +1297,17 @@ export interface components {
              * @constant
              */
             claude_mode: "actual";
+            evidence_dataset: components["schemas"]["UatEvidenceDatasetResponse"];
             /**
              * Evidence Profile
              * @enum {string}
              */
-            evidence_profile: "synthetic-v3" | "preserved-3law" | "unknown";
+            evidence_profile: "synthetic-v3" | "preserved-3law-v3-diagnostic" | "unknown";
             /**
              * Evidence Scope Label
              * @enum {string}
              */
-            evidence_scope_label: "TEST_ONLY_V3" | "REAL_3_OF_58" | "UNKNOWN";
+            evidence_scope_label: "TEST_ONLY_V3" | "ACTUAL_3_LAW_RAG_3_OF_58" | "UNKNOWN";
             /**
              * Mode
              * @default local_uat

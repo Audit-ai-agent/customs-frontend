@@ -74,6 +74,19 @@ const NARRATIVE_MODEL_EXECUTION = {
   output_tokens_total: 10,
 } as const;
 
+const ACTUAL_THREE_LAW_EVIDENCE_DATASET = {
+  data_source: "ACTUAL_POSTGRESQL_QDRANT_NEO4J_READ_ONLY",
+  expected_production_law_count: 58,
+  observed_law_count: 3,
+  observed_article_count: 1_007,
+  store_counts: {
+    postgresql_article_count: 1_007,
+    qdrant_point_count: 1_007,
+    neo4j_article_count: 1_007,
+  },
+  rag_quality_evaluated: false,
+} as const;
+
 const backendEffectiveSummary = (value: Record<string, unknown>): Record<string, unknown> => {
   const resultDetail = value.result_detail as Record<string, unknown> | undefined;
   return {
@@ -155,8 +168,9 @@ describe("Backend API v1 client", () => {
       text_only: true,
       auto_completion_enabled: false,
       claude_mode: "actual",
-      evidence_profile: "preserved-3law",
-      evidence_scope_label: "REAL_3_OF_58",
+      evidence_profile: "preserved-3law-v3-diagnostic",
+      evidence_scope_label: "ACTUAL_3_LAW_RAG_3_OF_58",
+      evidence_dataset: ACTUAL_THREE_LAW_EVIDENCE_DATASET,
       supported_review_as_of: "2026-07-10",
       planner_mode: "shadow",
       production_release: false,
@@ -174,6 +188,22 @@ describe("Backend API v1 client", () => {
 
     const attacked = vi.fn<typeof fetch>().mockResolvedValue(json({ ...metadata, provider_token: "must-not-cross" }));
     await expect(new ApiClient(attacked).getUatMetadata()).rejects.toThrow("unsupported or sensitive field");
+    const countDrift = {
+      ...metadata,
+      evidence_dataset: {
+        ...metadata.evidence_dataset,
+        store_counts: {
+          ...metadata.evidence_dataset.store_counts,
+          qdrant_point_count: 1_006,
+        },
+      },
+    };
+    await expect(new ApiClient(vi.fn<typeof fetch>().mockResolvedValue(json(countDrift))).getUatMetadata())
+      .rejects.toThrow("incoherent Evidence profile observation");
+    const claimedQuality = structuredClone(metadata) as Record<string, unknown>;
+    (claimedQuality.evidence_dataset as Record<string, unknown>).rag_quality_evaluated = true;
+    await expect(new ApiClient(vi.fn<typeof fetch>().mockResolvedValue(json(claimedQuality))).getUatMetadata())
+      .rejects.toThrow("false required");
 
     const missingDate = { ...metadata } as Record<string, unknown>;
     delete missingDate.supported_review_as_of;
@@ -671,9 +701,98 @@ describe("Backend API v1 client", () => {
         requirements_found: false,
         result_count: 1,
       },
+      evidence_provenance: {
+        query_intent: "forged browser alias",
+        items: [],
+        ranked_evidence: [],
+      },
       result_detail: {},
     }));
     expect(forgedTopLevel.evidence_retrieval).toBeUndefined();
+    expect(forgedTopLevel.evidence_provenance).toBeUndefined();
+  });
+
+  it("accepts only a bounded Backend-attested actual RAG provenance projection", () => {
+    const evidence = {
+      evidence_id: "ev-rag-1",
+      title: "관세법 제241조",
+      law_id: "LAW-001",
+      article_no: "제241조",
+      text: "수입하려는 물품은 세관장에게 신고하여야 한다.",
+      source_uri: "https://law.go.kr/법령/관세법/제241조",
+      version_hash: "1".repeat(64),
+    };
+    const evidenceProvenance = {
+      query_intent: "required_import_documents",
+      items: [{
+        item_id: "item-1",
+        query_description: "냉동 고등어 수입 요건",
+        requested_hs_code: "0303540000",
+        hs_resolution: "exact",
+        resolved_hsk10: "0303540000",
+        coverage: "complete",
+        requirements_found: true,
+      }],
+      ranked_evidence: [{
+        evidence_id: "ev-rag-1",
+        item_id: "item-1",
+        rank: 1,
+        source_type: "law_article",
+        retrieval_methods: ["exact_hs", "dense", "bm25", "graph"],
+        score: 0.92,
+        raw_scores: {
+          exact_hs: 1,
+          dense: 0.88,
+          bm25: 4.2,
+          graph: 0.7,
+          rrf: 0.09,
+        },
+        law_id: "LAW-001",
+        law_name: "관세법",
+        article_no: "제241조",
+        version_hash: "1".repeat(64),
+        source_uri: "https://law.go.kr/법령/관세법/제241조",
+      }],
+    };
+    const resultDetail = {
+      retrieval_status: "ok",
+      retrieval_coverage: "complete",
+      retrieval_results: [{ item_id: "item-1", requirements_found: true }],
+      evidence: [evidence],
+      evidence_provenance: evidenceProvenance,
+    };
+
+    const decoded = decodeReviewRun(reviewRunPayload({ result_detail: resultDetail }));
+    expect(decoded.evidence_provenance).toEqual(evidenceProvenance);
+    expect(decoded.evidence_provenance?.ranked_evidence[0]?.retrieval_methods)
+      .toEqual(["exact_hs", "dense", "bm25", "graph"]);
+
+    for (const mutate of [
+      (value: Record<string, unknown>) => {
+        const detail = value.result_detail as Record<string, unknown>;
+        const provenance = detail.evidence_provenance as typeof evidenceProvenance;
+        provenance.ranked_evidence[0]!.retrieval_methods = ["dense", "shell"] as never;
+      },
+      (value: Record<string, unknown>) => {
+        const detail = value.result_detail as Record<string, unknown>;
+        const provenance = detail.evidence_provenance as typeof evidenceProvenance;
+        provenance.ranked_evidence[0]!.source_uri = "https://law.go.kr/법령/관세법?token=secret";
+      },
+      (value: Record<string, unknown>) => {
+        const detail = value.result_detail as Record<string, unknown>;
+        const provenance = detail.evidence_provenance as typeof evidenceProvenance;
+        provenance.ranked_evidence[0]!.evidence_id = "unknown-evidence";
+      },
+      (value: Record<string, unknown>) => {
+        const detail = value.result_detail as Record<string, unknown>;
+        const provenance = detail.evidence_provenance as typeof evidenceProvenance & { provider_url?: string };
+        provenance.provider_url = "https://private-data.example";
+      },
+    ]) {
+      const attacked = reviewRunPayload({ result_detail: structuredClone(resultDetail) });
+      mutate(attacked);
+      expect(() => decodeReviewRun(attacked)).toThrow(ContractError);
+    }
   });
 
   it("validates and digest-binds safe extraction and narrative execution summaries", () => {
@@ -1065,6 +1184,32 @@ describe("Backend API v1 client", () => {
         document_results: documentResults,
         review_stage_trace: mandatoryStageTrace,
         rag_evidence: [ragEvidence],
+        evidence_provenance: {
+          query_intent: "required_import_documents",
+          items: [{
+            item_id: "item-1",
+            query_description: "released import requirement",
+            requested_hs_code: "0303540000",
+            hs_resolution: "exact",
+            resolved_hsk10: "0303540000",
+            coverage: "complete",
+            requirements_found: true,
+          }],
+          ranked_evidence: [{
+            evidence_id: evidenceId,
+            item_id: "item-1",
+            rank: 1,
+            source_type: "customs_requirement",
+            retrieval_methods: ["exact_hs"],
+            score: null,
+            raw_scores: {},
+            law_id: "LAW-1",
+            law_name: "Released Law",
+            article_no: "Article 1",
+            version_hash: versionHash,
+            source_uri: "https://law.example.invalid/1",
+          }],
+        },
         fact_ledger: {
           ledger_id: `ledger_${"3".repeat(64)}`,
           entries: [...fieldLedgerEntries, {

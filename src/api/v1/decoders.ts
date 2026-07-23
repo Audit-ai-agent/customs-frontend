@@ -72,6 +72,7 @@ const GAP_TYPES = new Set([
 ]);
 const BACKEND_PUBLIC_RESULT_DETAIL_KEYS = [
   "document_results",
+  "evidence_provenance",
   "fact_ledger",
   "jurisdiction",
   "knowledge_snapshot_id",
@@ -174,6 +175,7 @@ export function decodeLocalUatMetadata(value: unknown): LocalUatMetadata {
     "claude_mode",
     "evidence_profile",
     "evidence_scope_label",
+    "evidence_dataset",
     "supported_review_as_of",
     "planner_mode",
     "production_release",
@@ -190,14 +192,146 @@ export function decodeLocalUatMetadata(value: unknown): LocalUatMetadata {
     if (!allowed.includes(decoded as T)) throw new ContractError(`localUatMetadata.${key}: unsupported value`);
     return decoded as T;
   };
+  const evidenceProfile = oneOf(
+    "evidence_profile",
+    ["synthetic-v3", "preserved-3law-v3-diagnostic", "unknown"] as const,
+  );
+  const evidenceScopeLabel = oneOf(
+    "evidence_scope_label",
+    ["TEST_ONLY_V3", "ACTUAL_3_LAW_RAG_3_OF_58", "UNKNOWN"] as const,
+  );
+  const dataset = object(raw.evidence_dataset, "localUatMetadata.evidence_dataset");
+  const datasetKeys = [
+    "data_source",
+    "expected_production_law_count",
+    "observed_article_count",
+    "observed_law_count",
+    "rag_quality_evaluated",
+    "store_counts",
+  ].sort().join(",");
+  if (Object.keys(dataset).sort().join(",") !== datasetKeys) {
+    throw new ContractError("localUatMetadata.evidence_dataset: unsupported or sensitive field");
+  }
+  const storeCounts = object(
+    dataset.store_counts,
+    "localUatMetadata.evidence_dataset.store_counts",
+  );
+  if (
+    Object.keys(storeCounts).sort().join(",")
+    !== ["neo4j_article_count", "postgresql_article_count", "qdrant_point_count"].join(",")
+  ) {
+    throw new ContractError(
+      "localUatMetadata.evidence_dataset.store_counts: unsupported or sensitive field",
+    );
+  }
+  const boundedCount = (candidate: unknown, context: string, maximum: number): number => {
+    if (
+      typeof candidate !== "number"
+      || !Number.isInteger(candidate)
+      || candidate < 0
+      || candidate > maximum
+    ) {
+      throw new ContractError(`${context}: bounded non-negative integer expected`);
+    }
+    return candidate;
+  };
+  const dataSource = boundedString(
+    dataset.data_source,
+    "localUatMetadata.evidence_dataset.data_source",
+    64,
+  );
+  if (![
+    "SYNTHETIC_V3_NO_RAG_QUALITY",
+    "ACTUAL_POSTGRESQL_QDRANT_NEO4J_READ_ONLY",
+    "UNKNOWN",
+  ].includes(dataSource)) {
+    throw new ContractError("localUatMetadata.evidence_dataset.data_source: unsupported value");
+  }
+  if (dataset.rag_quality_evaluated !== false) {
+    throw new ContractError(
+      "localUatMetadata.evidence_dataset.rag_quality_evaluated: false required",
+    );
+  }
+  const expectedLawCount = boundedCount(
+    dataset.expected_production_law_count,
+    "localUatMetadata.evidence_dataset.expected_production_law_count",
+    10_000,
+  );
+  const observedLawCount = boundedCount(
+    dataset.observed_law_count,
+    "localUatMetadata.evidence_dataset.observed_law_count",
+    10_000,
+  );
+  const observedArticleCount = boundedCount(
+    dataset.observed_article_count,
+    "localUatMetadata.evidence_dataset.observed_article_count",
+    10_000_000,
+  );
+  const postgresqlArticleCount = boundedCount(
+    storeCounts.postgresql_article_count,
+    "localUatMetadata.evidence_dataset.store_counts.postgresql_article_count",
+    10_000_000,
+  );
+  const qdrantPointCount = boundedCount(
+    storeCounts.qdrant_point_count,
+    "localUatMetadata.evidence_dataset.store_counts.qdrant_point_count",
+    10_000_000,
+  );
+  const neo4jArticleCount = boundedCount(
+    storeCounts.neo4j_article_count,
+    "localUatMetadata.evidence_dataset.store_counts.neo4j_article_count",
+    10_000_000,
+  );
+  const actualThreeLaw = evidenceProfile === "preserved-3law-v3-diagnostic"
+    && evidenceScopeLabel === "ACTUAL_3_LAW_RAG_3_OF_58"
+    && dataSource === "ACTUAL_POSTGRESQL_QDRANT_NEO4J_READ_ONLY"
+    && expectedLawCount === 58
+    && observedLawCount === 3
+    && observedArticleCount > 0
+    && postgresqlArticleCount === observedArticleCount
+    && qdrantPointCount === observedArticleCount
+    && neo4jArticleCount === observedArticleCount;
+  const synthetic = evidenceProfile === "synthetic-v3"
+    && evidenceScopeLabel === "TEST_ONLY_V3"
+    && dataSource === "SYNTHETIC_V3_NO_RAG_QUALITY"
+    && expectedLawCount === 58
+    && observedLawCount === 0
+    && observedArticleCount === 0
+    && postgresqlArticleCount === 0
+    && qdrantPointCount === 0
+    && neo4jArticleCount === 0;
+  const unknown = evidenceProfile === "unknown"
+    && evidenceScopeLabel === "UNKNOWN"
+    && dataSource === "UNKNOWN"
+    && expectedLawCount === 58
+    && observedLawCount === 0
+    && observedArticleCount === 0
+    && postgresqlArticleCount === 0
+    && qdrantPointCount === 0
+    && neo4jArticleCount === 0;
+  if (!actualThreeLaw && !synthetic && !unknown) {
+    throw new ContractError("localUatMetadata: incoherent Evidence profile observation");
+  }
   return {
     mode: exact("mode", "local_uat"),
     assurance_ceiling: exact("assurance_ceiling", "diagnostic"),
     text_only: exact("text_only", true),
     auto_completion_enabled: exact("auto_completion_enabled", false),
     claude_mode: exact("claude_mode", "actual"),
-    evidence_profile: oneOf("evidence_profile", ["synthetic-v3", "preserved-3law", "unknown"] as const),
-    evidence_scope_label: oneOf("evidence_scope_label", ["TEST_ONLY_V3", "REAL_3_OF_58", "UNKNOWN"] as const),
+    evidence_profile: evidenceProfile,
+    evidence_scope_label: evidenceScopeLabel,
+    evidence_dataset: {
+      data_source: dataSource as LocalUatMetadata["evidence_dataset"]["data_source"],
+      expected_production_law_count: expectedLawCount,
+      observed_law_count: observedLawCount,
+      observed_article_count: observedArticleCount,
+      store_counts: {
+        postgresql_article_count: postgresqlArticleCount,
+        qdrant_point_count: qdrantPointCount,
+        neo4j_article_count: neo4jArticleCount,
+      },
+      rag_quality_evaluated: false,
+    },
     supported_review_as_of: decodeExactIsoDate(
       raw.supported_review_as_of,
       "localUatMetadata.supported_review_as_of",
@@ -493,6 +627,12 @@ export function decodeReviewRun(value: unknown): ReviewRun {
       result_count: requirements.length,
     };
   }
+  const evidenceProvenance = result.evidence_provenance === undefined
+    ? undefined
+    : decodeEvidenceProvenance(
+        result.evidence_provenance,
+        new Set(evidence.map((item) => item.evidence_id)),
+      );
   const rawFindings = pickArray("findings", "findings", "compliance_findings", "regulatory_findings");
   const findings = rawFindings.map((value) => normalizeFinding(value, ledgerEntries));
   const sources = deduplicateSources([
@@ -592,6 +732,7 @@ export function decodeReviewRun(value: unknown): ReviewRun {
   // A top-level alias is not part of the Backend contract and must never
   // override the validated public Agent result_detail attestation.
   delete safeRaw.evidence_retrieval;
+  delete safeRaw.evidence_provenance;
   delete safeRaw.model_execution_summary;
   delete safeRaw.narrative_execution_summary;
   return {
@@ -601,6 +742,7 @@ export function decodeReviewRun(value: unknown): ReviewRun {
     issues,
     evidence,
     ...(evidenceRetrieval === undefined ? {} : { evidence_retrieval: evidenceRetrieval }),
+    ...(evidenceProvenance === undefined ? {} : { evidence_provenance: evidenceProvenance }),
     ...(modelExecutionSummary === undefined ? {} : { model_execution_summary: modelExecutionSummary }),
     ...(narrativeExecutionSummary === undefined
       ? {}
@@ -1147,6 +1289,228 @@ function normalizeIssue(
     severity: severity(raw.severity),
     message: stringValue(raw.message ?? raw.detail, "상세가 제공되지 않았습니다."),
     source_ids: explicitSources.length > 0 ? explicitSources : [ledgerReference],
+  };
+}
+
+function decodeEvidenceProvenance(
+  value: unknown,
+  publicEvidenceIds: ReadonlySet<string>,
+): NonNullable<ReviewRun["evidence_provenance"]> {
+  const raw = object(value, "reviewRun.result_detail.evidence_provenance");
+  if (Object.keys(raw).sort().join(",") !== ["items", "query_intent", "ranked_evidence"].join(",")) {
+    throw new ContractError("evidenceProvenance: unsupported or sensitive field");
+  }
+  const queryIntent = raw.query_intent === null
+    ? null
+    : boundedString(raw.query_intent, "evidenceProvenance.query_intent", 256);
+  const itemIds = new Set<string>();
+  const hsCode = (candidate: unknown, context: string): string | null => {
+    if (candidate === null) return null;
+    const decoded = boundedString(candidate, context, 10);
+    if (!/^(?:[0-9]{6}|[0-9]{10})$/.test(decoded)) {
+      throw new ContractError(`${context}: HS6 or HSK10 expected`);
+    }
+    return decoded;
+  };
+  const items = array(raw.items, "evidenceProvenance.items").map((value, index) => {
+    const context = `evidenceProvenance.items[${index}]`;
+    const item = object(value, context);
+    const expectedKeys = [
+      "coverage",
+      "hs_resolution",
+      "item_id",
+      "query_description",
+      "requested_hs_code",
+      "requirements_found",
+      "resolved_hsk10",
+    ].sort().join(",");
+    if (Object.keys(item).sort().join(",") !== expectedKeys) {
+      throw new ContractError(`${context}: unsupported field`);
+    }
+    const itemId = boundedString(item.item_id, `${context}.item_id`, 256);
+    if (itemIds.has(itemId)) throw new ContractError(`${context}.item_id: duplicate`);
+    itemIds.add(itemId);
+    const hsResolution = boundedString(item.hs_resolution, `${context}.hs_resolution`, 32);
+    if (!["exact", "unique_descendant", "ambiguous", "invalid", "missing"].includes(hsResolution)) {
+      throw new ContractError(`${context}.hs_resolution: unsupported`);
+    }
+    const coverage = boundedString(item.coverage, `${context}.coverage`, 16);
+    if (!["complete", "partial", "unknown"].includes(coverage)) {
+      throw new ContractError(`${context}.coverage: unsupported`);
+    }
+    if (typeof item.requirements_found !== "boolean") {
+      throw new ContractError(`${context}.requirements_found: boolean expected`);
+    }
+    return {
+      item_id: itemId,
+      query_description: boundedString(
+        item.query_description,
+        `${context}.query_description`,
+        2_000,
+      ),
+      requested_hs_code: hsCode(item.requested_hs_code, `${context}.requested_hs_code`),
+      hs_resolution: hsResolution as NonNullable<
+        ReviewRun["evidence_provenance"]
+      >["items"][number]["hs_resolution"],
+      resolved_hsk10: hsCode(item.resolved_hsk10, `${context}.resolved_hsk10`),
+      coverage: coverage as NonNullable<
+        ReviewRun["evidence_provenance"]
+      >["items"][number]["coverage"],
+      requirements_found: item.requirements_found,
+    };
+  });
+  if (items.length > 100 || (queryIntent !== null && items.length === 0)) {
+    throw new ContractError("evidenceProvenance.items: invalid bounded count");
+  }
+
+  const allowedMethods = new Set(["exact_hs", "dense", "bm25", "graph"]);
+  const allowedScoreKeys = new Set([
+    "exact_hs",
+    "dense",
+    "bm25",
+    "graph",
+    "rrf",
+    "lexical_overlap",
+  ]);
+  const allowedSourceTypes = new Set([
+    "law_article",
+    "customs_requirement",
+    "hsk_entry",
+    "notice",
+  ]);
+  const evidenceIds = new Set<string>();
+  const expectedRankByItem = new Map<string, number>();
+  const rankedEvidence = array(
+    raw.ranked_evidence,
+    "evidenceProvenance.ranked_evidence",
+  ).map((value, index) => {
+    const context = `evidenceProvenance.ranked_evidence[${index}]`;
+    const row = object(value, context);
+    const expectedKeys = [
+      "article_no",
+      "evidence_id",
+      "item_id",
+      "law_id",
+      "law_name",
+      "rank",
+      "raw_scores",
+      "retrieval_methods",
+      "score",
+      "source_type",
+      "source_uri",
+      "version_hash",
+    ].sort().join(",");
+    if (Object.keys(row).sort().join(",") !== expectedKeys) {
+      throw new ContractError(`${context}: unsupported field`);
+    }
+    const evidenceId = boundedString(row.evidence_id, `${context}.evidence_id`, 256);
+    const itemId = boundedString(row.item_id, `${context}.item_id`, 256);
+    if (!publicEvidenceIds.has(evidenceId) || evidenceIds.has(evidenceId)) {
+      throw new ContractError(`${context}.evidence_id: unknown or duplicate`);
+    }
+    if (!itemIds.has(itemId)) throw new ContractError(`${context}.item_id: unknown`);
+    evidenceIds.add(evidenceId);
+    if (!Number.isInteger(row.rank) || Number(row.rank) < 1) {
+      throw new ContractError(`${context}.rank: positive integer expected`);
+    }
+    const expectedRank = expectedRankByItem.get(itemId) ?? 1;
+    if (row.rank !== expectedRank) throw new ContractError(`${context}.rank: non-contiguous`);
+    expectedRankByItem.set(itemId, expectedRank + 1);
+    const sourceType = boundedString(row.source_type, `${context}.source_type`, 64);
+    if (!allowedSourceTypes.has(sourceType)) {
+      throw new ContractError(`${context}.source_type: unsupported`);
+    }
+    const retrievalMethods = array(
+      row.retrieval_methods,
+      `${context}.retrieval_methods`,
+    ).map((method, methodIndex) => {
+      const decoded = boundedString(
+        method,
+        `${context}.retrieval_methods[${methodIndex}]`,
+        32,
+      );
+      if (!allowedMethods.has(decoded)) {
+        throw new ContractError(`${context}.retrieval_methods: unsupported`);
+      }
+      return decoded as NonNullable<
+        ReviewRun["evidence_provenance"]
+      >["ranked_evidence"][number]["retrieval_methods"][number];
+    });
+    if (
+      retrievalMethods.length === 0
+      || new Set(retrievalMethods).size !== retrievalMethods.length
+    ) {
+      throw new ContractError(`${context}.retrieval_methods: non-empty unique list required`);
+    }
+    const numeric = (candidate: unknown, numericContext: string): number => {
+      if (
+        typeof candidate !== "number"
+        || !Number.isFinite(candidate)
+        || Math.abs(candidate) > 1_000_000_000
+      ) {
+        throw new ContractError(`${numericContext}: bounded finite number expected`);
+      }
+      return candidate;
+    };
+    const score = row.score === null ? null : numeric(row.score, `${context}.score`);
+    const rawScores = object(row.raw_scores, `${context}.raw_scores`);
+    const decodedRawScores: Record<string, number> = {};
+    for (const [key, scoreValue] of Object.entries(rawScores)) {
+      if (!allowedScoreKeys.has(key)) {
+        throw new ContractError(`${context}.raw_scores.${key}: unsupported`);
+      }
+      decodedRawScores[key] = numeric(scoreValue, `${context}.raw_scores.${key}`);
+    }
+    const optionalText = (
+      candidate: unknown,
+      optionalContext: string,
+      maximum: number,
+    ): string | null => candidate === null
+      ? null
+      : boundedString(candidate, optionalContext, maximum);
+    const versionHash = boundedString(row.version_hash, `${context}.version_hash`, 64);
+    if (!SHA256.test(versionHash)) {
+      throw new ContractError(`${context}.version_hash: SHA-256 expected`);
+    }
+    const sourceUri = boundedString(row.source_uri, `${context}.source_uri`, 2_048);
+    const parsedUri = safeUrl(sourceUri);
+    if (
+      parsedUri?.protocol !== "https:"
+      || parsedUri.username !== ""
+      || parsedUri.password !== ""
+      || parsedUri.search !== ""
+      || parsedUri.hash !== ""
+    ) {
+      throw new ContractError(`${context}.source_uri: sanitized HTTPS URI expected`);
+    }
+    return {
+      evidence_id: evidenceId,
+      item_id: itemId,
+      rank: Number(row.rank),
+      source_type: sourceType as NonNullable<
+        ReviewRun["evidence_provenance"]
+      >["ranked_evidence"][number]["source_type"],
+      retrieval_methods: retrievalMethods,
+      score,
+      raw_scores: decodedRawScores,
+      law_id: optionalText(row.law_id, `${context}.law_id`, 128),
+      law_name: optionalText(row.law_name, `${context}.law_name`, 512),
+      article_no: optionalText(row.article_no, `${context}.article_no`, 128),
+      version_hash: versionHash,
+      source_uri: sourceUri,
+    };
+  });
+  if (
+    rankedEvidence.length > 1_000
+    || evidenceIds.size !== publicEvidenceIds.size
+    || [...publicEvidenceIds].some((evidenceId) => !evidenceIds.has(evidenceId))
+  ) {
+    throw new ContractError("evidenceProvenance.ranked_evidence: public Evidence mismatch");
+  }
+  return {
+    query_intent: queryIntent,
+    items,
+    ranked_evidence: rankedEvidence,
   };
 }
 

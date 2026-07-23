@@ -37,6 +37,30 @@ const EMPTY_MODEL_EXECUTION: ModelExecutionSummary = {
   audit_complete: false,
   unmet_reason_codes: ["no_model_calls"],
 };
+const SYNTHETIC_EVIDENCE_DATASET = {
+  data_source: "SYNTHETIC_V3_NO_RAG_QUALITY",
+  expected_production_law_count: 58,
+  observed_law_count: 0,
+  observed_article_count: 0,
+  store_counts: {
+    postgresql_article_count: 0,
+    qdrant_point_count: 0,
+    neo4j_article_count: 0,
+  },
+  rag_quality_evaluated: false,
+} as const;
+const ACTUAL_THREE_LAW_EVIDENCE_DATASET = {
+  data_source: "ACTUAL_POSTGRESQL_QDRANT_NEO4J_READ_ONLY",
+  expected_production_law_count: 58,
+  observed_law_count: 3,
+  observed_article_count: 1_007,
+  store_counts: {
+    postgresql_article_count: 1_007,
+    qdrant_point_count: 1_007,
+    neo4j_article_count: 1_007,
+  },
+  rag_quality_evaluated: false,
+} as const;
 
 const run: ReviewRun = {
   review_run_id: "run-001",
@@ -273,6 +297,7 @@ function fakeApi(): ApiClient {
       claude_mode: "actual",
       evidence_profile: "synthetic-v3",
       evidence_scope_label: "TEST_ONLY_V3",
+      evidence_dataset: SYNTHETIC_EVIDENCE_DATASET,
       supported_review_as_of: SUPPORTED_REVIEW_AS_OF,
       planner_mode: "shadow",
       production_release: false,
@@ -330,6 +355,12 @@ describe("review workbench", () => {
     expect(root.textContent).toContain("Planner: shadow");
     expect(root.textContent).toContain("Auto-completion: OFF");
     expect(root.querySelector('[data-uat-metadata="verified"]')).not.toBeNull();
+    expect(root.querySelector<HTMLOptionElement>(
+      'option[value="actual_3law_structured_requirement_human_only"]',
+    )?.disabled).toBe(true);
+    expect(root.querySelector<HTMLOptionElement>(
+      'option[value="clean_text_no_requirement_uat"]',
+    )?.disabled).toBe(false);
 
     const caseButton = [...root.querySelectorAll("button")].find((item) => item.textContent?.includes("<img src=x"));
     expect(caseButton).toBeDefined();
@@ -612,10 +643,14 @@ describe("review workbench", () => {
       && !(scenario.expected.allowed_execution_statuses as readonly string[]).includes("failed")
     ))).toBe(true);
     expect(UAT_SCENARIOS.every((scenario) => (
-      scenario.expected.semantic?.runtime?.evidence_profile === "synthetic-v3"
-      && scenario.expected.semantic.runtime.evidence_scope_label === "TEST_ONLY_V3"
+      scenario.supported_evidence_profiles.length > 0
+      && scenario.diagnostic_observation.length > 0
     ))).toBe(true);
     const clean = UAT_SCENARIOS.find((item) => item.scenario_id === "clean_text_no_requirement_uat")!;
+    expect(clean.supported_evidence_profiles).toEqual([
+      "synthetic-v3",
+      "preserved-3law-v3-diagnostic",
+    ]);
     expect(clean.documents).toHaveLength(4);
     expect(clean.documents.every((document) => document.document_type !== "SUPPORTING")).toBe(true);
     expect(clean.documents.filter((document) => document.document_type === "CI" || document.document_type === "CO")
@@ -641,8 +676,16 @@ describe("review workbench", () => {
         minimum_result_count: 1,
       },
       narrative: { material_citations_complete: true },
-      runtime: { evidence_profile: "synthetic-v3", evidence_scope_label: "TEST_ONLY_V3" },
     }));
+    expect(clean.expected.semantic_by_evidence_profile?.["preserved-3law-v3-diagnostic"])
+      .toEqual(expect.objectContaining({
+        evidence: expect.objectContaining({
+          minimum_count: 1,
+          retrieval_status: "ok",
+          coverage: "complete",
+          requirements_found: false,
+        }),
+      }));
     expect(clean.expected.semantic?.model_execution).toEqual(expect.objectContaining({
       provider: "anthropic",
       minimum_call_count: 1,
@@ -670,6 +713,26 @@ describe("review workbench", () => {
     expect(untrusted.expected.semantic?.completion).toEqual({
       include_unmet_reason_codes: ["supporting_document_verification_incomplete"],
     });
+
+    const actualRequirement = UAT_SCENARIOS.find(
+      (item) => item.scenario_id === "actual_3law_structured_requirement_human_only",
+    )!;
+    expect(actualRequirement.supported_evidence_profiles)
+      .toEqual(["preserved-3law-v3-diagnostic"]);
+    expect(actualRequirement.documents).toHaveLength(4);
+    expect(actualRequirement.documents.find((document) => document.document_type === "CI")?.content_text)
+      .toContain("HS Code: 0303540000");
+    expect(actualRequirement.expected).toEqual(expect.objectContaining({
+      assessment: "issues_detected",
+      disposition: "human_review_required",
+      semantic: expect.objectContaining({
+        evidence: expect.objectContaining({
+          retrieval_status: "partial",
+          coverage: "partial",
+          requirements_found: true,
+        }),
+      }),
+    }));
   });
 
   it.each([
@@ -731,8 +794,8 @@ describe("review workbench", () => {
     expect(root.textContent).toContain("요건 검색 결과: false / expected false");
     expect(root.textContent).toContain("Evidence 대상 품목: satisfied / expected satisfied");
     expect(root.textContent).toContain("XAI material citation: complete / expected complete");
-    expect(root.textContent).toContain("Evidence profile: synthetic-v3 / expected synthetic-v3");
-    expect(root.textContent).toContain("Evidence scope: TEST ONLY V3 / expected TEST ONLY V3");
+    expect(root.textContent).toContain("Evidence runtime: configured / expected configured");
+    expect(root.textContent).toContain("시나리오 Evidence 프로필: compatible / expected compatible");
     expect(root.textContent).toContain("필수 심사 단계 retrieve_regulations: completed / expected completed");
     expect(root.textContent).toContain(`Review 기준일 결박: ${SUPPORTED_REVIEW_AS_OF} / expected ${SUPPORTED_REVIEW_AS_OF}`);
     expect(root.textContent).toContain("Review Claude provider: anthropic / expected anthropic");
@@ -935,7 +998,7 @@ describe("review workbench", () => {
 
     await app.start();
     [...root.querySelectorAll<HTMLButtonElement>("button")].find((item) => item.textContent?.includes("합성 무요건 정상 Case"))?.click();
-    await vi.waitFor(() => expect(root.textContent).toContain("시나리오 기능: FAIL"));
+    await vi.waitFor(() => expect(root.textContent).toContain("시나리오 기능: INVALID"));
 
     expect(root.textContent).toContain("UNKNOWN — METADATA UNAVAILABLE");
     expect(root.textContent).toContain("Claude: unknown");
@@ -1001,20 +1064,85 @@ describe("review workbench", () => {
       text_only: true,
       auto_completion_enabled: false,
       claude_mode: "actual",
-      evidence_profile: "preserved-3law",
-      evidence_scope_label: "REAL_3_OF_58",
+      evidence_profile: "preserved-3law-v3-diagnostic",
+      evidence_scope_label: "ACTUAL_3_LAW_RAG_3_OF_58",
+      evidence_dataset: ACTUAL_THREE_LAW_EVIDENCE_DATASET,
       supported_review_as_of: SUPPORTED_REVIEW_AS_OF,
       planner_mode: "diagnostic_active",
       production_release: false,
     });
+    const actualRun: ReviewRun = {
+      ...run,
+      evidence_provenance: {
+        query_intent: "required_import_documents",
+        items: [{
+          item_id: "item-1",
+          query_description: "Stainless steel bolts 수입 법령 및 요건",
+          requested_hs_code: "7318151000",
+          hs_resolution: "exact",
+          resolved_hsk10: "7318151000",
+          coverage: "complete",
+          requirements_found: false,
+        }],
+        ranked_evidence: [{
+          evidence_id: "evidence-1",
+          item_id: "item-1",
+          rank: 1,
+          source_type: "law_article",
+          retrieval_methods: ["dense", "bm25", "graph"],
+          score: 0.87,
+          raw_scores: { dense: 0.81, bm25: 4.2, graph: 0.7, rrf: 0.09 },
+          law_id: "LAW-1",
+          law_name: "관세법",
+          article_no: "제241조",
+          version_hash: "c".repeat(64),
+          source_uri: "https://law.example/1",
+        }],
+      },
+    };
+    vi.mocked(api.listReviewRuns).mockResolvedValue([actualRun]);
+    vi.mocked(api.getReviewRun).mockResolvedValue(actualRun);
     const app = new WorkbenchApp(root, api, auth(true));
 
     await app.start();
 
-    expect(root.textContent).toContain("Evidence: preserved-3law · REAL 3/58");
+    expect(root.textContent).toContain("ACTUAL 3-LAW RAG · 3 OF 58 · DIAGNOSTIC · AUTO OFF");
+    expect(root.textContent).toContain(
+      "Evidence: preserved-3law-v3-diagnostic · ACTUAL 3-LAW RAG · 3 OF 58",
+    );
+    expect(root.textContent).toContain("보존 PostgreSQL structured lookup, Qdrant dense/BM25, Neo4j graph 확장을 실제 실행합니다.");
+    expect(root.textContent).toContain("Evidence 프로필은 Review별 선택값이 아니라 UAT 시작 시 결박되는 실행 환경입니다.");
+    expect(root.querySelector('[data-evidence-profile="preserved-3law-v3-diagnostic"][data-profile-active="true"]'))
+      .not.toBeNull();
+    expect(root.querySelector<HTMLOptionElement>(
+      'option[value="actual_3law_structured_requirement_human_only"]',
+    )?.disabled).toBe(false);
+    expect(root.querySelector<HTMLOptionElement>(
+      'option[value="clean_text_production_candidate_blocked"]',
+    )?.disabled).toBe(true);
     expect(root.textContent).toContain(`Review 기준일: ${SUPPORTED_REVIEW_AS_OF}`);
     expect(root.textContent).toContain("Planner: diagnostic active");
+    expect(root.textContent).toContain("Data: 3/58 laws · 1007 articles");
+    expect(root.textContent).toContain("RAG quality evaluated: NO");
+    expect(root.textContent).toContain("PostgreSQL1007 articles");
+    expect(root.textContent).toContain("Qdrant1007 points");
+    expect(root.textContent).toContain("Neo4j1007 articles");
     expect(root.querySelector(".uat-runtime-fact--warning")).not.toBeNull();
+    [...root.querySelectorAll<HTMLButtonElement>("button")]
+      .find((item) => item.textContent?.includes("<img src=x"))
+      ?.click();
+    await vi.waitFor(() => expect(root.textContent).toContain("ACTUAL 3-LAW RAG 실행 근거"));
+    expect(root.textContent).toContain("Stainless steel bolts 수입 법령 및 요건");
+    expect(root.textContent).toContain("7318151000");
+    expect(root.textContent).toContain("Structured 해소exact");
+    expect(root.textContent).toContain("dense");
+    expect(root.textContent).toContain("bm25");
+    expect(root.textContent).toContain("graph");
+    expect(root.textContent).toContain("#1");
+    expect(root.textContent).toContain("관세법 · 제241조");
+    expect(root.textContent).toContain("final 0.870000");
+    expect(root.querySelector<HTMLAnchorElement>('.evidence__source-link')?.href)
+      .toBe("https://law.example/1");
     app.destroy();
   });
 
