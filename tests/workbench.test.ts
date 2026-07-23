@@ -1106,7 +1106,9 @@ describe("review workbench", () => {
 
     await app.start();
 
-    expect(root.textContent).toContain("ACTUAL 3-LAW RAG · 3 OF 58 · DIAGNOSTIC · AUTO OFF");
+    expect(root.textContent).toContain(
+      "ACTUAL 3-LAW RAG · 3 OF 58 · DIAGNOSTIC · TEXT ONLY · AUTO OFF · NOT PRODUCTION",
+    );
     expect(root.textContent).toContain(
       "Evidence: preserved-3law-v3-diagnostic · ACTUAL 3-LAW RAG · 3 OF 58",
     );

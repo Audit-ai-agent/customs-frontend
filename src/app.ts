@@ -414,7 +414,7 @@ export class WorkbenchApp {
       },
       el("strong", {
         text: actualThreeLawRag
-          ? "ACTUAL 3-LAW RAG · 3 OF 58 · DIAGNOSTIC · AUTO OFF"
+          ? "ACTUAL 3-LAW RAG · 3 OF 58 · DIAGNOSTIC · TEXT ONLY · AUTO OFF · NOT PRODUCTION"
           : "LOCAL UAT / DIAGNOSTIC · TEXT ONLY · NOT PRODUCTION",
       }),
       el(
