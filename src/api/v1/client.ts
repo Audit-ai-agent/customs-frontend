@@ -21,6 +21,7 @@ import {
   decodeSession,
   decodeStageEvent,
   decodeSupportingDocument,
+  decodeUatEvidenceTrace,
   MAX_SUPPORTING_DOCUMENTS,
 } from "./decoders";
 import type {
@@ -50,6 +51,7 @@ import type {
   Session,
   SupportingDocumentCreate,
   SupportingDocumentRecord,
+  UatEvidenceTrace,
   VerificationAssertionCreate,
 } from "./types";
 
@@ -373,6 +375,14 @@ export class ApiClient {
       this.assertOrg(item.org_id, "Review Run");
       return item;
     });
+  }
+
+  getUatEvidenceTrace(runId: string): Promise<UatEvidenceTrace> {
+    return this.request(
+      `/uat/review-runs/${segment(runId)}/evidence-trace`,
+      { method: "GET" },
+      decodeUatEvidenceTrace,
+    );
   }
 
   listRevisionProposals(runId: string): Promise<CorrectionProposal[]> {

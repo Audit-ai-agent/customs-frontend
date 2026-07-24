@@ -161,6 +161,49 @@ const reviewRunPayload = (overrides: Record<string, unknown> = {}) => {
 };
 
 describe("Backend API v1 client", () => {
+  it("accepts only the bounded, authenticated scenario-eval Evidence trace projection", async () => {
+    const trace = {
+      schema_version: "customs-backend-uat-evidence-trace/v1",
+      request_id: "run-1-retrieve-0",
+      knowledge_snapshot_id: "preserved-three-law-snapshot",
+      retrieval: {
+        structured: { attempted: true, succeeded: true, result_count: 1, duration_ms: 12, top_k_count: 1 },
+        dense: { attempted: true, succeeded: true, result_count: 10, duration_ms: 25, top_k_count: 4 },
+        bm25: { attempted: true, succeeded: true, result_count: 8, duration_ms: 18, top_k_count: 3 },
+        graph: { attempted: true, succeeded: true, result_count: 2, duration_ms: 9, top_k_count: 0 },
+      },
+    };
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(json(trace));
+    await expect(
+      new ApiClient(fetcher, () => "memory-only-token").getUatEvidenceTrace("run-1"),
+    ).resolves.toEqual(trace);
+    expect(fetcher).toHaveBeenCalledWith(
+      "/api/v1/uat/review-runs/run-1/evidence-trace",
+      expect.objectContaining({ method: "GET", credentials: "same-origin", redirect: "error" }),
+    );
+    expect(new Headers(fetcher.mock.calls[0]?.[1]?.headers).get("Authorization"))
+      .toBe("Bearer memory-only-token");
+
+    await expect(new ApiClient(vi.fn<typeof fetch>().mockResolvedValue(json({
+      ...trace,
+      provider_identity: { service_token: "must-not-cross" },
+    }))).getUatEvidenceTrace("run-1")).rejects.toThrow("unsupported or sensitive field");
+    await expect(new ApiClient(vi.fn<typeof fetch>().mockResolvedValue(json({
+      ...trace,
+      retrieval: {
+        ...trace.retrieval,
+        graph: { ...trace.retrieval.graph, succeeded: false },
+      },
+    }))).getUatEvidenceTrace("run-1")).rejects.toThrow("successful attempted stage required");
+    await expect(new ApiClient(vi.fn<typeof fetch>().mockResolvedValue(json({
+      ...trace,
+      retrieval: {
+        ...trace.retrieval,
+        dense: { ...trace.retrieval.dense, top_k_count: 11 },
+      },
+    }))).getUatEvidenceTrace("run-1")).rejects.toThrow("cannot exceed result_count");
+  });
+
   it("reads only safe LOCAL UAT runtime identity through the Backend boundary", async () => {
     const metadata = {
       mode: "local_uat",
@@ -169,7 +212,10 @@ describe("Backend API v1 client", () => {
       auto_completion_enabled: false,
       claude_mode: "actual",
       evidence_profile: "preserved-3law-v3-diagnostic",
+      evidence_scope: "ACTUAL_3_LAW_RAG_3_OF_58",
       evidence_scope_label: "ACTUAL_3_LAW_RAG_3_OF_58",
+      evidence_data_source: "ACTUAL_POSTGRESQL_QDRANT_NEO4J_READ_ONLY",
+      evidence_policy_mode: "ACTUAL_CODES_HUMAN_ONLY",
       evidence_dataset: ACTUAL_THREE_LAW_EVIDENCE_DATASET,
       supported_review_as_of: "2026-07-10",
       planner_mode: "shadow",
@@ -185,6 +231,22 @@ describe("Backend API v1 client", () => {
     }));
     const headers = new Headers(fetcher.mock.calls[0]?.[1]?.headers);
     expect(headers.get("Authorization")).toBe("Bearer memory-only-token");
+
+    const scenarioEvalMetadata = {
+      ...metadata,
+      evidence_profile: "preserved-3law-v3-scenario-eval",
+      evidence_scope: "ACTUAL_3_LAW_RAG_SCENARIO_EVAL_3_OF_58",
+      evidence_scope_label: "ACTUAL_3_LAW_RAG_SCENARIO_EVAL_3_OF_58",
+      evidence_policy_mode: "SEALED_TEST_ONLY_ACTUAL_CCCT_HUMAN_ONLY",
+      planner_mode: "diagnostic_active",
+    };
+    await expect(new ApiClient(vi.fn<typeof fetch>().mockResolvedValue(json(
+      scenarioEvalMetadata,
+    ))).getUatMetadata()).resolves.toEqual(scenarioEvalMetadata);
+    await expect(new ApiClient(vi.fn<typeof fetch>().mockResolvedValue(json({
+      ...scenarioEvalMetadata,
+      evidence_policy_mode: "ACTUAL_CODES_HUMAN_ONLY",
+    }))).getUatMetadata()).rejects.toThrow("incoherent Evidence profile observation");
 
     const attacked = vi.fn<typeof fetch>().mockResolvedValue(json({ ...metadata, provider_token: "must-not-cross" }));
     await expect(new ApiClient(attacked).getUatMetadata()).rejects.toThrow("unsupported or sensitive field");
@@ -801,6 +863,7 @@ describe("Backend API v1 client", () => {
       version_hash: "1".repeat(64),
     };
     const evidenceProvenance = {
+      request_id: "run-1-retrieve-0",
       query_intent: "required_import_documents",
       items: [{
         item_id: "item-1",
@@ -1263,6 +1326,7 @@ describe("Backend API v1 client", () => {
         review_stage_trace: mandatoryStageTrace,
         rag_evidence: [ragEvidence],
         evidence_provenance: {
+          request_id: "run-1-retrieve-0",
           query_intent: "required_import_documents",
           items: [{
             item_id: "item-1",

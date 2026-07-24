@@ -36,6 +36,32 @@ export interface Session {
 export type LocalUatMetadata = BackendSchemas["UatMetadataResponse"];
 export type ModelExecutionSummary = BackendSchemas["ModelExecutionSummary"];
 
+export interface UatEvidenceRetrievalStage {
+  attempted: true;
+  succeeded: true;
+  result_count: number;
+  duration_ms: number;
+  top_k_count: number;
+}
+
+/**
+ * Authenticated, bounded Backend projection of the Data scenario-eval trace.
+ *
+ * This deliberately excludes the Data URL, provider identity object, query
+ * text, raw response, credentials, and file-system path.
+ */
+export interface UatEvidenceTrace {
+  schema_version: "customs-backend-uat-evidence-trace/v1";
+  request_id: string;
+  knowledge_snapshot_id: string;
+  retrieval: {
+    structured: UatEvidenceRetrievalStage;
+    dense: UatEvidenceRetrievalStage;
+    bm25: UatEvidenceRetrievalStage;
+    graph: UatEvidenceRetrievalStage;
+  };
+}
+
 export interface CaseSummary {
   case_id: string;
   org_id: string;
@@ -162,6 +188,7 @@ export interface RankedEvidenceProvenance {
 }
 
 export interface EvidenceRetrievalProvenance {
+  request_id: string;
   query_intent: string | null;
   items: EvidenceQueryProvenance[];
   ranked_evidence: RankedEvidenceProvenance[];

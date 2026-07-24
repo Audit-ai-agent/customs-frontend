@@ -96,10 +96,16 @@ for (const marker of ['com.customs.runtime="local-user-uat-diagnostic"', 'com.cu
 if (!uatDockerfile.includes("EXPOSE 5173") || !uatDockerfile.includes("HEALTHCHECK")) {
   violations.push("LOCAL UAT image must expose and healthcheck only its internal static runtime port");
 }
-if (!uatDockerfile.includes("RUN npm run build")
+if (!uatDockerfile.includes("RUN npm run build:uat")
+  || !uatDockerfile.includes("COPY --chown=node:node scripts ./scripts")
   || !uatDockerfile.includes("COPY --from=build /workspace/dist /usr/share/nginx/html")
   || uatDockerfile.includes("vite --host")) {
   violations.push("LOCAL UAT must serve built external assets instead of Vite development style injection");
+}
+if (!uatDockerfile.includes("uat-scenario-export.json")
+  && !(await readFile(new URL("../package.json", import.meta.url), "utf8"))
+    .includes("--output dist/uat-scenario-export.json")) {
+  violations.push("LOCAL UAT build must emit the canonical test-only scenario export");
 }
 for (const marker of ["BACKEND_ORIGIN", "OIDC_BACKEND_ORIGIN", "BUILT ASSETS / STRICT CSP"]) {
   if (!uatEntrypoint.includes(marker)) violations.push(`LOCAL UAT fail-closed entrypoint marker is missing: ${marker}`);

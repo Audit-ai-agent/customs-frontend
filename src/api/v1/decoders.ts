@@ -23,6 +23,7 @@ import type {
   ReviewStageEvent,
   Session,
   SupportingDocumentRecord,
+  UatEvidenceTrace,
   UatScenario,
 } from "./types";
 
@@ -151,6 +152,82 @@ export class ContractError extends Error {
   }
 }
 
+export function decodeUatEvidenceTrace(value: unknown): UatEvidenceTrace {
+  const raw = object(value, "uatEvidenceTrace");
+  if (
+    Object.keys(raw).sort().join(",")
+    !== "knowledge_snapshot_id,request_id,retrieval,schema_version"
+  ) {
+    throw new ContractError("uatEvidenceTrace: unsupported or sensitive field");
+  }
+  if (raw.schema_version !== "customs-backend-uat-evidence-trace/v1") {
+    throw new ContractError("uatEvidenceTrace.schema_version: unsupported");
+  }
+  const requestId = boundedString(raw.request_id, "uatEvidenceTrace.request_id", 128);
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u.test(requestId)) {
+    throw new ContractError("uatEvidenceTrace.request_id: invalid");
+  }
+  const knowledgeSnapshotId = boundedString(
+    raw.knowledge_snapshot_id,
+    "uatEvidenceTrace.knowledge_snapshot_id",
+    256,
+  );
+  const retrieval = object(raw.retrieval, "uatEvidenceTrace.retrieval");
+  if (Object.keys(retrieval).sort().join(",") !== "bm25,dense,graph,structured") {
+    throw new ContractError("uatEvidenceTrace.retrieval: unsupported field");
+  }
+  const stage = (
+    value: unknown,
+    context: string,
+  ): UatEvidenceTrace["retrieval"]["structured"] => {
+    const decoded = object(value, context);
+    if (
+      Object.keys(decoded).sort().join(",")
+      !== "attempted,duration_ms,result_count,succeeded,top_k_count"
+    ) {
+      throw new ContractError(`${context}: unsupported field`);
+    }
+    if (decoded.attempted !== true || decoded.succeeded !== true) {
+      throw new ContractError(`${context}: successful attempted stage required`);
+    }
+    const boundedInteger = (field: string, maximum: number): number => {
+      const candidate = decoded[field];
+      if (
+        typeof candidate !== "number"
+        || !Number.isSafeInteger(candidate)
+        || candidate < 0
+        || candidate > maximum
+      ) {
+        throw new ContractError(`${context}.${field}: bounded integer expected`);
+      }
+      return candidate;
+    };
+    const resultCount = boundedInteger("result_count", 10_000_000);
+    const topKCount = boundedInteger("top_k_count", 10_000);
+    if (topKCount > resultCount) {
+      throw new ContractError(`${context}.top_k_count: cannot exceed result_count`);
+    }
+    return {
+      attempted: true,
+      succeeded: true,
+      result_count: resultCount,
+      duration_ms: boundedInteger("duration_ms", 300_000),
+      top_k_count: topKCount,
+    };
+  };
+  return {
+    schema_version: "customs-backend-uat-evidence-trace/v1",
+    request_id: requestId,
+    knowledge_snapshot_id: knowledgeSnapshotId,
+    retrieval: {
+      structured: stage(retrieval.structured, "uatEvidenceTrace.retrieval.structured"),
+      dense: stage(retrieval.dense, "uatEvidenceTrace.retrieval.dense"),
+      bm25: stage(retrieval.bm25, "uatEvidenceTrace.retrieval.bm25"),
+      graph: stage(retrieval.graph, "uatEvidenceTrace.retrieval.graph"),
+    },
+  };
+}
+
 export function decodeSession(value: unknown): Session {
   const raw = object(value, "session");
   string(raw.subject, "session.subject");
@@ -173,7 +250,10 @@ export function decodeLocalUatMetadata(value: unknown): LocalUatMetadata {
     "text_only",
     "auto_completion_enabled",
     "claude_mode",
+    "evidence_data_source",
+    "evidence_policy_mode",
     "evidence_profile",
+    "evidence_scope",
     "evidence_scope_label",
     "evidence_dataset",
     "supported_review_as_of",
@@ -194,11 +274,47 @@ export function decodeLocalUatMetadata(value: unknown): LocalUatMetadata {
   };
   const evidenceProfile = oneOf(
     "evidence_profile",
-    ["synthetic-v3", "preserved-3law-v3-diagnostic", "unknown"] as const,
+    [
+      "synthetic-v3",
+      "preserved-3law-v3-diagnostic",
+      "preserved-3law-v3-scenario-eval",
+      "unknown",
+    ] as const,
+  );
+  const evidenceScope = oneOf(
+    "evidence_scope",
+    [
+      "TEST_ONLY_V3",
+      "ACTUAL_3_LAW_RAG_3_OF_58",
+      "ACTUAL_3_LAW_RAG_SCENARIO_EVAL_3_OF_58",
+      "UNKNOWN",
+    ] as const,
   );
   const evidenceScopeLabel = oneOf(
     "evidence_scope_label",
-    ["TEST_ONLY_V3", "ACTUAL_3_LAW_RAG_3_OF_58", "UNKNOWN"] as const,
+    [
+      "TEST_ONLY_V3",
+      "ACTUAL_3_LAW_RAG_3_OF_58",
+      "ACTUAL_3_LAW_RAG_SCENARIO_EVAL_3_OF_58",
+      "UNKNOWN",
+    ] as const,
+  );
+  const evidenceDataSource = oneOf(
+    "evidence_data_source",
+    [
+      "SYNTHETIC_V3_NO_RAG_QUALITY",
+      "ACTUAL_POSTGRESQL_QDRANT_NEO4J_READ_ONLY",
+      "UNKNOWN",
+    ] as const,
+  );
+  const evidencePolicyMode = oneOf(
+    "evidence_policy_mode",
+    [
+      "SYNTHETIC_FIXTURE",
+      "ACTUAL_CODES_HUMAN_ONLY",
+      "SEALED_TEST_ONLY_ACTUAL_CCCT_HUMAN_ONLY",
+      "UNKNOWN",
+    ] as const,
   );
   const dataset = object(raw.evidence_dataset, "localUatMetadata.evidence_dataset");
   const datasetKeys = [
@@ -247,6 +363,9 @@ export function decodeLocalUatMetadata(value: unknown): LocalUatMetadata {
   ].includes(dataSource)) {
     throw new ContractError("localUatMetadata.evidence_dataset.data_source: unsupported value");
   }
+  if (evidenceScope !== evidenceScopeLabel || evidenceDataSource !== dataSource) {
+    throw new ContractError("localUatMetadata: duplicated Evidence identity fields disagree");
+  }
   if (dataset.rag_quality_evaluated !== false) {
     throw new ContractError(
       "localUatMetadata.evidence_dataset.rag_quality_evaluated: false required",
@@ -283,16 +402,28 @@ export function decodeLocalUatMetadata(value: unknown): LocalUatMetadata {
     10_000_000,
   );
   const actualThreeLaw = evidenceProfile === "preserved-3law-v3-diagnostic"
-    && evidenceScopeLabel === "ACTUAL_3_LAW_RAG_3_OF_58"
+    && evidenceScope === "ACTUAL_3_LAW_RAG_3_OF_58"
+    && evidencePolicyMode === "ACTUAL_CODES_HUMAN_ONLY"
     && dataSource === "ACTUAL_POSTGRESQL_QDRANT_NEO4J_READ_ONLY"
     && expectedLawCount === 58
     && observedLawCount === 3
-    && observedArticleCount > 0
+    && observedArticleCount === 1_007
+    && postgresqlArticleCount === observedArticleCount
+    && qdrantPointCount === observedArticleCount
+    && neo4jArticleCount === observedArticleCount;
+  const scenarioEval = evidenceProfile === "preserved-3law-v3-scenario-eval"
+    && evidenceScope === "ACTUAL_3_LAW_RAG_SCENARIO_EVAL_3_OF_58"
+    && evidencePolicyMode === "SEALED_TEST_ONLY_ACTUAL_CCCT_HUMAN_ONLY"
+    && dataSource === "ACTUAL_POSTGRESQL_QDRANT_NEO4J_READ_ONLY"
+    && expectedLawCount === 58
+    && observedLawCount === 3
+    && observedArticleCount === 1_007
     && postgresqlArticleCount === observedArticleCount
     && qdrantPointCount === observedArticleCount
     && neo4jArticleCount === observedArticleCount;
   const synthetic = evidenceProfile === "synthetic-v3"
-    && evidenceScopeLabel === "TEST_ONLY_V3"
+    && evidenceScope === "TEST_ONLY_V3"
+    && evidencePolicyMode === "SYNTHETIC_FIXTURE"
     && dataSource === "SYNTHETIC_V3_NO_RAG_QUALITY"
     && expectedLawCount === 58
     && observedLawCount === 0
@@ -301,7 +432,8 @@ export function decodeLocalUatMetadata(value: unknown): LocalUatMetadata {
     && qdrantPointCount === 0
     && neo4jArticleCount === 0;
   const unknown = evidenceProfile === "unknown"
-    && evidenceScopeLabel === "UNKNOWN"
+    && evidenceScope === "UNKNOWN"
+    && evidencePolicyMode === "UNKNOWN"
     && dataSource === "UNKNOWN"
     && expectedLawCount === 58
     && observedLawCount === 0
@@ -309,7 +441,7 @@ export function decodeLocalUatMetadata(value: unknown): LocalUatMetadata {
     && postgresqlArticleCount === 0
     && qdrantPointCount === 0
     && neo4jArticleCount === 0;
-  if (!actualThreeLaw && !synthetic && !unknown) {
+  if (!actualThreeLaw && !scenarioEval && !synthetic && !unknown) {
     throw new ContractError("localUatMetadata: incoherent Evidence profile observation");
   }
   return {
@@ -319,7 +451,10 @@ export function decodeLocalUatMetadata(value: unknown): LocalUatMetadata {
     auto_completion_enabled: exact("auto_completion_enabled", false),
     claude_mode: exact("claude_mode", "actual"),
     evidence_profile: evidenceProfile,
+    evidence_scope: evidenceScope,
     evidence_scope_label: evidenceScopeLabel,
+    evidence_data_source: evidenceDataSource,
+    evidence_policy_mode: evidencePolicyMode,
     evidence_dataset: {
       data_source: dataSource as LocalUatMetadata["evidence_dataset"]["data_source"],
       expected_production_law_count: expectedLawCount,
@@ -1297,8 +1432,15 @@ function decodeEvidenceProvenance(
   publicEvidenceIds: ReadonlySet<string>,
 ): NonNullable<ReviewRun["evidence_provenance"]> {
   const raw = object(value, "reviewRun.result_detail.evidence_provenance");
-  if (Object.keys(raw).sort().join(",") !== ["items", "query_intent", "ranked_evidence"].join(",")) {
+  if (
+    Object.keys(raw).sort().join(",")
+    !== ["items", "query_intent", "ranked_evidence", "request_id"].join(",")
+  ) {
     throw new ContractError("evidenceProvenance: unsupported or sensitive field");
+  }
+  const requestId = boundedString(raw.request_id, "evidenceProvenance.request_id", 128);
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u.test(requestId)) {
+    throw new ContractError("evidenceProvenance.request_id: invalid");
   }
   const queryIntent = raw.query_intent === null
     ? null
@@ -1508,6 +1650,7 @@ function decodeEvidenceProvenance(
     throw new ContractError("evidenceProvenance.ranked_evidence: public Evidence mismatch");
   }
   return {
+    request_id: requestId,
     query_intent: queryIntent,
     items,
     ranked_evidence: rankedEvidence,

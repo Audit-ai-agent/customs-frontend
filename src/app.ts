@@ -29,18 +29,27 @@ import type {
   Session,
   SupportingDocumentCreate,
   SupportingDocumentRecord,
+  UatEvidenceTrace,
 } from "./api/v1/types";
 import type { OidcSession } from "./auth";
 import { badge, button, el, empty, formatDate, humanize, labeledControl } from "./dom";
 import {
+  bindLocalUatScenario,
   localUatInputManifestSha256,
   localUatScenarioExternalReference,
   localUatScenarioInputManifest,
+  localUatScenarioSupportsProfile,
+  localUatScenarioVariant,
+  restoreBoundLocalUatScenario,
+  LOCAL_UAT_EVIDENCE_PROFILES,
   UAT_SCENARIOS,
+  type BoundLocalUatScenario,
   type LocalUatEvidenceProfile,
   type LocalUatInputManifest,
   type LocalUatModelExecutionExpectation,
   type LocalUatScenario,
+  type LocalUatScenarioVariant,
+  type LocalUatSemanticExpectation,
 } from "./uat/scenarios";
 
 const MAX_PRIMARY_DOCUMENTS = 6;
@@ -61,6 +70,9 @@ interface UatRuntimeDisplayMetadata {
   auto_completion_enabled: boolean;
   claude_mode: string;
   evidence_profile: string;
+  evidence_scope: string;
+  evidence_data_source: string;
+  evidence_policy_mode: string;
   evidence_scope_label: string;
   evidence_dataset: {
     data_source: string;
@@ -88,6 +100,9 @@ const SAFE_UNKNOWN_UAT_METADATA: UatRuntimeDisplayMetadata = Object.freeze({
   auto_completion_enabled: false,
   claude_mode: "unknown",
   evidence_profile: "unknown",
+  evidence_scope: "UNKNOWN",
+  evidence_data_source: "UNKNOWN",
+  evidence_policy_mode: "UNKNOWN",
   evidence_scope_label: "UNKNOWN",
   evidence_dataset: {
     data_source: "UNKNOWN",
@@ -105,6 +120,20 @@ const SAFE_UNKNOWN_UAT_METADATA: UatRuntimeDisplayMetadata = Object.freeze({
   planner_mode: "unknown",
   production_release: false,
 });
+
+const SCENARIO_EVAL_PROFILE: LocalUatEvidenceProfile = "preserved-3law-v3-scenario-eval";
+
+const isActualThreeLawProfile = (profile: string): boolean => (
+  profile === "preserved-3law-v3-diagnostic"
+  || profile === SCENARIO_EVAL_PROFILE
+);
+
+const isScenarioEvalRuntime = (metadata: UatRuntimeDisplayMetadata): boolean => (
+  metadata.evidence_profile === SCENARIO_EVAL_PROFILE
+  && metadata.evidence_scope === "ACTUAL_3_LAW_RAG_SCENARIO_EVAL_3_OF_58"
+  && metadata.evidence_data_source === "ACTUAL_POSTGRESQL_QDRANT_NEO4J_READ_ONLY"
+  && metadata.evidence_policy_mode === "SEALED_TEST_ONLY_ACTUAL_CCCT_HUMAN_ONLY"
+);
 
 interface ReviewRecoveryRecord {
   org_id: string;
@@ -185,7 +214,10 @@ type WorkbenchApi = Pick<
   | "answerCaseQuestion"
   | "listChat"
   | "getAuditEvents"
-> & { getUatMetadata?: () => Promise<LocalUatMetadata> };
+> & {
+  getUatMetadata?: () => Promise<LocalUatMetadata>;
+  getUatEvidenceTrace?: (runId: string) => Promise<UatEvidenceTrace>;
+};
 
 interface WorkbenchState {
   session: Session | undefined;
@@ -208,6 +240,8 @@ interface WorkbenchState {
   notice: string | undefined;
   uatMetadata: UatRuntimeDisplayMetadata;
   uatMetadataVerified: boolean;
+  uatEvidenceTrace: UatEvidenceTrace | undefined;
+  uatEvidenceTraceStatus: "not_applicable" | "available" | "unavailable";
 }
 
 export class WorkbenchApp {
@@ -232,6 +266,8 @@ export class WorkbenchApp {
     busy: false,
     uatMetadata: SAFE_UNKNOWN_UAT_METADATA,
     uatMetadataVerified: false,
+    uatEvidenceTrace: undefined,
+    uatEvidenceTraceStatus: "not_applicable",
   };
   private pollTimer: number | undefined;
   private pollFlight:
@@ -252,7 +288,7 @@ export class WorkbenchApp {
   private readonly recoveryByCase = new Map<string, ReviewRecoveryRecord>();
   private readonly proposalDecisionRecovery = new Map<string, ProposalDecisionRecoveryRecord>();
   private readonly deliveryReconciliationRecovery = new Map<string, DeliveryReconciliationRecoveryRecord>();
-  private readonly scenarioByCase = new Map<string, LocalUatScenario>();
+  private readonly scenarioByCase = new Map<string, BoundLocalUatScenario>();
 
   constructor(
     private readonly root: HTMLElement,
@@ -452,14 +488,15 @@ export class WorkbenchApp {
     const metadata = this.state.uatMetadata;
     const metadataVerified = this.state.uatMetadataVerified;
     const modeLabel = metadataVerified ? humanize(metadata.mode) : "UNKNOWN — METADATA UNAVAILABLE";
-    const actualThreeLawRag = metadataVerified
-      && metadata.evidence_profile === "preserved-3law-v3-diagnostic"
-      && metadata.evidence_scope_label === "ACTUAL_3_LAW_RAG_3_OF_58";
-    const evidenceScopeLabel = actualThreeLawRag
-      ? "ACTUAL 3-LAW RAG · 3 OF 58"
-      : metadata.evidence_scope_label === "TEST_ONLY_V3"
-        ? "TEST-ONLY V3"
-        : metadata.evidence_scope_label;
+    const scenarioEval = metadataVerified && isScenarioEvalRuntime(metadata);
+    const actualThreeLawRag = metadataVerified && isActualThreeLawProfile(metadata.evidence_profile);
+    const evidenceScopeLabel = scenarioEval
+      ? "ACTUAL 3-LAW RAG SCENARIO EVAL · 3 OF 58"
+      : metadata.evidence_scope === "ACTUAL_3_LAW_RAG_3_OF_58"
+        ? "ACTUAL 3-LAW RAG · 3 OF 58"
+        : metadata.evidence_scope === "TEST_ONLY_V3"
+          ? "TEST-ONLY V3"
+          : metadata.evidence_scope;
     const scopeIsPartial = actualThreeLawRag;
     const dataset = metadata.evidence_dataset;
     const unsafe = metadata.auto_completion_enabled || metadata.production_release || !metadata.text_only;
@@ -468,11 +505,36 @@ export class WorkbenchApp {
       ? "실행 환경 확인 불가 · 결과 사용 중지 · NOT PRODUCTION"
       : runtimeState === "unsafe"
         ? "UAT 안전 경계 위반 · 결과 사용 금지 · NOT PRODUCTION"
+        : scenarioEval
+          ? "ACTUAL 3-LAW RAG SCENARIO EVAL · 9/9 · 3 OF 58 · TEXT ONLY · AUTO OFF · NOT PRODUCTION"
+          : actualThreeLawRag
+            ? "ACTUAL 3-LAW RAG · 3 OF 58 · DIAGNOSTIC · TEXT ONLY · AUTO OFF · NOT PRODUCTION"
+            : "LOCAL UAT / DIAGNOSTIC · TEXT ONLY · NOT PRODUCTION";
+    const provenanceStatements = !metadataVerified
+      ? [
+          "통관 입력 자료·Evidence·정책 출처를 확인할 수 없습니다.",
+          "실행 환경을 다시 확인하기 전에는 이 결과를 사용하지 마십시오.",
+          "법적 판단·Production 자동완료 효력이 없습니다.",
+        ]
+      : scenarioEval
+        ? [
+            "통관 입력 문서·증명서는 합성 테스트 자료입니다.",
+            "법령·조문 Evidence는 보존된 3법령 PostgreSQL/Qdrant/Neo4j를 실제 조회합니다.",
+            "요건 검증정책은 TEST-ONLY이며 법적 판단·Production 자동완료 효력이 없습니다.",
+          ]
         : actualThreeLawRag
-          ? "ACTUAL 3-LAW RAG · 3 OF 58 · DIAGNOSTIC · TEXT ONLY · AUTO OFF · NOT PRODUCTION"
-          : "LOCAL UAT / DIAGNOSTIC · TEXT ONLY · NOT PRODUCTION";
+          ? [
+              "통관 입력 문서·증명서는 합성 테스트 자료입니다.",
+              "법령·조문 Evidence는 보존된 3법령 PostgreSQL/Qdrant/Neo4j를 실제 조회합니다.",
+              "요건 검증정책은 미승인 human-only 진단 정책이며 법적 판단·Production 자동완료 효력이 없습니다.",
+            ]
+          : [
+              "통관 입력 문서·증명서와 Evidence는 합성 테스트 자료입니다.",
+              "Synthetic 프로필은 PostgreSQL/Qdrant/Neo4j 실제 조회를 수행하지 않습니다.",
+              "요건 검증정책은 Synthetic fixture이며 법적 판단·Production 자동완료 효력이 없습니다.",
+            ];
     const profileCard = (
-      profile: "synthetic-v3" | "preserved-3law-v3-diagnostic",
+      profile: LocalUatEvidenceProfile,
       title: string,
       description: string,
     ): HTMLElement => {
@@ -535,6 +597,11 @@ export class WorkbenchApp {
         ),
       ),
       el(
+        "div",
+        { className: "uat-provenance-boundaries", attrs: { "aria-label": "UAT 자료·Evidence·정책 구분" } },
+        ...provenanceStatements.map((statement) => el("p", { text: statement })),
+      ),
+      el(
         "details",
         { className: "uat-environment-details" },
         el("summary", { text: "실행 환경 및 안전 경계 상세" }),
@@ -546,6 +613,13 @@ export class WorkbenchApp {
           el("span", {
             className: scopeIsPartial ? "uat-runtime-fact--warning" : "",
             text: `Evidence: ${humanize(metadata.evidence_profile)} · ${evidenceScopeLabel}`,
+          }),
+          el("span", { text: `Evidence data source: ${metadata.evidence_data_source}` }),
+          el("span", {
+            className: metadata.evidence_policy_mode === "SEALED_TEST_ONLY_ACTUAL_CCCT_HUMAN_ONLY"
+              ? "uat-runtime-fact--warning"
+              : "",
+            text: `Evidence policy: ${metadata.evidence_policy_mode}`,
           }),
           el("span", {
             className: scopeIsPartial ? "uat-runtime-fact--warning" : "",
@@ -574,7 +648,12 @@ export class WorkbenchApp {
           profileCard(
             "preserved-3law-v3-diagnostic",
             "Actual 3-Law RAG",
-            "보존 PostgreSQL structured lookup, Qdrant dense/BM25, Neo4j graph 확장을 실제 실행합니다.",
+            "보존 3개 Store와 미승인 actual-codes human-only 정책의 fail-closed 회귀를 실행합니다.",
+          ),
+          profileCard(
+            "preserved-3law-v3-scenario-eval",
+            "실제 3법령 RAG 시나리오 9/9",
+            "9개 사용자 시나리오 모두 실제 PostgreSQL structured, Qdrant dense/BM25, Neo4j graph 경로와 TEST-ONLY sealed 정책을 사용합니다.",
           ),
         ),
         el("p", {
@@ -586,7 +665,9 @@ export class WorkbenchApp {
               "dl",
               { className: "uat-store-counts", attrs: { "aria-label": "실제 Data 저장소 관측값" } },
               el("dt", { text: "Data source" }),
-              el("dd", { text: dataset.data_source }),
+              el("dd", { text: metadata.evidence_data_source }),
+              el("dt", { text: "Policy mode" }),
+              el("dd", { text: metadata.evidence_policy_mode }),
               el("dt", { text: "PostgreSQL" }),
               el("dd", { text: `${dataset.store_counts.postgresql_article_count} articles` }),
               el("dt", { text: "Qdrant" }),
@@ -599,9 +680,11 @@ export class WorkbenchApp {
           ? el("p", { className: "notice notice--danger", text: "Backend 실행 metadata를 검증하지 못했습니다. 환경을 복구하기 전에는 심사 결과를 사용하지 마세요." })
           : unsafe
           ? el("p", { className: "notice notice--danger", text: "UAT 안전 불변식이 깨졌습니다. 이 화면의 결과를 신뢰하거나 Production 근거로 사용하지 마세요." })
-          : actualThreeLawRag
-            ? el("p", { className: "uat-scope-warning", text: "실제 검색 경로의 기능 진단입니다. 55개 법령이 누락되어 전체 법적 coverage와 Production RAG 품질은 입증하지 않습니다." })
-            : el("p", { className: "uat-scope-warning", text: "시나리오 기능 PASS는 업무 disposition 또는 Production 승인과 별개입니다." }),
+          : scenarioEval
+            ? el("p", { className: "uat-scope-warning", text: "실제 3법령 RAG 사용자 시나리오 9/9 평가입니다. 55개 법령은 범위 밖이고 자동완료는 항상 OFF이며 모든 결과는 사람 검토 대상입니다." })
+            : actualThreeLawRag
+              ? el("p", { className: "uat-scope-warning", text: "실제 검색 경로의 기능 진단입니다. 55개 법령이 누락되어 전체 법적 coverage와 Production RAG 품질은 입증하지 않습니다." })
+              : el("p", { className: "uat-scope-warning", text: "시나리오 기능 PASS는 업무 disposition 또는 Production 승인과 별개입니다." }),
       ),
     );
   }
@@ -622,14 +705,14 @@ export class WorkbenchApp {
   private activeUatEvidenceProfile(): LocalUatEvidenceProfile | null {
     if (!this.state.uatMetadataVerified) return null;
     const profile = this.state.uatMetadata.evidence_profile;
-    return profile === "synthetic-v3" || profile === "preserved-3law-v3-diagnostic"
-      ? profile
+    return LOCAL_UAT_EVIDENCE_PROFILES.includes(profile as LocalUatEvidenceProfile)
+      ? profile as LocalUatEvidenceProfile
       : null;
   }
 
   private scenarioSupportsActiveProfile(scenario: LocalUatScenario): boolean {
     const profile = this.activeUatEvidenceProfile();
-    return profile !== null && scenario.supported_evidence_profiles.includes(profile);
+    return profile !== null && localUatScenarioSupportsProfile(scenario, profile);
   }
 
   private canApprove(): boolean {
@@ -714,29 +797,42 @@ export class WorkbenchApp {
       labeledControl("외부 참조", el("input", { attrs: { name: "reference", maxlength: "200", ...disabledUnless(this.canWrite() && !this.state.busy) } })),
       el("button", { className: "button button--primary", text: "Case 생성", attrs: { type: "submit", ...disabledUnless(this.canWrite() && !this.state.busy) } }),
     );
+    const activeProfile = this.activeUatEvidenceProfile();
+    const profileGroups = ([
+      { profile: "preserved-3law-v3-scenario-eval", label: "실제 3법령 RAG 시나리오 9/9" },
+      { profile: "synthetic-v3", label: "Synthetic V3 회귀" },
+      { profile: "preserved-3law-v3-diagnostic", label: "Actual 3-Law 미승인 정책 진단 회귀" },
+    ] satisfies Array<{
+      profile: LocalUatEvidenceProfile;
+      label: string;
+    }>).sort((left, right) => (
+      left.profile === activeProfile ? -1 : right.profile === activeProfile ? 1 : 0
+    ));
     const scenarioSelect = el(
       "select",
       { attrs: { name: "scenario", "aria-label": "UAT 시나리오", ...disabledUnless(this.canWrite() && !this.state.busy) } },
-      ...UAT_SCENARIOS.map((scenario) => {
-        const compatible = this.scenarioSupportsActiveProfile(scenario);
-        const profileLabel = scenario.supported_evidence_profiles.length === 2
-          ? "현재 프로필"
-          : scenario.supported_evidence_profiles[0] === "preserved-3law-v3-diagnostic"
-            ? "Actual 3-Law 전용"
-            : "Synthetic 전용";
-        return el("option", {
-          text: `${scenario.title} · ${profileLabel}${scenario.requires_approver ? " · 별도 approver 검증 필요" : ""}${compatible ? "" : " · 현재 비활성"}`,
-          attrs: {
-            value: scenario.scenario_id,
-            ...(compatible ? {} : { disabled: "" }),
-          },
-        });
-      }),
+      ...profileGroups.map(({ profile, label }) => el(
+        "optgroup",
+        { attrs: { label: `${label}${profile === activeProfile ? " · 현재 실행" : " · 재시작 필요"}` } },
+        ...UAT_SCENARIOS
+          .filter((scenario) => localUatScenarioSupportsProfile(scenario, profile))
+          .map((scenario) => {
+            const variant = localUatScenarioVariant(scenario, profile);
+            const compatible = profile === activeProfile;
+            return el("option", {
+              text: `${variant.title}${variant.requires_approver ? " · 별도 approver 검증 필요" : ""}${compatible ? "" : " · 현재 비활성"}`,
+              attrs: {
+                value: `${profile}|${scenario.scenario_id}`,
+                ...(compatible ? {} : { disabled: "" }),
+              },
+            });
+          }),
+      )),
     );
     const scenarioForm = el(
       "form",
       { className: "compact-form", on: { submit: (event) => void this.handleScenario(event) } },
-      el("p", { className: "section-help", text: "합성 텍스트를 실제 Case·Document API로 등록합니다." }),
+      el("p", { className: "section-help", text: "합성 통관 문서를 실제 Backend·Claude·Agent 경로에 등록합니다. Evidence 프로필은 process-wide이며 Case별로 바꿀 수 없습니다." }),
       labeledControl("시나리오", scenarioSelect),
       el("button", { className: "button button--secondary", text: "시나리오 Case 생성", attrs: { type: "submit", ...disabledUnless(this.canWrite() && !this.state.busy) } }),
     );
@@ -1254,39 +1350,83 @@ export class WorkbenchApp {
 
   private renderUatAssertion(run: ReviewRun): HTMLElement | null {
     const caseId = this.state.selectedCase?.case_id;
-    const scenario = caseId ? this.scenarioByCase.get(caseId) : undefined;
-    if (!scenario) return null;
-    const functionalChecks: UatCheck[] = [
-      this.uatScenarioManifestCheck(scenario),
+    const bound = caseId ? this.scenarioByCase.get(caseId) : undefined;
+    if (!bound) return null;
+    const { scenario, variant, evidence_profile: caseProfile } = bound;
+    const activeProfile = this.activeUatEvidenceProfile();
+    const documentAgentChecks: UatCheck[] = [
+      this.uatScenarioManifestCheck(bound),
       {
-        label: "시나리오 Evidence 프로필",
-        expected: "compatible",
-        actual: this.scenarioSupportsActiveProfile(scenario) ? "compatible" : "incompatible",
-        invalid: !this.scenarioSupportsActiveProfile(scenario),
+        label: "Case 생성 Evidence 프로필",
+        expected: caseProfile,
+        actual: caseProfile,
+      },
+      {
+        label: "현재 실행 프로필",
+        expected: caseProfile,
+        actual: activeProfile ?? "unverified",
+        invalid: activeProfile !== caseProfile,
+      },
+      {
+        label: "Review 기준일 결박",
+        expected: activeProfile === caseProfile
+          ? this.state.uatMetadata.supported_review_as_of ?? "unavailable"
+          : "case-profile-runtime-required",
+        actual: run.review_as_of ?? "not_available",
+        invalid: activeProfile !== caseProfile,
       },
       ...this.uatRuntimeFunctionalChecks(),
       {
-        label: "Review 기준일 결박",
-        expected: this.state.uatMetadata.supported_review_as_of ?? "unavailable",
-        actual: run.review_as_of ?? "not_available",
+        label: "Agent 심사 완결성",
+        expected: variant.expected.document_agent.allowed_execution_statuses.join(" | "),
+        actual: run.execution_status,
+        matches: variant.expected.document_agent.allowed_execution_statuses.some(
+          (status) => status === run.execution_status,
+        ),
       },
       {
-        label: "Agent 심사 완결성",
-        expected: scenario.expected.allowed_execution_statuses.join(" | "),
-        actual: run.execution_status,
-        matches: scenario.expected.allowed_execution_statuses.some((status) => status === run.execution_status),
+        label: "평가",
+        expected: variant.expected.document_agent.assessment,
+        actual: run.assessment ?? "not_available",
       },
-      { label: "평가", expected: scenario.expected.assessment, actual: run.assessment ?? "not_available" },
-      ...this.semanticUatChecks(scenario, run),
+      ...this.semanticUatChecks(variant.expected.document_agent.semantic, run),
     ];
-    const dispositionChecks = [
-      { label: "업무 처리", expected: scenario.expected.disposition, actual: run.review_disposition ?? "not_available" },
-      ...(scenario.expected.unmet_reason_codes ?? []).map((code) => ({
+    const actualRagChecks: UatCheck[] = [
+      ...this.evidenceIdentityChecks(bound, run),
+      ...this.semanticUatChecks(variant.expected.actual_rag.semantic, run),
+    ];
+    const policyChecks: UatCheck[] = [
+      {
+        label: "Evidence 정책 모드",
+        expected: variant.expected.policy_release.evidence_policy_mode,
+        actual: activeProfile === caseProfile
+          ? this.state.uatMetadata.evidence_policy_mode
+          : "current_runtime_differs",
+        invalid: activeProfile !== caseProfile,
+      },
+      {
+        label: "자동완료",
+        expected: String(variant.expected.policy_release.auto_completion_enabled),
+        actual: String(this.state.uatMetadata.auto_completion_enabled),
+      },
+      {
+        label: "Production release",
+        expected: String(variant.expected.policy_release.production_release),
+        actual: String(this.state.uatMetadata.production_release),
+      },
+      {
+        label: "업무 처리",
+        expected: variant.expected.policy_release.disposition,
+        actual: run.review_disposition ?? "not_available",
+      },
+      ...(variant.expected.policy_release.unmet_reason_codes ?? []).map((code) => ({
         label: `차단 ${code}`,
         expected: "present",
         actual: run.completion_eligibility?.unmet_reason_codes.includes(code) ? "present" : "missing",
       })),
+      ...this.semanticUatChecks(variant.expected.policy_release.semantic, run),
     ];
+    const functionalChecks = [...documentAgentChecks, ...actualRagChecks, ...policyChecks];
     const hasInvalidInput = functionalChecks.some((check) => check.invalid === true);
     const hasFunctionalFailure = functionalChecks.some((check) => (
       check.pending !== true && check.invalid !== true && !uatCheckMatches(check)
@@ -1299,38 +1439,193 @@ export class WorkbenchApp {
         : hasPendingCheck
           ? "pending"
           : "pass";
-    const dispositionMatches = dispositionChecks.every((check) => check.expected === check.actual);
+    const axisCard = (
+      axis: "document-agent" | "actual-rag" | "policy-release",
+      title: string,
+      checks: UatCheck[],
+    ): HTMLElement => {
+      const invalid = checks.some((check) => check.invalid === true);
+      const pending = checks.some((check) => check.pending === true);
+      const failed = checks.some((check) => (
+        check.pending !== true && check.invalid !== true && !uatCheckMatches(check)
+      ));
+      const state = invalid ? "invalid" : failed ? "fail" : pending ? "pending" : "pass";
+      return el(
+        "article",
+        {
+          className: `uat-axis-card uat-axis-card--${state}`,
+          attrs: { "data-uat-axis": axis, "data-axis-result": state },
+        },
+        el("div", { className: "uat-axis-card__heading" },
+          el("h3", { text: title }),
+          el("span", { text: state.toUpperCase() }),
+        ),
+        el("div", { className: "uat-checks", attrs: { "aria-label": `${title} 검증` } },
+          ...checks.map((check) => this.renderUatCheck(check)),
+        ),
+      );
+    };
     return el(
       "section",
-      { className: `uat-assertion uat-assertion--${functionalState}`, attrs: { role: "status" } },
+      {
+        className: `uat-assertion uat-assertion--${functionalState}`,
+        attrs: {
+          role: "status",
+          "data-case-evidence-profile": caseProfile,
+          "data-scenario-manifest-version": "v2",
+        },
+      },
       el(
         "div",
         {},
-        el("span", { className: "eyebrow", text: "SCENARIO FUNCTION ASSERTION" }),
+        el("span", { className: "eyebrow", text: "PROFILE-BOUND SCENARIO ASSERTION V2" }),
         el("strong", { text: `시나리오 기능: ${functionalState.toUpperCase()}` }),
-        el("small", { text: scenario.title }),
+        el("small", { text: `${variant.title} · ${caseProfile}` }),
       ),
-      el("div", { className: "uat-checks", attrs: { "aria-label": "기능 검증" } }, ...functionalChecks.map((check) => this.renderUatCheck(check))),
       el(
         "div",
-        { className: `uat-disposition uat-disposition--${dispositionMatches ? "match" : "mismatch"}` },
-        el("strong", { text: `업무 처리 결과: ${humanize(run.review_disposition ?? "not_available")}` }),
-        el("span", { text: dispositionMatches ? "예상 안전 disposition과 일치" : "예상 안전 disposition과 불일치" }),
-        el("div", { className: "uat-checks", attrs: { "aria-label": "업무 처리·안전 경계" } }, ...dispositionChecks.map((check) => this.renderUatCheck(check))),
-        el("small", { text: "업무 disposition은 기능 PASS/FAIL 계산에 포함되지 않습니다." }),
+        { className: "uat-axis-grid", attrs: { "aria-label": "UAT 3축 Scorecard" } },
+        axisCard("document-agent", "문서·Agent", documentAgentChecks),
+        axisCard("actual-rag", "실제 RAG", actualRagChecks),
+        axisCard("policy-release", "정책·Release", policyChecks),
       ),
-      el("p", { text: scenario.description }),
-      el("p", { className: "scenario-observation", text: `확인할 진단 관측값: ${scenario.diagnostic_observation}` }),
-      scenario.production_blocked_reason ? el("p", { className: "notice notice--warning", text: `PRODUCTION BLOCKED: ${scenario.production_blocked_reason}` }) : null,
+      el("p", { text: variant.description }),
+      el("p", { className: "scenario-observation", text: `확인할 진단 관측값: ${variant.diagnostic_observation}` }),
+      variant.production_blocked_reason ? el("p", { className: "notice notice--warning", text: `PRODUCTION BLOCKED: ${variant.production_blocked_reason}` }) : null,
       el("small", { text: "UAT 시나리오 assertion은 제한된 기능 진단이며 실제 법적·Production 품질 승인이 아닙니다." }),
     );
   }
 
-  private uatScenarioManifestCheck(scenario: LocalUatScenario): UatCheck {
-    const expectedReference = localUatScenarioExternalReference(scenario);
+  private evidenceIdentityChecks(
+    bound: BoundLocalUatScenario,
+    run: ReviewRun,
+  ): UatCheck[] {
+    const expectation = bound.variant.expected.actual_rag.release_identity;
+    const identity = run.release_identity;
+    if (!expectation.required) {
+      return [{
+        label: "Review Evidence identity",
+        expected: "optional",
+        actual: identity === undefined ? "not_available" : "present",
+        matches: true,
+      }];
+    }
+    const sha256 = (value: unknown): boolean => (
+      typeof value === "string" && /^[a-f0-9]{64}$/u.test(value)
+    );
+    const evidenceAction = run.action_trace.find((item) => item.tool === "evidence.retrieve/v3");
+    const provenance = run.evidence_provenance;
+    const observedMethods = new Set(
+      provenance?.ranked_evidence.flatMap((item) => item.retrieval_methods) ?? [],
+    );
+    const safeTrace = this.state.uatEvidenceTraceStatus === "available"
+      ? this.state.uatEvidenceTrace
+      : undefined;
+    const scenarioTraceChecks: UatCheck[] = bound.evidence_profile === SCENARIO_EVAL_PROFILE
+      ? [
+          {
+            label: "Backend 안전 RAG trace",
+            expected: "run-bound",
+            actual: safeTrace === undefined ? "unavailable" : "run-bound",
+          },
+          {
+            label: "Trace Knowledge snapshot",
+            expected: identity?.evidence_snapshot_id ?? "missing-release-snapshot",
+            actual: safeTrace?.knowledge_snapshot_id ?? "unavailable",
+          },
+          ...(["structured", "dense", "bm25", "graph"] as const).map((stageName) => {
+            const stage = safeTrace?.retrieval[stageName];
+            const stageLabel = stageName === "structured"
+              ? "PostgreSQL Structured"
+              : stageName === "dense"
+                ? "Qdrant Dense"
+                : stageName === "bm25"
+                  ? "Qdrant BM25"
+                  : "Neo4j Graph";
+            return {
+              label: `${stageLabel} 실행`,
+              expected: "attempted+succeeded",
+              actual: stage?.attempted === true && stage.succeeded === true
+                ? "attempted+succeeded"
+                : "unavailable-or-failed",
+            };
+          }),
+          {
+            label: "Neo4j 실행 경로 성공",
+            expected: "confirmed",
+            actual: safeTrace?.retrieval.graph.succeeded === true ? "confirmed" : "unconfirmed",
+          },
+          {
+            label: "최종 Top-K Graph 포함",
+            expected: "observational",
+            actual: safeTrace === undefined
+              ? "unavailable"
+              : safeTrace.retrieval.graph.top_k_count > 0
+                ? "included"
+                : "not_included",
+            matches: safeTrace !== undefined,
+          },
+        ]
+      : [];
+    return [
+      {
+        label: "Review Evidence identity",
+        expected: "run-bound",
+        actual: identity === undefined ? "missing" : "run-bound",
+      },
+      ...(expectation.evidence_snapshot_id_required ? [{
+        label: "Knowledge snapshot",
+        expected: "present",
+        actual: typeof identity?.evidence_snapshot_id === "string"
+          && identity.evidence_snapshot_id.length > 0
+          ? "present"
+          : "missing",
+      }] : []),
+      ...(expectation.evidence_runtime_v3_sha256_required ? [{
+        label: "Evidence runtime V3 SHA-256",
+        expected: "exact-format",
+        actual: sha256(identity?.evidence_runtime_v3_sha256) ? "exact-format" : "missing-or-invalid",
+      }] : []),
+      {
+        label: "Evidence policy identity",
+        expected: "present",
+        actual: typeof identity?.policy_id === "string" && identity.policy_id.length > 0
+          ? "present"
+          : "missing",
+      },
+      ...(bound.evidence_profile === SCENARIO_EVAL_PROFILE ? [{
+        label: "Assertion trust-store SHA-256",
+        expected: "exact-format",
+        actual: sha256(identity?.assertion_trust_store_sha256) ? "exact-format" : "missing-or-invalid",
+      }] : []),
+      {
+        label: "Evidence request mapping",
+        expected: "Agent action present",
+        actual: evidenceAction?.action_id ? "Agent action present" : "missing",
+      },
+      {
+        label: "Evidence provenance projection",
+        expected: "present",
+        actual: provenance === undefined ? "missing" : "present",
+      },
+      {
+        label: "관측 retrieval method",
+        expected: "observational",
+        actual: observedMethods.size === 0 ? "none" : [...observedMethods].sort().join("+"),
+        matches: true,
+      },
+      ...scenarioTraceChecks,
+    ];
+  }
+
+  private uatScenarioManifestCheck(bound: BoundLocalUatScenario): UatCheck {
+    const { scenario, variant, evidence_profile: evidenceProfile } = bound;
+    const expectedReference = localUatScenarioExternalReference(scenario, evidenceProfile);
     const caseReference = this.state.selectedCase?.external_reference;
-    const actualManifest = this.currentUatInputManifest(scenario);
-    const expectedHash = localUatInputManifestSha256(localUatScenarioInputManifest(scenario));
+    const actualManifest = this.currentUatInputManifest(variant);
+    const expectedHash = localUatInputManifestSha256(
+      localUatScenarioInputManifest(scenario, evidenceProfile),
+    );
     const actualHash = actualManifest === null ? null : localUatInputManifestSha256(actualManifest);
     const exact = caseReference === expectedReference && actualHash === expectedHash;
     return {
@@ -1341,14 +1636,14 @@ export class WorkbenchApp {
     };
   }
 
-  private currentUatInputManifest(scenario: LocalUatScenario): LocalUatInputManifest | null {
+  private currentUatInputManifest(variant: LocalUatScenarioVariant): LocalUatInputManifest | null {
     const documents = this.state.documents.map((document) => ({
       document_type: document.document_type,
       filename: document.filename,
       media_type: document.media_type,
       content_sha256: document.content_sha256,
     })).sort((left, right) => canonicalJson(left).localeCompare(canonicalJson(right)));
-    const expectedSupporting = scenario.supporting_document;
+    const expectedSupporting = variant.supporting_document;
     if (expectedSupporting === undefined) {
       if (this.state.supportingDocuments.length !== 0) return null;
       return { documents, supporting_document: null };
@@ -1384,10 +1679,23 @@ export class WorkbenchApp {
   private uatRuntimeFunctionalChecks(): UatCheck[] {
     const metadata = this.state.uatMetadata;
     const verified = this.state.uatMetadataVerified;
-    const evidenceProfileKnown = metadata.evidence_profile === "synthetic-v3"
-      || metadata.evidence_profile === "preserved-3law-v3-diagnostic";
-    const evidenceScopeKnown = metadata.evidence_scope_label === "TEST_ONLY_V3"
-      || metadata.evidence_scope_label === "ACTUAL_3_LAW_RAG_3_OF_58";
+    const evidenceProfileKnown = LOCAL_UAT_EVIDENCE_PROFILES.includes(
+      metadata.evidence_profile as LocalUatEvidenceProfile,
+    );
+    const evidenceScopeKnown = [
+      "TEST_ONLY_V3",
+      "ACTUAL_3_LAW_RAG_3_OF_58",
+      "ACTUAL_3_LAW_RAG_SCENARIO_EVAL_3_OF_58",
+    ].includes(metadata.evidence_scope);
+    const evidencePolicyKnown = [
+      "SYNTHETIC_FIXTURE",
+      "ACTUAL_CODES_HUMAN_ONLY",
+      "SEALED_TEST_ONLY_ACTUAL_CCCT_HUMAN_ONLY",
+    ].includes(metadata.evidence_policy_mode);
+    const evidenceDataSourceKnown = [
+      "SYNTHETIC_V3_NO_RAG_QUALITY",
+      "ACTUAL_POSTGRESQL_QDRANT_NEO4J_READ_ONLY",
+    ].includes(metadata.evidence_data_source);
     const plannerConfigured = metadata.planner_mode === "shadow"
       || metadata.planner_mode === "diagnostic_active";
     return [
@@ -1402,7 +1710,13 @@ export class WorkbenchApp {
       {
         label: "Evidence runtime",
         expected: "configured",
-        actual: verified && evidenceProfileKnown && evidenceScopeKnown ? "configured" : "unknown",
+        actual: verified
+          && evidenceProfileKnown
+          && evidenceScopeKnown
+          && evidencePolicyKnown
+          && evidenceDataSourceKnown
+          ? "configured"
+          : "unknown",
       },
       {
         label: "Planner runtime",
@@ -1434,15 +1748,9 @@ export class WorkbenchApp {
   }
 
   private semanticUatChecks(
-    scenario: LocalUatScenario,
+    semantic: LocalUatSemanticExpectation,
     run: ReviewRun,
   ): UatCheck[] {
-    const activeProfile = this.activeUatEvidenceProfile();
-    const semantic = activeProfile === null
-      ? scenario.expected.semantic
-      : scenario.expected.semantic_by_evidence_profile?.[activeProfile]
-        ?? scenario.expected.semantic;
-    if (!semantic) return [];
     const checks: UatCheck[] = [];
     const includeCodes = (
       label: string,
@@ -1514,6 +1822,15 @@ export class WorkbenchApp {
       semantic.required_actions?.include_codes,
       run.required_actions.map((item) => item.code),
     );
+    if (semantic.required_actions?.minimum_count !== undefined) {
+      checks.push({
+        label: "필수 조치 최소 수",
+        expected: "satisfied",
+        actual: run.required_actions.length >= semantic.required_actions.minimum_count
+          ? "satisfied"
+          : `only_${run.required_actions.length}`,
+      });
+    }
     for (const tool of semantic.action_trace?.include_succeeded_tools ?? []) {
       const matchingActions = run.action_trace.filter((item) => item.tool === tool);
       checks.push({
@@ -1524,6 +1841,18 @@ export class WorkbenchApp {
           : matchingActions.length > 0
             ? "not_succeeded"
             : "missing",
+      });
+    }
+    if (
+      semantic.action_trace?.allowed_tools !== undefined
+      && semantic.action_trace.maximum_unauthorized_tool_count !== undefined
+    ) {
+      const allowed = new Set(semantic.action_trace.allowed_tools);
+      const unauthorized = run.action_trace.filter((item) => !allowed.has(item.tool));
+      checks.push({
+        label: "Unauthorized Agent Tool 수",
+        expected: String(semantic.action_trace.maximum_unauthorized_tool_count),
+        actual: String(unauthorized.length),
       });
     }
     for (const stage of semantic.review_stages?.include_completed_stages ?? []) {
@@ -1926,9 +2255,14 @@ export class WorkbenchApp {
   private renderEvidence(run: ReviewRun): HTMLElement {
     const items = run.evidence;
     const provenance = run.evidence_provenance;
-    const actualThreeLawRag = this.state.uatMetadataVerified
-      && this.state.uatMetadata.evidence_profile === "preserved-3law-v3-diagnostic"
-      && this.state.uatMetadata.evidence_scope_label === "ACTUAL_3_LAW_RAG_3_OF_58";
+    const bound = this.state.selectedCase === undefined
+      ? undefined
+      : this.scenarioByCase.get(this.state.selectedCase.case_id);
+    const evidenceProfile = bound?.evidence_profile ?? this.activeUatEvidenceProfile();
+    const actualThreeLawRag = evidenceProfile !== null
+      && evidenceProfile !== undefined
+      && isActualThreeLawProfile(evidenceProfile);
+    const scenarioEval = evidenceProfile === SCENARIO_EVAL_PROFILE;
     const isReleasedForAutomaticReview = run.assurance_level === "production"
       && run.review_disposition === "auto_review_complete";
     const releaseState = isReleasedForAutomaticReview ? "release-bound" : "diagnostic";
@@ -1999,6 +2333,86 @@ export class WorkbenchApp {
     const rankedByEvidenceId = new Map(
       provenance?.ranked_evidence.map((item) => [item.evidence_id, item] as const) ?? [],
     );
+    const observedMethods = new Set(
+      provenance?.ranked_evidence.flatMap((item) => item.retrieval_methods) ?? [],
+    );
+    const graphTopK = observedMethods.has("graph");
+    const safeTrace = scenarioEval && this.state.uatEvidenceTraceStatus === "available"
+      ? this.state.uatEvidenceTrace
+      : undefined;
+    const traceStages = safeTrace === undefined
+      ? []
+      : (["structured", "dense", "bm25", "graph"] as const).map((stageName) => ({
+          stageName,
+          stage: safeTrace.retrieval[stageName],
+        }));
+    const evidenceAction = run.action_trace.find((item) => item.tool === "evidence.retrieve/v3");
+    const ragRuntimeSummary = actualThreeLawRag
+      ? el(
+          "dl",
+          {
+            className: "rag-runtime-summary",
+            attrs: {
+              "aria-label": "실제 RAG Run 관측값",
+              "data-uat-evidence-trace": scenarioEval
+                ? this.state.uatEvidenceTraceStatus
+                : "not_applicable",
+            },
+          },
+          el("dt", { text: "Case profile" }),
+          el("dd", { text: evidenceProfile ?? "unknown" }),
+          el("dt", { text: "Knowledge snapshot" }),
+          el("dd", { text: run.release_identity?.evidence_snapshot_id ?? "미제공" }),
+          el("dt", { text: "Evidence request mapping" }),
+          el("dd", { text: evidenceAction?.action_id && provenance?.request_id
+            ? `Agent action ${evidenceAction.action_id} · Backend 안전 trace request ${provenance.request_id}`
+            : "공개 projection 미제공" }),
+          el("dt", { text: "관측 retrieval method" }),
+          el("dd", { text: observedMethods.size === 0 ? "없음" : [...observedMethods].sort().join(" · ") }),
+          el("dt", { text: "Neo4j 실행 경로 성공" }),
+          el("dd", {
+            text: scenarioEval
+              ? safeTrace?.retrieval.graph.succeeded === true
+                ? "Backend 안전 trace로 성공 확인"
+                : "Backend 안전 trace 미확인"
+              : graphTopK
+                ? "Top-K graph 관측으로 확인"
+                : "Data trace에서 별도 확인 필요",
+          }),
+          el("dt", { text: "최종 Top-K Graph 포함" }),
+          el("dd", {
+            text: scenarioEval && safeTrace !== undefined
+              ? safeTrace.retrieval.graph.top_k_count > 0 ? "포함됨" : "포함되지 않음"
+              : graphTopK ? "포함됨" : "포함되지 않음",
+          }),
+          ...(scenarioEval
+            ? safeTrace === undefined
+              ? [
+                  el("dt", { text: "4-Store 검색 trace" }),
+                  el("dd", {
+                    className: "negative-text",
+                    text: "확인 불가 — 이 Run을 Actual-RAG 통과 근거로 사용하지 마세요.",
+                  }),
+                ]
+              : traceStages.flatMap(({ stageName, stage }) => [
+                  el("dt", {
+                    text: `${stageName === "structured" ? "PostgreSQL Structured" : stageName === "dense" ? "Qdrant Dense" : stageName === "bm25" ? "Qdrant BM25" : "Neo4j Graph"} 실행`,
+                  }),
+                  el("dd", {
+                    text: `성공 · 결과 ${stage.result_count}건 · Top-K ${stage.top_k_count}건 · ${stage.duration_ms}ms`,
+                    attrs: {
+                      "data-rag-stage": stageName,
+                      "data-stage-attempted": String(stage.attempted),
+                      "data-stage-succeeded": String(stage.succeeded),
+                      "data-stage-top-k-count": String(stage.top_k_count),
+                    },
+                  }),
+                ])
+            : []),
+          el("dt", { text: "Citation" }),
+          el("dd", { text: `${items.length}건 · source URI/version hash 검토` }),
+        )
+      : null;
     return el(
       "div",
       { className: `evidence-list evidence-list--${releaseState}`, attrs: { "data-evidence-release-state": releaseState } },
@@ -2007,10 +2421,15 @@ export class WorkbenchApp {
         ? el(
             "div",
             { className: "actual-rag-warning", attrs: { role: "status" } },
-            el("strong", { text: "ACTUAL 3-LAW RAG · POSTGRESQL + QDRANT + NEO4J" }),
-            el("span", { text: "3 OF 58 · DIAGNOSTIC · AUTO OFF · NOT PRODUCTION" }),
+            el("strong", { text: scenarioEval
+              ? "ACTUAL 3-LAW RAG SCENARIO EVAL · POSTGRESQL + QDRANT + NEO4J"
+              : "ACTUAL 3-LAW RAG · POSTGRESQL + QDRANT + NEO4J" }),
+            el("span", { text: scenarioEval
+              ? "USER SCENARIO 9/9 · 3 OF 58 · TEST-ONLY POLICY · AUTO OFF"
+              : "3 OF 58 · DIAGNOSTIC · AUTO OFF · NOT PRODUCTION" }),
           )
         : el("span", { className: "visually-hidden", text: "Synthetic Evidence profile" }),
+      ragRuntimeSummary,
       queryPanel,
       ...(items.length === 0 ? [empty("검증된 Evidence가 없습니다. 자동완료 근거로 사용할 수 없습니다.")] : items.map((item) =>
         (() => {
@@ -2407,21 +2826,30 @@ export class WorkbenchApp {
     event.preventDefault();
     if (!this.canWrite() || this.state.busy) return;
     const data = new FormData(event.currentTarget as HTMLFormElement);
-    const scenario = UAT_SCENARIOS.find((item) => item.scenario_id === value(data, "scenario"));
-    if (!scenario) return;
-    if (!this.scenarioSupportsActiveProfile(scenario)) {
+    const [profileValue, scenarioId] = value(data, "scenario").split("|");
+    const profile = LOCAL_UAT_EVIDENCE_PROFILES.includes(profileValue as LocalUatEvidenceProfile)
+      ? profileValue as LocalUatEvidenceProfile
+      : null;
+    const scenario = UAT_SCENARIOS.find((item) => item.scenario_id === scenarioId);
+    if (!scenario || profile === null || !localUatScenarioSupportsProfile(scenario, profile)) return;
+    if (profile !== this.activeUatEvidenceProfile()) {
       this.state.notice = "현재 process-level Evidence 프로필과 호환되지 않는 시나리오입니다. Harness로 올바른 프로필을 재시작하세요.";
       this.render();
       return;
     }
-    await this.createScenarioCase(scenario);
+    await this.createScenarioCase(scenario, profile);
   }
 
-  private async createScenarioCase(scenario: LocalUatScenario): Promise<void> {
+  private async createScenarioCase(
+    scenario: LocalUatScenario,
+    evidenceProfile: LocalUatEvidenceProfile,
+  ): Promise<void> {
     await this.act(async () => {
-      const externalReference = localUatScenarioExternalReference(scenario);
+      const bound = bindLocalUatScenario(scenario, evidenceProfile);
+      const variant = bound.variant;
+      const externalReference = localUatScenarioExternalReference(scenario, evidenceProfile);
       const created = await this.api.createCase({
-        title: `[UAT] ${scenario.title}`,
+        title: `[UAT] ${variant.title}`,
         external_reference: externalReference,
       });
       if (
@@ -2429,35 +2857,35 @@ export class WorkbenchApp {
         || created.external_reference !== externalReference
       ) throw new Error("생성된 UAT Case가 현재 조직·입력 manifest에 결박되지 않았습니다.");
       const createdDocuments: CaseDocument[] = [];
-      for (const document of scenario.documents) {
+      for (const document of variant.documents) {
         const createdDocument = await this.api.addDocument(created.case_id, document);
         if (createdDocument.case_id !== created.case_id) throw new Error("생성된 UAT 문서가 요청 Case와 일치하지 않습니다.");
         createdDocuments.push(createdDocument);
       }
-      if (scenario.supporting_document) {
-        const source = createdDocuments.find((document) => document.filename === scenario.supporting_document?.filename);
+      if (variant.supporting_document) {
+        const source = createdDocuments.find((document) => document.filename === variant.supporting_document?.filename);
         const invoice = createdDocuments.find((document) => document.document_type === "CI");
         if (!source || !invoice) throw new Error("Production UAT supporting-document source mapping failed");
         await this.api.addSupportingDocument(created.case_id, {
           document_id: source.document_id,
-          document_code: scenario.supporting_document.document_code,
-          issuer: scenario.supporting_document.issuer,
-          document_number: scenario.supporting_document.document_number,
-          issued_on: scenario.supporting_document.issued_on,
-          valid_until: scenario.supporting_document.valid_until,
+          document_code: variant.supporting_document.document_code,
+          issuer: variant.supporting_document.issuer,
+          document_number: variant.supporting_document.document_number,
+          issued_on: variant.supporting_document.issued_on,
+          valid_until: variant.supporting_document.valid_until,
           subject_item_ids: [`${invoice.document_id}_line_1`],
-          hs_codes: scenario.supporting_document.hs_codes,
+          hs_codes: variant.supporting_document.hs_codes,
           source_sha256: source.content_sha256,
         });
       }
-      this.scenarioByCase.set(created.case_id, scenario);
+      this.scenarioByCase.set(created.case_id, bound);
       await this.refreshCases();
       await this.selectCase(created.case_id);
-      this.state.notice = scenario.supporting_document && scenario.requires_approver
-        ? `합성 시나리오를 등록했습니다. 작성자와 다른 approver가 요건서류를 검증한 뒤 실행하세요. 기대 평가: ${humanize(scenario.expected.assessment)} / ${humanize(scenario.expected.disposition)}`
-        : scenario.supporting_document
-          ? `미신뢰 발급자 차단 시나리오를 등록했습니다. Approver assertion 추가 전에 실행하세요. 기대 평가: ${humanize(scenario.expected.assessment)} / ${humanize(scenario.expected.disposition)}`
-          : `합성 시나리오를 등록했습니다. 기대 평가: ${humanize(scenario.expected.assessment)} / ${humanize(scenario.expected.disposition)}`;
+      this.state.notice = variant.supporting_document && variant.requires_approver
+        ? `profile-bound V2 시나리오를 등록했습니다. 작성자와 다른 approver가 요건서류를 검증한 뒤 실행하세요. 기대 평가: ${humanize(variant.expected.document_agent.assessment)} / ${humanize(variant.expected.policy_release.disposition)}`
+        : variant.supporting_document
+          ? `profile-bound V2 미신뢰 발급자 시나리오를 등록했습니다. Approver assertion 추가 전에 실행하세요. 기대 평가: ${humanize(variant.expected.document_agent.assessment)} / ${humanize(variant.expected.policy_release.disposition)}`
+          : `profile-bound V2 시나리오를 등록했습니다. 기대 평가: ${humanize(variant.expected.document_agent.assessment)} / ${humanize(variant.expected.policy_release.disposition)}`;
     });
   }
 
@@ -3446,10 +3874,9 @@ export class WorkbenchApp {
   }
 
   private restoreScenarioMetadata(item: CaseSummary): void {
-    const reference = item.external_reference ?? "";
-    const scenario = UAT_SCENARIOS.find((candidate) => reference === localUatScenarioExternalReference(candidate));
-    if (!scenario) return;
-    this.scenarioByCase.set(item.case_id, scenario);
+    const bound = restoreBoundLocalUatScenario(item.external_reference);
+    if (bound === null) return;
+    this.scenarioByCase.set(item.case_id, bound);
   }
 
   private async selectCase(caseId: string, preferredRunId?: string): Promise<void> {
@@ -3457,6 +3884,8 @@ export class WorkbenchApp {
     const lifecycleEpoch = this.invalidateJobLifecycle();
     this.state.job = undefined;
     this.state.liveStages = [];
+    this.state.uatEvidenceTrace = undefined;
+    this.state.uatEvidenceTraceStatus = "not_applicable";
     this.resetJobTracking();
     this.transientPollFailures = 0;
     const [caseDetail, documentRecords, supportingDocuments, runs, audit] = await Promise.all([
@@ -3501,6 +3930,8 @@ export class WorkbenchApp {
       this.state.selectedRun = undefined;
       this.state.parentRun = undefined;
       this.state.chat = [];
+      this.state.uatEvidenceTrace = undefined;
+      this.state.uatEvidenceTraceStatus = "not_applicable";
     }
     await this.restoreCaseRecovery(caseDetail);
   }
@@ -3632,11 +4063,42 @@ export class WorkbenchApp {
         throw new Error("Backend 저장 Chat이 현재 Run 밖의 근거를 인용했습니다.");
       }
     }
+    let uatEvidenceTrace: UatEvidenceTrace | undefined;
+    let uatEvidenceTraceStatus: WorkbenchState["uatEvidenceTraceStatus"] = "not_applicable";
+    if (isScenarioEvalRuntime(this.state.uatMetadata)) {
+      uatEvidenceTraceStatus = "unavailable";
+      if (this.api.getUatEvidenceTrace) {
+        try {
+          const candidate = await this.api.getUatEvidenceTrace(runId);
+          if (
+            candidate.knowledge_snapshot_id !== run.release_identity?.evidence_snapshot_id
+            || candidate.request_id !== run.evidence_provenance?.request_id
+            || candidate.request_id.length === 0
+          ) {
+            throw new Error("Backend Evidence trace가 현재 Review Run identity와 일치하지 않습니다.");
+          }
+          uatEvidenceTrace = candidate;
+          uatEvidenceTraceStatus = "available";
+        } catch (error) {
+          if (error instanceof ApiError && error.status === 401) throw error;
+          // The Review remains inspectable, but the Actual-RAG axis fails
+          // closed and visibly reports that the run-bound safe trace is absent.
+        }
+      }
+    }
+    if (
+      this.destroyed
+      || (lifecycleEpoch !== undefined && !this.isJobLifecycleActive(lifecycleEpoch))
+    ) {
+      return;
+    }
     this.state.selectedRun = run;
     this.state.parentRun = parentRun;
     this.state.chat = chat;
     this.state.decisions = decisions;
     this.state.proposals = proposals;
+    this.state.uatEvidenceTrace = uatEvidenceTrace;
+    this.state.uatEvidenceTraceStatus = uatEvidenceTraceStatus;
     await this.recoverProposalDecisionState(run, proposals, decisions);
     this.render();
   }

@@ -412,6 +412,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/uat/review-runs/{review_run_id}/evidence-trace": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Uat Evidence Trace Endpoint */
+        get: operations["get_uat_evidence_trace_endpoint_api_v1_uat_review_runs__review_run_id__evidence_trace_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -1268,6 +1285,34 @@ export interface components {
             rag_quality_evaluated: false;
             store_counts: components["schemas"]["UatEvidenceStoreCountsResponse"];
         };
+        /** UatEvidenceRetrievalResponse */
+        UatEvidenceRetrievalResponse: {
+            bm25: components["schemas"]["UatEvidenceRetrievalStageResponse"];
+            dense: components["schemas"]["UatEvidenceRetrievalStageResponse"];
+            graph: components["schemas"]["UatEvidenceRetrievalStageResponse"];
+            structured: components["schemas"]["UatEvidenceRetrievalStageResponse"];
+        };
+        /** UatEvidenceRetrievalStageResponse */
+        UatEvidenceRetrievalStageResponse: {
+            /**
+             * Attempted
+             * @default true
+             * @constant
+             */
+            attempted: true;
+            /** Duration Ms */
+            duration_ms: number;
+            /** Result Count */
+            result_count: number;
+            /**
+             * Succeeded
+             * @default true
+             * @constant
+             */
+            succeeded: true;
+            /** Top K Count */
+            top_k_count: number;
+        };
         /** UatEvidenceStoreCountsResponse */
         UatEvidenceStoreCountsResponse: {
             /** Neo4J Article Count */
@@ -1276,6 +1321,20 @@ export interface components {
             postgresql_article_count: number;
             /** Qdrant Point Count */
             qdrant_point_count: number;
+        };
+        /** UatEvidenceTraceResponse */
+        UatEvidenceTraceResponse: {
+            /** Knowledge Snapshot Id */
+            knowledge_snapshot_id: string;
+            /** Request Id */
+            request_id: string;
+            retrieval: components["schemas"]["UatEvidenceRetrievalResponse"];
+            /**
+             * Schema Version
+             * @default customs-backend-uat-evidence-trace/v1
+             * @constant
+             */
+            schema_version: "customs-backend-uat-evidence-trace/v1";
         };
         /** UatMetadataResponse */
         UatMetadataResponse: {
@@ -1297,17 +1356,32 @@ export interface components {
              * @constant
              */
             claude_mode: "actual";
+            /**
+             * Evidence Data Source
+             * @enum {string}
+             */
+            evidence_data_source: "SYNTHETIC_V3_NO_RAG_QUALITY" | "ACTUAL_POSTGRESQL_QDRANT_NEO4J_READ_ONLY" | "UNKNOWN";
             evidence_dataset: components["schemas"]["UatEvidenceDatasetResponse"];
+            /**
+             * Evidence Policy Mode
+             * @enum {string}
+             */
+            evidence_policy_mode: "SYNTHETIC_FIXTURE" | "ACTUAL_CODES_HUMAN_ONLY" | "SEALED_TEST_ONLY_ACTUAL_CCCT_HUMAN_ONLY" | "UNKNOWN";
             /**
              * Evidence Profile
              * @enum {string}
              */
-            evidence_profile: "synthetic-v3" | "preserved-3law-v3-diagnostic" | "unknown";
+            evidence_profile: "synthetic-v3" | "preserved-3law-v3-diagnostic" | "preserved-3law-v3-scenario-eval" | "unknown";
+            /**
+             * Evidence Scope
+             * @enum {string}
+             */
+            evidence_scope: "TEST_ONLY_V3" | "ACTUAL_3_LAW_RAG_3_OF_58" | "ACTUAL_3_LAW_RAG_SCENARIO_EVAL_3_OF_58" | "UNKNOWN";
             /**
              * Evidence Scope Label
              * @enum {string}
              */
-            evidence_scope_label: "TEST_ONLY_V3" | "ACTUAL_3_LAW_RAG_3_OF_58" | "UNKNOWN";
+            evidence_scope_label: "TEST_ONLY_V3" | "ACTUAL_3_LAW_RAG_3_OF_58" | "ACTUAL_3_LAW_RAG_SCENARIO_EVAL_3_OF_58" | "UNKNOWN";
             /**
              * Mode
              * @default local_uat
@@ -4380,6 +4454,109 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["UatMetadataResponse"];
+                };
+            };
+            /** @description Problem Details V1 fail-closed response. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetailsV1"];
+                };
+            };
+            /** @description Problem Details V1 fail-closed response. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetailsV1"];
+                };
+            };
+            /** @description Problem Details V1 fail-closed response. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetailsV1"];
+                };
+            };
+            /** @description Problem Details V1 fail-closed response. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetailsV1"];
+                };
+            };
+            /** @description Problem Details V1 fail-closed response. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetailsV1"];
+                };
+            };
+            /** @description Problem Details V1 fail-closed response. */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetailsV1"];
+                };
+            };
+            /** @description Problem Details V1 fail-closed response. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetailsV1"];
+                };
+            };
+            /** @description Problem Details V1 fail-closed response. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetailsV1"];
+                };
+            };
+            /** @description Problem Details V1 fail-closed response. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetailsV1"];
+                };
+            };
+        };
+    };
+    get_uat_evidence_trace_endpoint_api_v1_uat_review_runs__review_run_id__evidence_trace_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                review_run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UatEvidenceTraceResponse"];
                 };
             };
             /** @description Problem Details V1 fail-closed response. */

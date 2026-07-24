@@ -5,8 +5,16 @@ import { WorkbenchApp, type WorkbenchAuth } from "../src/app";
 import { ApiError, type ApiClient } from "../src/api/v1/client";
 import type { CaseDocument, ChatRecord, CorrectionProposal, CorrectionProposalDecisionResponse, JobRecord, ModelExecutionSummary, ReviewRun } from "../src/api/v1/types";
 import {
+  LOCAL_UAT_EVIDENCE_PROFILES,
+  localUatExpectedSemanticsSha256,
   localUatScenarioExternalReference,
+  localUatScenarioInputManifest,
+  localUatScenarioManifestSha256,
+  localUatScenarioManifestV2,
+  localUatScenarioSupportsProfile,
+  localUatScenarioVariant,
   UAT_SCENARIOS,
+  type LocalUatEvidenceProfile,
   type LocalUatScenario,
 } from "../src/uat/scenarios";
 
@@ -61,6 +69,17 @@ const ACTUAL_THREE_LAW_EVIDENCE_DATASET = {
   },
   rag_quality_evaluated: false,
 } as const;
+const ACTUAL_THREE_LAW_SAFE_TRACE = {
+  schema_version: "customs-backend-uat-evidence-trace/v1" as const,
+  request_id: "run-001-retrieve-0",
+  knowledge_snapshot_id: "preserved-three-law-snapshot",
+  retrieval: {
+    structured: { attempted: true as const, succeeded: true as const, result_count: 1, duration_ms: 12, top_k_count: 1 },
+    dense: { attempted: true as const, succeeded: true as const, result_count: 10, duration_ms: 24, top_k_count: 4 },
+    bm25: { attempted: true as const, succeeded: true as const, result_count: 8, duration_ms: 18, top_k_count: 3 },
+    graph: { attempted: true as const, succeeded: true as const, result_count: 2, duration_ms: 9, top_k_count: 0 },
+  },
+};
 
 const run: ReviewRun = {
   review_run_id: "run-001",
@@ -156,10 +175,18 @@ const REVIEW_REQUEST_SHA256 = canonicalSha256({
 });
 
 const CLEAN_SCENARIO = UAT_SCENARIOS.find((item) => item.scenario_id === "clean_text_no_requirement_uat")!;
-const CLEAN_SCENARIO_REFERENCE = localUatScenarioExternalReference(CLEAN_SCENARIO);
+const SYNTHETIC_PROFILE: LocalUatEvidenceProfile = "synthetic-v3";
+const CLEAN_SCENARIO_REFERENCE = localUatScenarioExternalReference(
+  CLEAN_SCENARIO,
+  SYNTHETIC_PROFILE,
+);
 
-function scenarioDocumentRecords(scenario: LocalUatScenario): CaseDocument[] {
-  return scenario.documents.map((document, index) => ({
+function scenarioDocumentRecords(
+  scenario: LocalUatScenario,
+  profile: LocalUatEvidenceProfile = SYNTHETIC_PROFILE,
+): CaseDocument[] {
+  const variant = localUatScenarioVariant(scenario, profile);
+  return variant.documents.map((document, index) => ({
     document_id: `doc-${index + 1}`,
     case_id: "case-1",
     document_type: document.document_type,
@@ -174,10 +201,15 @@ function scenarioDocumentRecords(scenario: LocalUatScenario): CaseDocument[] {
   }));
 }
 
-function bindScenarioInput(api: ApiClient, scenario: LocalUatScenario): CaseDocument[] {
-  const documents = scenarioDocumentRecords(scenario);
+function bindScenarioInput(
+  api: ApiClient,
+  scenario: LocalUatScenario,
+  profile: LocalUatEvidenceProfile = SYNTHETIC_PROFILE,
+): CaseDocument[] {
+  const variant = localUatScenarioVariant(scenario, profile);
+  const documents = scenarioDocumentRecords(scenario, profile);
   vi.mocked(api.listDocuments).mockResolvedValue(documents);
-  const expectedSupporting = scenario.supporting_document;
+  const expectedSupporting = variant.supporting_document;
   if (expectedSupporting === undefined) {
     vi.mocked(api.listSupportingDocuments).mockResolvedValue([]);
     return documents;
@@ -296,7 +328,10 @@ function fakeApi(): ApiClient {
       auto_completion_enabled: false,
       claude_mode: "actual",
       evidence_profile: "synthetic-v3",
+      evidence_scope: "TEST_ONLY_V3",
       evidence_scope_label: "TEST_ONLY_V3",
+      evidence_data_source: "SYNTHETIC_V3_NO_RAG_QUALITY",
+      evidence_policy_mode: "SYNTHETIC_FIXTURE",
       evidence_dataset: SYNTHETIC_EVIDENCE_DATASET,
       supported_review_as_of: SUPPORTED_REVIEW_AS_OF,
       planner_mode: "shadow",
@@ -318,6 +353,7 @@ function fakeApi(): ApiClient {
     streamJobEvents: vi.fn(async () => undefined),
     listReviewRuns: vi.fn(async () => [run]),
     getReviewRun: vi.fn(async () => run),
+    getUatEvidenceTrace: vi.fn(async () => ACTUAL_THREE_LAW_SAFE_TRACE),
     listRevisionProposals: vi.fn(async () => []),
     createRevisionProposal: vi.fn(),
     decideRevisionProposal: vi.fn(),
@@ -356,6 +392,12 @@ describe("review workbench", () => {
     expect(root.textContent).toContain("LOCAL UAT / DIAGNOSTIC · TEXT ONLY · NOT PRODUCTION");
     expect(root.textContent).toContain("Claude: actual");
     expect(root.textContent).toContain("Evidence: synthetic-v3 · TEST-ONLY V3");
+    expect(root.textContent).toContain(
+      "Synthetic 프로필은 PostgreSQL/Qdrant/Neo4j 실제 조회를 수행하지 않습니다.",
+    );
+    expect(root.textContent).not.toContain(
+      "법령·조문 Evidence는 보존된 3법령 PostgreSQL/Qdrant/Neo4j를 실제 조회합니다.",
+    );
     expect(root.textContent).toContain("Planner: shadow");
     expect(root.textContent).toContain("Auto-completion: OFF");
     expect(root.querySelector('[data-uat-metadata="verified"]')).not.toBeNull();
@@ -363,10 +405,10 @@ describe("review workbench", () => {
     expect(root.querySelector("details.uat-environment-details")).not.toBeNull();
     expect(root.querySelector('input[type="search"][aria-label="현재 Case 목록 검색"]')).not.toBeNull();
     expect(root.querySelector<HTMLOptionElement>(
-      'option[value="actual_3law_structured_requirement_human_only"]',
+      'option[value="preserved-3law-v3-diagnostic|actual_3law_structured_requirement_human_only"]',
     )?.disabled).toBe(true);
     expect(root.querySelector<HTMLOptionElement>(
-      'option[value="clean_text_no_requirement_uat"]',
+      'option[value="synthetic-v3|clean_text_no_requirement_uat"]',
     )?.disabled).toBe(false);
 
     const caseButton = [...root.querySelectorAll("button")].find((item) => item.textContent?.includes("<img src=x"));
@@ -423,7 +465,10 @@ describe("review workbench", () => {
       auto_completion_enabled: true,
       claude_mode: "actual",
       evidence_profile: "synthetic-v3",
+      evidence_scope: "TEST_ONLY_V3",
       evidence_scope_label: "TEST_ONLY_V3",
+      evidence_data_source: "SYNTHETIC_V3_NO_RAG_QUALITY",
+      evidence_policy_mode: "SYNTHETIC_FIXTURE",
       evidence_dataset: SYNTHETIC_EVIDENCE_DATASET,
       supported_review_as_of: SUPPORTED_REVIEW_AS_OF,
       planner_mode: "shadow",
@@ -777,36 +822,52 @@ describe("review workbench", () => {
     app.destroy();
   });
 
-  it("defines a complete synthetic no-requirement control separately from the untrusted-issuer case", () => {
-    expect(UAT_SCENARIOS.every((scenario) => (
-      scenario.expected.allowed_execution_statuses.join(",") === "succeeded,partial"
-      && !(scenario.expected.allowed_execution_statuses as readonly string[]).includes("failed")
+  it("defines complete profile variants and a profile-bound V2 manifest without fallback", () => {
+    const allVariants = UAT_SCENARIOS.flatMap((scenario) => (
+      LOCAL_UAT_EVIDENCE_PROFILES.flatMap((profile) => (
+        localUatScenarioSupportsProfile(scenario, profile)
+          ? [{ scenario, profile, variant: localUatScenarioVariant(scenario, profile) }]
+          : []
+      ))
+    ));
+    expect(allVariants.every(({ variant }) => (
+      variant.expected.document_agent.allowed_execution_statuses.join(",") === "succeeded,partial"
+      && !(variant.expected.document_agent.allowed_execution_statuses as readonly string[]).includes("failed")
+      && variant.diagnostic_observation.length > 0
+      && variant.documents.length > 0
     ))).toBe(true);
-    expect(UAT_SCENARIOS.every((scenario) => (
-      scenario.supported_evidence_profiles.length > 0
-      && scenario.diagnostic_observation.length > 0
-    ))).toBe(true);
+    expect(UAT_SCENARIOS.filter((scenario) => (
+      localUatScenarioSupportsProfile(scenario, "preserved-3law-v3-scenario-eval")
+    ))).toHaveLength(9);
+
     const clean = UAT_SCENARIOS.find((item) => item.scenario_id === "clean_text_no_requirement_uat")!;
-    expect(clean.supported_evidence_profiles).toEqual([
-      "synthetic-v3",
-      "preserved-3law-v3-diagnostic",
-    ]);
-    expect(clean.documents).toHaveLength(4);
-    expect(clean.documents.every((document) => document.document_type !== "SUPPORTING")).toBe(true);
-    expect(clean.documents.filter((document) => document.document_type === "CI" || document.document_type === "CO")
+    const cleanSynthetic = localUatScenarioVariant(clean, "synthetic-v3");
+    const cleanActual = localUatScenarioVariant(clean, "preserved-3law-v3-diagnostic");
+    const cleanEval = localUatScenarioVariant(clean, "preserved-3law-v3-scenario-eval");
+    expect(cleanSynthetic.documents).toHaveLength(4);
+    expect(cleanSynthetic.documents.every((document) => document.document_type !== "SUPPORTING")).toBe(true);
+    expect(cleanSynthetic.documents.filter((document) => document.document_type === "CI" || document.document_type === "CO")
       .every((document) => document.content_text.includes("7318151000"))).toBe(true);
-    expect(clean.documents.find((document) => document.document_type === "CI")?.content_text)
+    expect(cleanSynthetic.documents.find((document) => document.document_type === "CI")?.content_text)
       .toContain("Origin Country: NORWAY");
-    expect(clean.documents.find((document) => document.document_type === "PL")?.content_text)
+    expect(cleanSynthetic.documents.find((document) => document.document_type === "PL")?.content_text)
       .toContain("Packing No: PL-2026-0001");
-    expect(clean.documents.find((document) => document.document_type === "PL")?.content_text)
+    expect(cleanSynthetic.documents.find((document) => document.document_type === "PL")?.content_text)
       .toContain("LINE ITEM 1");
-    expect(clean.documents.find((document) => document.document_type === "BL")?.content_text)
+    expect(cleanSynthetic.documents.find((document) => document.document_type === "BL")?.content_text)
       .toContain("Freight Terms: PREPAID");
-    expect(clean.documents.find((document) => document.document_type === "CO")?.content_text)
+    expect(cleanSynthetic.documents.find((document) => document.document_type === "CO")?.content_text)
       .toContain("HS Codes: 7318151000");
-    expect(clean.expected.semantic).toEqual(expect.objectContaining({
+    expect(cleanSynthetic.expected.document_agent.semantic).toEqual(expect.objectContaining({
       issues: { count: 0 },
+      model_execution: expect.objectContaining({ provider: "anthropic", audit_complete: true }),
+      chat: expect.objectContaining({
+        status: "answered",
+        generation_mode: "claude",
+        grounded_citation: true,
+      }),
+    }));
+    expect(cleanSynthetic.expected.actual_rag.semantic).toEqual(expect.objectContaining({
       findings: { count: 0 },
       evidence: {
         count: 0,
@@ -817,62 +878,379 @@ describe("review workbench", () => {
       },
       narrative: { material_citations_complete: true },
     }));
-    expect(clean.expected.semantic_by_evidence_profile?.["preserved-3law-v3-diagnostic"])
-      .toEqual(expect.objectContaining({
-        evidence: expect.objectContaining({
-          minimum_count: 1,
-          retrieval_status: "ok",
-          coverage: "complete",
-          requirements_found: false,
-        }),
-      }));
-    expect(clean.expected.semantic?.model_execution).toEqual(expect.objectContaining({
-      provider: "anthropic",
-      minimum_call_count: 1,
-      minimum_input_tokens: 1,
-      minimum_output_tokens: 1,
-      audit_complete: true,
+    expect(cleanActual.expected.actual_rag.semantic.evidence).toEqual(expect.objectContaining({
+      minimum_count: 1,
+      retrieval_status: "ok",
+      coverage: "complete",
+      requirements_found: false,
     }));
-    expect(clean.expected.semantic?.chat).toEqual(expect.objectContaining({
-      status: "answered",
-      generation_mode: "claude",
-      grounded_citation: true,
-    }));
-    expect(clean.expected.semantic?.review_stages).toEqual({
+    expect(cleanEval.expected.actual_rag.semantic.review_stages).toEqual({
       include_completed_stages: ["retrieve_regulations"],
     });
+    expect(cleanEval.expected.policy_release).toEqual(expect.objectContaining({
+      evidence_policy_mode: "SEALED_TEST_ONLY_ACTUAL_CCCT_HUMAN_ONLY",
+      auto_completion_enabled: false,
+      production_release: false,
+      disposition: "human_review_required",
+    }));
+
+    const references = LOCAL_UAT_EVIDENCE_PROFILES.map((profile) => (
+      localUatScenarioExternalReference(clean, profile)
+    ));
+    expect(new Set(references).size).toBe(3);
+    expect(references.every((reference) => reference.length <= 200)).toBe(true);
+    const evalManifest = localUatScenarioManifestV2(
+      clean,
+      "preserved-3law-v3-scenario-eval",
+    );
+    expect(evalManifest).toEqual(expect.objectContaining({
+      schema_version: "frontend-uat-scenario-manifest/v2",
+      scenario_id: clean.scenario_id,
+      evidence_profile: "preserved-3law-v3-scenario-eval",
+      input_manifest_sha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+      expected_semantics_sha256: localUatExpectedSemanticsSha256(
+        clean,
+        "preserved-3law-v3-scenario-eval",
+      ),
+    }));
+    expect(localUatScenarioManifestSha256(evalManifest)).toMatch(/^[a-f0-9]{64}$/);
+    expect(localUatScenarioInputManifest(clean, "synthetic-v3"))
+      .not.toEqual(localUatScenarioInputManifest(
+        UAT_SCENARIOS.find((item) => item.scenario_id === "prompt_injection")!,
+        "preserved-3law-v3-scenario-eval",
+      ));
 
     const untrusted = UAT_SCENARIOS.find((item) => item.scenario_id === "clean_text_untrusted_supporting_document")!;
-    expect(untrusted.supporting_document?.issuer).toBe("Synthetic Test Issuer");
-    expect(untrusted.requires_approver).not.toBe(true);
-    expect(untrusted.expected).toEqual(expect.objectContaining({
-      assessment: "issues_detected",
+    const untrustedSynthetic = localUatScenarioVariant(untrusted, "synthetic-v3");
+    expect(untrustedSynthetic.supporting_document?.issuer).toBe("Synthetic Test Issuer");
+    expect(untrustedSynthetic.requires_approver).not.toBe(true);
+    expect(untrustedSynthetic.expected.document_agent.assessment).toBe("no_issue_detected");
+    expect(untrustedSynthetic.expected.policy_release).toEqual(expect.objectContaining({
       disposition: "human_review_required",
       unmet_reason_codes: ["supporting_document_verification_incomplete"],
     }));
-    expect(untrusted.expected.semantic?.completion).toEqual({
+    expect(untrustedSynthetic.expected.policy_release.semantic.completion).toEqual({
       include_unmet_reason_codes: ["supporting_document_verification_incomplete"],
     });
+    expect(
+      localUatScenarioVariant(
+        untrusted,
+        "preserved-3law-v3-scenario-eval",
+      ).expected.document_agent.assessment,
+    ).toBe("no_issue_detected");
 
     const actualRequirement = UAT_SCENARIOS.find(
       (item) => item.scenario_id === "actual_3law_structured_requirement_human_only",
     )!;
-    expect(actualRequirement.supported_evidence_profiles)
-      .toEqual(["preserved-3law-v3-diagnostic"]);
-    expect(actualRequirement.documents).toHaveLength(4);
-    expect(actualRequirement.documents.find((document) => document.document_type === "CI")?.content_text)
+    expect(localUatScenarioSupportsProfile(actualRequirement, "synthetic-v3")).toBe(false);
+    const diagnosticRequirement = localUatScenarioVariant(
+      actualRequirement,
+      "preserved-3law-v3-diagnostic",
+    );
+    expect(diagnosticRequirement.documents).toHaveLength(4);
+    expect(diagnosticRequirement.documents.find((document) => document.document_type === "CI")?.content_text)
       .toContain("HS Code: 0303540000");
-    expect(actualRequirement.expected).toEqual(expect.objectContaining({
-      assessment: "issues_detected",
-      disposition: "human_review_required",
-      semantic: expect.objectContaining({
-        evidence: expect.objectContaining({
-          retrieval_status: "partial",
-          coverage: "partial",
-          requirements_found: true,
-        }),
+    expect(diagnosticRequirement.expected.document_agent.assessment).toBe("issues_detected");
+    expect(diagnosticRequirement.expected.actual_rag.semantic.evidence).toEqual(
+      expect.objectContaining({
+        retrieval_status: "partial",
+        coverage: "partial",
+        requirements_found: true,
       }),
-    }));
+    );
+
+    const originMismatch = UAT_SCENARIOS.find(
+      (item) => item.scenario_id === "origin_mismatch",
+    )!;
+    for (const profile of ["synthetic-v3", "preserved-3law-v3-scenario-eval"] as const) {
+      const variant = localUatScenarioVariant(originMismatch, profile);
+      expect(variant.documents.find((item) => item.document_type === "CI")?.content_text)
+        .toContain("Country of Origin: SWEDEN");
+      expect(variant.documents.find((item) => item.document_type === "PL")?.content_text)
+        .toContain("Country of Origin: SWEDEN");
+      expect(variant.documents.find((item) => item.document_type === "CO")?.content_text)
+        .toContain("Country of Origin: NORWAY");
+      expect(variant.expected.document_agent.semantic.issues).toEqual({
+        count: 1,
+        include_codes: ["ORIGIN_MISMATCH"],
+      });
+    }
+  });
+
+  it("enables all 9 scenario-eval variants and renders profile-bound three-axis scorecards", async () => {
+    const root = document.createElement("div");
+    document.body.append(root);
+    const api = fakeApi();
+    const profile = "preserved-3law-v3-scenario-eval" as const;
+    const scenario = CLEAN_SCENARIO;
+    const externalReference = localUatScenarioExternalReference(scenario, profile);
+    const scenarioCase = {
+      case_id: "case-1",
+      org_id: "org-1",
+      title: "실제 3법령 RAG 시나리오",
+      external_reference: externalReference,
+      status: "open" as const,
+      revision: 1,
+      updated_at: "2026-07-21T12:00:00Z",
+      created_at: "2026-07-21T12:00:00Z",
+      documents: [],
+      runs: [],
+    };
+    bindScenarioInput(api, scenario, profile);
+    vi.mocked(api.getUatMetadata).mockResolvedValue({
+      mode: "local_uat",
+      assurance_ceiling: "diagnostic",
+      text_only: true,
+      auto_completion_enabled: false,
+      claude_mode: "actual",
+      evidence_profile: profile,
+      evidence_scope: "ACTUAL_3_LAW_RAG_SCENARIO_EVAL_3_OF_58",
+      evidence_scope_label: "ACTUAL_3_LAW_RAG_SCENARIO_EVAL_3_OF_58",
+      evidence_data_source: "ACTUAL_POSTGRESQL_QDRANT_NEO4J_READ_ONLY",
+      evidence_policy_mode: "SEALED_TEST_ONLY_ACTUAL_CCCT_HUMAN_ONLY",
+      evidence_dataset: ACTUAL_THREE_LAW_EVIDENCE_DATASET,
+      supported_review_as_of: SUPPORTED_REVIEW_AS_OF,
+      planner_mode: "diagnostic_active",
+      production_release: false,
+    });
+    vi.mocked(api.listCases).mockResolvedValue({ items: [scenarioCase] });
+    vi.mocked(api.getCase).mockResolvedValue(scenarioCase);
+    const actualRun: ReviewRun = {
+      ...run,
+      execution_status: "succeeded",
+      evidence_retrieval: {
+        status: "ok",
+        coverage: "complete",
+        requirements_found: false,
+        result_count: 1,
+      },
+      evidence_provenance: {
+        request_id: "run-001-retrieve-0",
+        query_intent: "actual three-law scenario evaluation",
+        items: [{
+          item_id: "item-1",
+          query_description: "HSK 7318151000 수입 법령 및 요건",
+          requested_hs_code: "7318151000",
+          hs_resolution: "exact",
+          resolved_hsk10: "7318151000",
+          coverage: "complete",
+          requirements_found: false,
+        }],
+        ranked_evidence: [{
+          evidence_id: "evidence-1",
+          item_id: "item-1",
+          rank: 1,
+          source_type: "law_article",
+          retrieval_methods: ["dense", "bm25"],
+          score: 0.87,
+          raw_scores: { dense: 0.81, bm25: 4.2, rrf: 0.09 },
+          law_id: "LAW-1",
+          law_name: "관세법",
+          article_no: "제241조",
+          version_hash: "c".repeat(64),
+          source_uri: "https://law.example/1",
+        }],
+      },
+      release_identity: {
+        agent_package_version: "3.0.0",
+        model_id: "claude-sonnet-4-20250514",
+        extraction_prompt_sha256: "1".repeat(64),
+        result_schema_sha256: "2".repeat(64),
+        policy_id: "sealed-test-only-policy",
+        tool_registry_id: "tools-v3",
+        evidence_snapshot_id: "preserved-three-law-snapshot",
+        evidence_runtime_v3_sha256: "3".repeat(64),
+        assertion_trust_store_sha256: "4".repeat(64),
+        assertion_trust_store_state: "active",
+        kill_switch_active: true,
+        backend_auto_completion_enabled: false,
+      },
+    };
+    vi.mocked(api.listReviewRuns).mockResolvedValue([actualRun]);
+    vi.mocked(api.getReviewRun).mockResolvedValue(actualRun);
+
+    const app = new WorkbenchApp(root, api, auth(true));
+    await app.start();
+
+    expect(root.textContent).toContain("ACTUAL 3-LAW RAG SCENARIO EVAL · 9/9");
+    expect(root.textContent).toContain("통관 입력 문서·증명서는 합성 테스트 자료입니다.");
+    expect(root.textContent).toContain("법령·조문 Evidence는 보존된 3법령 PostgreSQL/Qdrant/Neo4j를 실제 조회합니다.");
+    expect(root.textContent).toContain("요건 검증정책은 TEST-ONLY이며 법적 판단·Production 자동완료 효력이 없습니다.");
+    const enabledScenarioEvalOptions = [...root.querySelectorAll<HTMLOptionElement>(
+      'option[value^="preserved-3law-v3-scenario-eval|"]',
+    )].filter((option) => !option.disabled);
+    expect(enabledScenarioEvalOptions).toHaveLength(9);
+    expect([...root.querySelectorAll<HTMLOptionElement>(
+      'option[value^="synthetic-v3|"], option[value^="preserved-3law-v3-diagnostic|"]',
+    )].every((option) => option.disabled)).toBe(true);
+
+    [...root.querySelectorAll<HTMLButtonElement>("button")]
+      .find((item) => item.textContent?.includes("실제 3법령 RAG 시나리오"))
+      ?.click();
+    await vi.waitFor(() => expect(root.textContent).toContain("시나리오 기능: PASS"));
+    expect(root.querySelector('[data-uat-axis="document-agent"][data-axis-result="pass"]')).not.toBeNull();
+    expect(root.querySelector('[data-uat-axis="actual-rag"][data-axis-result="pass"]')).not.toBeNull();
+    expect(root.querySelector('[data-uat-axis="policy-release"][data-axis-result="pass"]')).not.toBeNull();
+    expect(root.textContent).toContain("최종 Top-K Graph 포함: not included / expected observational");
+    expect(root.textContent).toContain("Neo4j 실행 경로 성공: confirmed / expected confirmed");
+    expect(root.querySelector('[data-uat-evidence-trace="available"]')).not.toBeNull();
+    expect(root.textContent).toContain(
+      "Agent action action-1 · Backend 안전 trace request run-001-retrieve-0",
+    );
+    expect(root.querySelectorAll('[data-rag-stage][data-stage-attempted="true"][data-stage-succeeded="true"]'))
+      .toHaveLength(4);
+    expect(root.textContent).toContain("PostgreSQL Structured 실행성공 · 결과 1건");
+    expect(root.textContent).toContain("Qdrant Dense 실행성공 · 결과 10건");
+    expect(root.textContent).toContain("Qdrant BM25 실행성공 · 결과 8건");
+    expect(root.textContent).toContain("Neo4j Graph 실행성공 · 결과 2건");
+    expect(root.textContent).toContain("Evidence policy: SEALED_TEST_ONLY_ACTUAL_CCCT_HUMAN_ONLY");
+    app.destroy();
+  });
+
+  it("fails the Actual-RAG scorecard when the Backend trace request identity is mismatched", async () => {
+    const root = document.createElement("div");
+    document.body.append(root);
+    const api = fakeApi();
+    const profile = "preserved-3law-v3-scenario-eval" as const;
+    const scenario = CLEAN_SCENARIO;
+    bindScenarioInput(api, scenario, profile);
+    const scenarioCase = {
+      case_id: "case-1",
+      org_id: "org-1",
+      title: "실제 RAG trace 실패 Case",
+      external_reference: localUatScenarioExternalReference(scenario, profile),
+      status: "open" as const,
+      revision: 1,
+      updated_at: "2026-07-21T12:00:00Z",
+      created_at: "2026-07-21T12:00:00Z",
+      documents: [],
+      runs: [],
+    };
+    vi.mocked(api.getUatMetadata).mockResolvedValue({
+      mode: "local_uat",
+      assurance_ceiling: "diagnostic",
+      text_only: true,
+      auto_completion_enabled: false,
+      claude_mode: "actual",
+      evidence_profile: profile,
+      evidence_scope: "ACTUAL_3_LAW_RAG_SCENARIO_EVAL_3_OF_58",
+      evidence_scope_label: "ACTUAL_3_LAW_RAG_SCENARIO_EVAL_3_OF_58",
+      evidence_data_source: "ACTUAL_POSTGRESQL_QDRANT_NEO4J_READ_ONLY",
+      evidence_policy_mode: "SEALED_TEST_ONLY_ACTUAL_CCCT_HUMAN_ONLY",
+      evidence_dataset: ACTUAL_THREE_LAW_EVIDENCE_DATASET,
+      supported_review_as_of: SUPPORTED_REVIEW_AS_OF,
+      planner_mode: "diagnostic_active",
+      production_release: false,
+    });
+    vi.mocked(api.listCases).mockResolvedValue({ items: [scenarioCase] });
+    vi.mocked(api.getCase).mockResolvedValue(scenarioCase);
+    const actualRun: ReviewRun = {
+      ...run,
+      execution_status: "succeeded",
+      evidence_retrieval: {
+        status: "ok",
+        coverage: "complete",
+        requirements_found: false,
+        result_count: 1,
+      },
+      release_identity: {
+        agent_package_version: "3.0.0",
+        model_id: "claude-sonnet-4-20250514",
+        extraction_prompt_sha256: "1".repeat(64),
+        result_schema_sha256: "2".repeat(64),
+        policy_id: "sealed-test-only-policy",
+        tool_registry_id: "tools-v3",
+        evidence_snapshot_id: "preserved-three-law-snapshot",
+        evidence_runtime_v3_sha256: "3".repeat(64),
+        assertion_trust_store_sha256: "4".repeat(64),
+        assertion_trust_store_state: "active",
+        kill_switch_active: true,
+        backend_auto_completion_enabled: false,
+      },
+    };
+    vi.mocked(api.listReviewRuns).mockResolvedValue([actualRun]);
+    vi.mocked(api.getReviewRun).mockResolvedValue(actualRun);
+    vi.mocked(api.getUatEvidenceTrace).mockResolvedValue({
+      ...ACTUAL_THREE_LAW_SAFE_TRACE,
+      request_id: "another-run-retrieve-0",
+    });
+
+    const app = new WorkbenchApp(root, api, auth(true));
+    await app.start();
+    [...root.querySelectorAll<HTMLButtonElement>("button")]
+      .find((item) => item.textContent?.includes("실제 RAG trace 실패 Case"))
+      ?.click();
+    await vi.waitFor(() => expect(root.textContent).toContain("시나리오 기능: FAIL"));
+
+    expect(root.querySelector('[data-uat-axis="actual-rag"][data-axis-result="fail"]')).not.toBeNull();
+    expect(root.querySelector('[data-uat-evidence-trace="unavailable"]')).not.toBeNull();
+    expect(root.textContent).toContain("Backend 안전 RAG trace: unavailable / expected run-bound");
+    expect(root.textContent).toContain("이 Run을 Actual-RAG 통과 근거로 사용하지 마세요.");
+    app.destroy();
+  });
+
+  it("scores a historical Case with its V2 profile Gold and blocks cross-profile execution", async () => {
+    const root = document.createElement("div");
+    document.body.append(root);
+    const api = fakeApi();
+    const externalReference = localUatScenarioExternalReference(
+      CLEAN_SCENARIO,
+      SYNTHETIC_PROFILE,
+    );
+    const historicalCase = {
+      case_id: "case-1",
+      org_id: "org-1",
+      title: "과거 Synthetic Case",
+      external_reference: externalReference,
+      status: "open" as const,
+      revision: 1,
+      updated_at: "2026-07-21T12:00:00Z",
+      created_at: "2026-07-21T12:00:00Z",
+      documents: [],
+      runs: [],
+    };
+    bindScenarioInput(api, CLEAN_SCENARIO, SYNTHETIC_PROFILE);
+    vi.mocked(api.getUatMetadata).mockResolvedValue({
+      mode: "local_uat",
+      assurance_ceiling: "diagnostic",
+      text_only: true,
+      auto_completion_enabled: false,
+      claude_mode: "actual",
+      evidence_profile: "preserved-3law-v3-scenario-eval",
+      evidence_scope: "ACTUAL_3_LAW_RAG_SCENARIO_EVAL_3_OF_58",
+      evidence_scope_label: "ACTUAL_3_LAW_RAG_SCENARIO_EVAL_3_OF_58",
+      evidence_data_source: "ACTUAL_POSTGRESQL_QDRANT_NEO4J_READ_ONLY",
+      evidence_policy_mode: "SEALED_TEST_ONLY_ACTUAL_CCCT_HUMAN_ONLY",
+      evidence_dataset: ACTUAL_THREE_LAW_EVIDENCE_DATASET,
+      supported_review_as_of: SUPPORTED_REVIEW_AS_OF,
+      planner_mode: "diagnostic_active",
+      production_release: false,
+    });
+    vi.mocked(api.listCases).mockResolvedValue({ items: [historicalCase] });
+    vi.mocked(api.getCase).mockResolvedValue(historicalCase);
+    const historicalRun = {
+      ...run,
+      evidence_retrieval: {
+        status: "ok" as const,
+        coverage: "complete" as const,
+        requirements_found: false,
+        result_count: 1,
+      },
+    };
+    vi.mocked(api.listReviewRuns).mockResolvedValue([historicalRun]);
+    vi.mocked(api.getReviewRun).mockResolvedValue(historicalRun);
+
+    const app = new WorkbenchApp(root, api, auth(true));
+    await app.start();
+    [...root.querySelectorAll<HTMLButtonElement>("button")]
+      .find((item) => item.textContent?.includes("과거 Synthetic Case"))
+      ?.click();
+    await vi.waitFor(() => expect(root.textContent).toContain("시나리오 기능: INVALID"));
+    expect(root.querySelector('[data-case-evidence-profile="synthetic-v3"]')).not.toBeNull();
+    expect(root.textContent).toContain("현재 실행 프로필: preserved-3law-v3-scenario-eval / expected synthetic-v3");
+    expect(root.textContent).toContain("Evidence 수: 1 / expected 0");
+    expect(root.textContent).not.toContain("Evidence 최소 수: satisfied / expected satisfied");
+    app.destroy();
   });
 
   it.each([
@@ -935,7 +1313,8 @@ describe("review workbench", () => {
     expect(root.textContent).toContain("Evidence 대상 품목: satisfied / expected satisfied");
     expect(root.textContent).toContain("XAI material citation: complete / expected complete");
     expect(root.textContent).toContain("Evidence runtime: configured / expected configured");
-    expect(root.textContent).toContain("시나리오 Evidence 프로필: compatible / expected compatible");
+    expect(root.textContent).toContain("Case 생성 Evidence 프로필: synthetic-v3 / expected synthetic-v3");
+    expect(root.textContent).toContain("현재 실행 프로필: synthetic-v3 / expected synthetic-v3");
     expect(root.textContent).toContain("필수 심사 단계 retrieve_regulations: completed / expected completed");
     expect(root.textContent).toContain(`Review 기준일 결박: ${SUPPORTED_REVIEW_AS_OF} / expected ${SUPPORTED_REVIEW_AS_OF}`);
     expect(root.textContent).toContain("Review Claude provider: anthropic / expected anthropic");
@@ -945,8 +1324,8 @@ describe("review workbench", () => {
     expect(root.textContent).toContain("Claude Chat grounding: grounded / expected grounded");
     expect(root.textContent).toContain("Chat Claude audit: true / expected true");
     expect(root.textContent).toContain("claude · anthropic · claude-sonnet-4-20250514 · calls 1");
-    expect(root.textContent).toContain("업무 처리 결과: human review required");
-    expect(root.textContent).toContain("업무 disposition은 기능 PASS/FAIL 계산에 포함되지 않습니다");
+    expect(root.textContent).toContain("업무 처리: human review required / expected human review required");
+    expect(root.querySelector('[data-uat-axis="policy-release"][data-axis-result="pass"]')).not.toBeNull();
     app.destroy();
   });
 
@@ -1205,7 +1584,10 @@ describe("review workbench", () => {
       auto_completion_enabled: false,
       claude_mode: "actual",
       evidence_profile: "preserved-3law-v3-diagnostic",
+      evidence_scope: "ACTUAL_3_LAW_RAG_3_OF_58",
       evidence_scope_label: "ACTUAL_3_LAW_RAG_3_OF_58",
+      evidence_data_source: "ACTUAL_POSTGRESQL_QDRANT_NEO4J_READ_ONLY",
+      evidence_policy_mode: "ACTUAL_CODES_HUMAN_ONLY",
       evidence_dataset: ACTUAL_THREE_LAW_EVIDENCE_DATASET,
       supported_review_as_of: SUPPORTED_REVIEW_AS_OF,
       planner_mode: "diagnostic_active",
@@ -1214,6 +1596,7 @@ describe("review workbench", () => {
     const actualRun: ReviewRun = {
       ...run,
       evidence_provenance: {
+        request_id: "run-001-retrieve-0",
         query_intent: "required_import_documents",
         items: [{
           item_id: "item-1",
@@ -1252,15 +1635,18 @@ describe("review workbench", () => {
     expect(root.textContent).toContain(
       "Evidence: preserved-3law-v3-diagnostic · ACTUAL 3-LAW RAG · 3 OF 58",
     );
-    expect(root.textContent).toContain("보존 PostgreSQL structured lookup, Qdrant dense/BM25, Neo4j graph 확장을 실제 실행합니다.");
+    expect(root.textContent).toContain("보존 3개 Store와 미승인 actual-codes human-only 정책의 fail-closed 회귀를 실행합니다.");
+    expect(root.textContent).toContain(
+      "요건 검증정책은 미승인 human-only 진단 정책이며 법적 판단·Production 자동완료 효력이 없습니다.",
+    );
     expect(root.textContent).toContain("Evidence 프로필은 Review별 선택값이 아니라 UAT 시작 시 결박되는 실행 환경입니다.");
     expect(root.querySelector('[data-evidence-profile="preserved-3law-v3-diagnostic"][data-profile-active="true"]'))
       .not.toBeNull();
     expect(root.querySelector<HTMLOptionElement>(
-      'option[value="actual_3law_structured_requirement_human_only"]',
+      'option[value="preserved-3law-v3-diagnostic|actual_3law_structured_requirement_human_only"]',
     )?.disabled).toBe(false);
     expect(root.querySelector<HTMLOptionElement>(
-      'option[value="clean_text_production_candidate_blocked"]',
+      'option[value="synthetic-v3|clean_text_production_candidate_blocked"]',
     )?.disabled).toBe(true);
     expect(root.textContent).toContain(`Review 기준일: ${SUPPORTED_REVIEW_AS_OF}`);
     expect(root.textContent).toContain("Planner: diagnostic active");
@@ -1289,10 +1675,13 @@ describe("review workbench", () => {
   });
 
   it("creates source-bound UAT inputs but requires a different approver to assert them", async () => {
-    for (const scenario of UAT_SCENARIOS.filter((item) => item.requires_approver)) {
-      expect(scenario.requires_approver).toBe(true);
-      expect(scenario.supporting_document).toBeDefined();
-      expect(scenario.documents.some((document) => document.document_type === "SUPPORTING")).toBe(true);
+    for (const scenario of UAT_SCENARIOS) {
+      if (!localUatScenarioSupportsProfile(scenario, SYNTHETIC_PROFILE)) continue;
+      const variant = localUatScenarioVariant(scenario, SYNTHETIC_PROFILE);
+      if (!variant.requires_approver) continue;
+      expect(variant.requires_approver).toBe(true);
+      expect(variant.supporting_document).toBeDefined();
+      expect(variant.documents.some((document) => document.document_type === "SUPPORTING")).toBe(true);
       expect(scenario).not.toHaveProperty("submitted_document_codes");
     }
 
@@ -1300,8 +1689,9 @@ describe("review workbench", () => {
     document.body.append(root);
     const api = fakeApi();
     const selectedScenario = UAT_SCENARIOS.find((item) => item.scenario_id === "clean_text_production_candidate_blocked")!;
-    const externalReference = localUatScenarioExternalReference(selectedScenario);
-    const supportingSource = selectedScenario.documents.find((document) => document.document_type === "SUPPORTING")!;
+    const selectedVariant = localUatScenarioVariant(selectedScenario, SYNTHETIC_PROFILE);
+    const externalReference = localUatScenarioExternalReference(selectedScenario, SYNTHETIC_PROFILE);
+    const supportingSource = selectedVariant.documents.find((document) => document.document_type === "SUPPORTING")!;
     const supportingSourceSha256 = createHash("sha256").update(supportingSource.content_text).digest("hex");
     const createdDocuments: Array<Awaited<ReturnType<ApiClient["addDocument"]>>> = [];
     const caseDetail = {
@@ -1361,12 +1751,12 @@ describe("review workbench", () => {
     const scenarioForm = [...root.querySelectorAll<HTMLFormElement>("form")]
       .find((form) => form.querySelector<HTMLSelectElement>('select[name="scenario"]'))!;
     const scenarioSelect = scenarioForm.elements.namedItem("scenario") as HTMLSelectElement;
-    scenarioSelect.value = "clean_text_production_candidate_blocked";
+    scenarioSelect.value = "synthetic-v3|clean_text_production_candidate_blocked";
     scenarioForm.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
 
     await vi.waitFor(() => expect(api.addSupportingDocument).toHaveBeenCalledOnce());
     expect(api.createCase).toHaveBeenCalledWith({
-      title: `[UAT] ${selectedScenario.title}`,
+      title: `[UAT] ${selectedVariant.title}`,
       external_reference: externalReference,
     });
     expect(api.addDocument).toHaveBeenCalledTimes(5);
