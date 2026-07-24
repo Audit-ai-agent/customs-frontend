@@ -861,6 +861,7 @@ export class WorkbenchApp {
                  type: "button",
                  "aria-current": this.state.selectedCase?.case_id === item.case_id ? "page" : "false",
                  "data-case-id": item.case_id,
+                 "data-case-external-reference": item.external_reference ?? "",
                  "data-search": `${item.title} ${item.external_reference ?? item.case_id}`.toLocaleLowerCase("ko-KR"),
                  ...disabledUnless(!this.state.busy),
                },
@@ -967,7 +968,13 @@ export class WorkbenchApp {
       );
     return el(
       "div",
-      { className: "case-workspace" },
+      {
+        className: "case-workspace",
+        attrs: {
+          "data-selected-case-id": caseItem.case_id,
+          "data-selected-case-external-reference": caseItem.external_reference ?? "",
+        },
+      },
       el(
         "section",
         { className: "case-heading" },

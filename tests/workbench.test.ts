@@ -544,8 +544,58 @@ describe("review workbench", () => {
       "case:previous.0024",
       "case:current.0024",
     ]);
+    expect(cards.map((card) => card.getAttribute("data-case-external-reference"))).toEqual([
+      repeatedReference,
+      repeatedReference,
+    ]);
     expect(cards.every((card) => card.getAttribute("data-search")?.includes(repeatedReference.toLocaleLowerCase("ko-KR")))).toBe(true);
     expect(root.querySelector('[data-case-id="case\\:current\\.0024"]')).toBe(cards[1]);
+    app.destroy();
+  });
+
+  it("exposes the authoritative selected Case detail identity without document content", async () => {
+    const root = document.createElement("div");
+    document.body.append(root);
+    const api = fakeApi();
+    vi.mocked(api.listCases).mockResolvedValue({
+      items: [{
+        case_id: "case-1",
+        org_id: "org-1",
+        title: "상세 identity Case",
+        external_reference: "stale-list-reference",
+        status: "open",
+        revision: 1,
+        updated_at: "2026-07-21T12:00:00Z",
+      }],
+    });
+    vi.mocked(api.getCase).mockResolvedValue({
+      case_id: "case-1",
+      org_id: "org-1",
+      title: "상세 identity Case",
+      external_reference: "authoritative-detail-reference",
+      status: "open",
+      revision: 1,
+      updated_at: "2026-07-21T12:00:00Z",
+      created_at: "2026-07-21T12:00:00Z",
+      documents: [],
+      runs: [],
+    });
+    const app = new WorkbenchApp(root, api, auth(true));
+    await app.start();
+
+    root.querySelector<HTMLButtonElement>('[data-case-id="case-1"]')?.click();
+    await vi.waitFor(() => expect(root.querySelector(".case-workspace")).not.toBeNull());
+
+    const workspace = root.querySelector<HTMLElement>(".case-workspace");
+    expect(workspace?.getAttribute("data-selected-case-id")).toBe("case-1");
+    expect(workspace?.getAttribute("data-selected-case-external-reference")).toBe(
+      "authoritative-detail-reference",
+    );
+    expect([...workspace!.attributes].map((attribute) => attribute.name).sort()).toEqual([
+      "class",
+      "data-selected-case-external-reference",
+      "data-selected-case-id",
+    ]);
     app.destroy();
   });
 
