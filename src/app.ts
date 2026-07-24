@@ -860,6 +860,7 @@ export class WorkbenchApp {
               attrs: {
                  type: "button",
                  "aria-current": this.state.selectedCase?.case_id === item.case_id ? "page" : "false",
+                 "data-case-id": item.case_id,
                  "data-search": `${item.title} ${item.external_reference ?? item.case_id}`.toLocaleLowerCase("ko-KR"),
                  ...disabledUnless(!this.state.busy),
                },

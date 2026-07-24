@@ -508,6 +508,47 @@ describe("review workbench", () => {
     app.destroy();
   });
 
+  it("binds each Case card to its exact Case ID when repeated UAT references are present", async () => {
+    const root = document.createElement("div");
+    document.body.append(root);
+    const api = fakeApi();
+    const repeatedReference = "UAT-clean_text_no_requirement_uat-deterministic-reference";
+    vi.mocked(api.listCases).mockResolvedValue({
+      items: [
+        {
+          case_id: "case:previous.0024",
+          org_id: "org-1",
+          title: "반복 UAT Case",
+          external_reference: repeatedReference,
+          status: "open",
+          revision: 1,
+          updated_at: "2026-07-21T12:00:00Z",
+        },
+        {
+          case_id: "case:current.0024",
+          org_id: "org-1",
+          title: "반복 UAT Case",
+          external_reference: repeatedReference,
+          status: "open",
+          revision: 1,
+          updated_at: "2026-07-21T12:01:00Z",
+        },
+      ],
+    });
+    const app = new WorkbenchApp(root, api, auth(true));
+    await app.start();
+
+    const cards = [...root.querySelectorAll<HTMLButtonElement>(".case-card")];
+    expect(cards).toHaveLength(2);
+    expect(cards.map((card) => card.getAttribute("data-case-id"))).toEqual([
+      "case:previous.0024",
+      "case:current.0024",
+    ]);
+    expect(cards.every((card) => card.getAttribute("data-search")?.includes(repeatedReference.toLocaleLowerCase("ko-KR")))).toBe(true);
+    expect(root.querySelector('[data-case-id="case\\:current\\.0024"]')).toBe(cards[1]);
+    app.destroy();
+  });
+
   it("prioritizes an active new Job over an older selected Run in the Case stepper", async () => {
     const root = document.createElement("div");
     document.body.append(root);
