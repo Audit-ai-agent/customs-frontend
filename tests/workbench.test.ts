@@ -887,12 +887,25 @@ describe("review workbench", () => {
     expect(cleanEval.expected.actual_rag.semantic.review_stages).toEqual({
       include_completed_stages: ["retrieve_regulations"],
     });
+    expect(cleanEval.expected.actual_rag.semantic.action_trace?.include_succeeded_tools)
+      .toBeUndefined();
     expect(cleanEval.expected.policy_release).toEqual(expect.objectContaining({
       evidence_policy_mode: "SEALED_TEST_ONLY_ACTUAL_CCCT_HUMAN_ONLY",
       auto_completion_enabled: false,
       production_release: false,
       disposition: "human_review_required",
     }));
+    const blockedCandidate = UAT_SCENARIOS.find(
+      (item) => item.scenario_id === "clean_text_production_candidate_blocked",
+    )!;
+    expect(
+      localUatScenarioVariant(
+        blockedCandidate,
+        "preserved-3law-v3-scenario-eval",
+      ).expected.policy_release.semantic.completion,
+    ).toEqual({
+      include_unmet_reason_codes: ["automatic_completion_kill_switch_active"],
+    });
 
     const references = LOCAL_UAT_EVIDENCE_PROFILES.map((profile) => (
       localUatScenarioExternalReference(clean, profile)
@@ -1017,6 +1030,9 @@ describe("review workbench", () => {
     vi.mocked(api.getCase).mockResolvedValue(scenarioCase);
     const actualRun: ReviewRun = {
       ...run,
+      // Mandatory Evidence retrieval is a workflow stage and an HTTP trace.
+      // action_trace is reserved for optional bounded investigation Tools.
+      action_trace: [],
       execution_status: "succeeded",
       evidence_retrieval: {
         status: "ok",
@@ -1095,7 +1111,7 @@ describe("review workbench", () => {
     expect(root.textContent).toContain("Neo4j 실행 경로 성공: confirmed / expected confirmed");
     expect(root.querySelector('[data-uat-evidence-trace="available"]')).not.toBeNull();
     expect(root.textContent).toContain(
-      "Agent action action-1 · Backend 안전 trace request run-001-retrieve-0",
+      "Review Run request run-001-retrieve-0 · Backend 안전 trace exact match",
     );
     expect(root.querySelectorAll('[data-rag-stage][data-stage-attempted="true"][data-stage-succeeded="true"]'))
       .toHaveLength(4);

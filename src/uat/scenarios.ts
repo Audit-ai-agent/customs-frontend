@@ -528,7 +528,6 @@ const citedRagSemantics = (
 ): LocalUatSemanticExpectation => ({
   evidence,
   findings,
-  action_trace: { include_succeeded_tools: ["evidence.retrieve/v3"] },
   review_stages: { include_completed_stages: ["retrieve_regulations"] },
   narrative: { material_citations_complete: true },
   ...additions,
@@ -744,7 +743,7 @@ export const UAT_SCENARIOS: LocalUatScenario[] = [
           "human_review_required",
           { issues: { count: 0 } },
           actualRequirementRag({ count: 0 }),
-          ["backend_auto_completion_kill_switch_or_release_gate"],
+          ["automatic_completion_kill_switch_active"],
         ),
         production_blocked_reason: TEST_ONLY_RELEASE_WARNING,
         requires_approver: true,
@@ -943,7 +942,6 @@ export const UAT_SCENARIOS: LocalUatScenario[] = [
           {
             issues: { count: 0 },
             action_trace: {
-              include_succeeded_tools: ["evidence.retrieve/v3"],
               allowed_tools: AUTHORIZED_ACTION_TRACE_TOOLS,
               maximum_unauthorized_tool_count: 0,
             },

@@ -1513,7 +1513,6 @@ export class WorkbenchApp {
     const sha256 = (value: unknown): boolean => (
       typeof value === "string" && /^[a-f0-9]{64}$/u.test(value)
     );
-    const evidenceAction = run.action_trace.find((item) => item.tool === "evidence.retrieve/v3");
     const provenance = run.evidence_provenance;
     const observedMethods = new Set(
       provenance?.ranked_evidence.flatMap((item) => item.retrieval_methods) ?? [],
@@ -1600,8 +1599,11 @@ export class WorkbenchApp {
       }] : []),
       {
         label: "Evidence request mapping",
-        expected: "Agent action present",
-        actual: evidenceAction?.action_id ? "Agent action present" : "missing",
+        expected: "Review Run ↔ Backend trace exact match",
+        actual: provenance?.request_id !== undefined
+          && safeTrace?.request_id === provenance.request_id
+          ? "Review Run ↔ Backend trace exact match"
+          : "missing-or-mismatched",
       },
       {
         label: "Evidence provenance projection",
@@ -2346,7 +2348,6 @@ export class WorkbenchApp {
           stageName,
           stage: safeTrace.retrieval[stageName],
         }));
-    const evidenceAction = run.action_trace.find((item) => item.tool === "evidence.retrieve/v3");
     const ragRuntimeSummary = actualThreeLawRag
       ? el(
           "dl",
@@ -2364,8 +2365,8 @@ export class WorkbenchApp {
           el("dt", { text: "Knowledge snapshot" }),
           el("dd", { text: run.release_identity?.evidence_snapshot_id ?? "미제공" }),
           el("dt", { text: "Evidence request mapping" }),
-          el("dd", { text: evidenceAction?.action_id && provenance?.request_id
-            ? `Agent action ${evidenceAction.action_id} · Backend 안전 trace request ${provenance.request_id}`
+          el("dd", { text: provenance?.request_id && safeTrace?.request_id === provenance.request_id
+            ? `Review Run request ${provenance.request_id} · Backend 안전 trace exact match`
             : "공개 projection 미제공" }),
           el("dt", { text: "관측 retrieval method" }),
           el("dd", { text: observedMethods.size === 0 ? "없음" : [...observedMethods].sort().join(" · ") }),
