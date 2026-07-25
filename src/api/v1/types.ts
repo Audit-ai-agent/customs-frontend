@@ -402,8 +402,11 @@ export type DeliveryReconciliationCreate = BackendSchemas["DeliveryReconciliatio
 
 export type AnswerRequest = BackendSchemas["GroundedQuestion"];
 
+export type JobStatus = BackendSchemas["JobStatus"];
+export type AgentCallState = BackendSchemas["AgentCallState"];
+
 export type JobRecord = Omit<BackendSchemas["JobView"], "status"> & {
-  status: "queued" | "running" | "succeeded" | "failed" | "delivery_uncertain";
+  status: JobStatus;
 };
 
 export interface ChatRecord {

@@ -58,6 +58,7 @@ import type {
 const API_BASE = "/api/v1" as const;
 const MAX_JSON_BODY_BYTES = 4 * 1024 * 1024;
 const REQUEST_TIMEOUT_MS = 30_000;
+const CHAT_REQUEST_TIMEOUT_MS = 2 * 60_000;
 const SSE_CONNECTION_TIMEOUT_MS = 5 * 60_000;
 const MAX_PRIMARY_DOCUMENTS = 6;
 const MAX_TOTAL_DOCUMENT_RECORDS = MAX_PRIMARY_DOCUMENTS + MAX_SUPPORTING_DOCUMENTS;
@@ -481,7 +482,15 @@ export class ApiClient {
     const init = this.json("POST", payload);
     const headers = new Headers(init.headers);
     headers.set("Idempotency-Key", idempotencyKey);
-    return this.request(`/review-runs/${segment(runId)}/answers`, { ...init, headers }, (value) => {
+    return this.request(`/review-runs/${segment(runId)}/answers`, {
+      ...init,
+      headers,
+      // Case Chat currently uses a bounded synchronous Backend contract. It is
+      // intentionally longer than the generic 30 s API limit because a
+      // grounded Claude answer is commonly slower, while remaining finite and
+      // idempotently retryable.
+      signal: AbortSignal.timeout(CHAT_REQUEST_TIMEOUT_MS),
+    }, (value) => {
       const record = decodeChatRecord(value);
       if (!("message_id" in record)) throw new ContractError("Chat response must use the durable Backend ChatRecord contract");
       this.assertActor(record.created_by, "Chat answer creator");

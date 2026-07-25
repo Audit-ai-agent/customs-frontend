@@ -63,6 +63,8 @@ const MAX_RECOVERY_RECORDS = 50;
 const MAX_TRANSIENT_POLL_FAILURES = 8;
 const MAX_POLL_DELAY_MS = 15_000;
 const JOB_TRACKING_TIMEOUT_MS = 12 * 60_000;
+const REVIEW_TYPICAL_MINUTES = "4~7분";
+const CHAT_TYPICAL_SECONDS = "약 1~2분";
 interface UatRuntimeDisplayMetadata {
   mode: string;
   assurance_ceiling: "diagnostic" | "production_candidate" | "production";
@@ -242,6 +244,14 @@ interface WorkbenchState {
   uatMetadataVerified: boolean;
   uatEvidenceTrace: UatEvidenceTrace | undefined;
   uatEvidenceTraceStatus: "not_applicable" | "available" | "unavailable";
+  chatRequest: {
+    review_run_id: string;
+    question: string;
+    started_at_ms: number;
+    state: "requesting" | "completed" | "failed";
+    answer?: GroundedAnswer;
+    error?: string;
+  } | undefined;
 }
 
 export class WorkbenchApp {
@@ -268,6 +278,7 @@ export class WorkbenchApp {
     uatMetadataVerified: false,
     uatEvidenceTrace: undefined,
     uatEvidenceTraceStatus: "not_applicable",
+    chatRequest: undefined,
   };
   private pollTimer: number | undefined;
   private pollFlight:
@@ -281,8 +292,12 @@ export class WorkbenchApp {
   private lifecycleEpoch = 0;
   private trackedJobId: string | undefined;
   private jobTrackingStartedAtMs: number | undefined;
+  private jobElapsedTimer: number | undefined;
+  private jobObservationPausedReason: string | undefined;
+  private jobObservationPausedAtMs: number | undefined;
   private transientPollFailures = 0;
   private streamAbort: AbortController | undefined;
+  private chatElapsedTimer: number | undefined;
   private readonly idempotencyKeys = new Map<string, string>();
   private readonly jobIntentById = new Map<string, string>();
   private readonly recoveryByCase = new Map<string, ReviewRecoveryRecord>();
@@ -342,6 +357,7 @@ export class WorkbenchApp {
     this.cancelPollTimer();
     this.streamAbort?.abort();
     this.streamAbort = undefined;
+    this.stopChatElapsedTimer();
     this.resetJobTracking();
   }
 
@@ -1040,7 +1056,11 @@ export class WorkbenchApp {
           {
             className: `run-chip${this.state.selectedRun?.review_run_id === run.review_run_id ? " is-selected" : ""}`,
             text: `${run.review_run_id.slice(0, 10)} · ${humanize(run.execution_status)}`,
-            attrs: { type: "button", ...disabledUnless(!this.state.busy) },
+            attrs: {
+              type: "button",
+              "data-review-run-id": run.review_run_id,
+              ...disabledUnless(!this.state.busy),
+            },
             on: { click: () => void this.openRun(run.review_run_id) },
           },
         ),
@@ -1131,22 +1151,137 @@ export class WorkbenchApp {
 
   private renderJob(job: JobRecord): HTMLElement {
     const uncertain = job.status === "delivery_uncertain";
+    const persistenceUncertain = job.status === "response_persistence_uncertain";
+    const rejected = job.status === "response_received_rejected";
+    const active = job.status === "queued" || job.status === "running";
+    const observationPaused = this.jobObservationPausedReason !== undefined;
     const canReconcile = uncertain && this.canApprove() && this.isTrackedJobForCurrentCase(job);
+    const completedStages = this.state.liveStages.filter((stage) => stage.status === "succeeded");
+    const currentStage = [...this.state.liveStages]
+      .reverse()
+      .find((stage) => stage.status === "running" || stage.status === "pending")
+      ?? [...this.state.liveStages].reverse().find((stage) => stage.status === "succeeded");
+    const createdAtMs = Date.parse(job.created_at);
+    const trackingStartedAt = Number.isNaN(createdAtMs)
+      ? (this.jobTrackingStartedAtMs ?? Date.now())
+      : createdAtMs;
+    const observedAt = observationPaused
+      ? (this.jobObservationPausedAtMs ?? Date.now())
+      : Date.now();
+    const elapsed = Math.max(0, observedAt - trackingStartedAt);
+    const currentPhase = job.status === "queued"
+      ? "실행 대기 및 Worker 연결"
+      : job.status === "running"
+        ? currentStage
+          ? reviewStageLabel(currentStage.stage)
+          : job.agent_call_state === "started"
+            ? "Claude 문서 분석 및 Agent 심사"
+            : "Agent 실행 준비"
+        : jobStatusLabel(job.status);
     return el(
       "div",
-      { className: `job-status${uncertain ? " job-status--uncertain" : ""}`, attrs: { role: "status", "aria-live": "polite" } },
-      el("strong", { text: `Job ${job.job_id.slice(0, 12)}` }),
-      el("span", { text: `Job 처리: ${humanize(job.status)}` }),
-      el("small", { text: `Agent call: ${humanize(job.agent_call_state)}` }),
-      job.error_code ? el("span", { className: "danger-text", text: job.error_code }) : null,
+      {
+        className: `job-status${uncertain || persistenceUncertain ? " job-status--uncertain" : ""}${rejected ? " job-status--rejected" : ""}${observationPaused ? " job-status--paused" : ""}`,
+        attrs: {
+          role: "status",
+          "aria-live": "polite",
+          "data-review-progress": job.status,
+        },
+      },
+      el(
+        "div",
+        { className: "job-status__heading" },
+        el("div", {},
+          el("span", { className: "eyebrow", text: "AI REVIEW STATUS" }),
+          el("strong", {
+            text: observationPaused
+              ? "심사 상태 자동 관측이 중단되었습니다"
+              : active
+                ? "AI 사전심사를 실행하고 있습니다"
+                : jobStatusLabel(job.status),
+          }),
+        ),
+        el("span", {
+          className: `job-state-pill job-state-pill--${job.status}`,
+          text: observationPaused ? "재연결 필요" : jobStatusLabel(job.status),
+        }),
+      ),
+      observationPaused
+        ? el(
+            "div",
+            {
+              className: "notice notice--warning",
+              attrs: {
+                "data-job-observation": "paused",
+                role: "alert",
+              },
+            },
+            el("strong", { text: "마지막으로 확인한 상태 이후의 진행 상황은 아직 확인되지 않았습니다." }),
+            el("p", {
+              text: this.jobObservationPausedReason
+                ?? "상태 관측을 다시 시작하려면 동일 Job을 조회하세요.",
+            }),
+            el("button", {
+              className: "button button--secondary",
+              text: "동일 Job 상태 다시 확인",
+              attrs: { type: "button", ...disabledUnless(!this.state.busy) },
+              on: { click: () => void this.reconcileTrackedJob(job.job_id) },
+            }),
+          )
+        : null,
+      active || observationPaused
+        ? el(
+            "div",
+            {
+              className: observationPaused
+                ? "review-progress-summary review-progress-summary--paused"
+                : "review-progress-summary",
+            },
+            el("div", {}, el("span", { text: observationPaused ? "마지막 확인 단계" : "현재 단계" }), el("strong", { text: currentPhase })),
+            el("div", {}, el("span", { text: observationPaused ? "마지막 관측 경과" : "경과 시간" }), el("strong", { text: formatElapsed(elapsed) })),
+            el("div", {}, el("span", { text: "일반적인 소요 시간" }), el("strong", { text: REVIEW_TYPICAL_MINUTES })),
+            el("div", {}, el("span", { text: observationPaused ? "확인된 완료 단계" : "완료 단계" }), el("strong", { text: `${completedStages.length}개` })),
+          )
+        : el("p", { className: "job-terminal-explanation", text: jobStatusExplanation(job) }),
+      active && !observationPaused
+        ? el(
+            "div",
+            { className: "review-progress-track", attrs: { role: "progressbar", "aria-label": "AI 사전심사 진행 중", "aria-valuetext": currentPhase } },
+            el("span", { attrs: { "aria-hidden": "true" } }),
+          )
+        : null,
+      active && !observationPaused
+        ? el("p", {
+            className: "section-help",
+            text: "표시 시간은 실제 경과 시간입니다. 4~7분은 현재 UAT 실행 기록에 따른 범위이며 정확한 완료 시각이나 진행률을 보장하지 않습니다.",
+          })
+        : null,
+      (active || observationPaused) && completedStages.length > 0
+        ? el("p", {
+            className: "review-progress-completed",
+            text: `${observationPaused ? "마지막으로 확인된 완료 단계" : "완료된 단계"}: ${completedStages.map((stage) => reviewStageLabel(stage.stage)).join(" · ")}`,
+          })
+        : null,
+      job.error_code
+        ? el("details", { className: "job-error-detail" }, el("summary", { text: "기술 원인 코드" }), el("code", { text: job.error_code }))
+        : null,
       uncertain
         ? el("p", { className: "notice notice--warning", text: "Agent 전달 결과를 확정할 수 없어 이 Case의 새 심사를 차단했습니다. 재조회로 다른 운영자가 이미 종결했는지 확인하거나, 독립 증거가 있는 Approver/Admin만 미처리를 확정할 수 있습니다." })
+        : null,
+      persistenceUncertain
+        ? el("p", { className: "notice notice--danger", text: "Agent 응답은 도착했지만 Review Run 저장 완료 여부를 확정할 수 없습니다. 같은 심사를 다시 실행하면 중복 처리될 수 있으므로 새 실행을 차단합니다. 운영자가 Backend 원장과 감사 로그를 확인해야 합니다." })
+        : null,
+      rejected
+        ? el("p", { className: "notice notice--danger", text: "Agent 응답이 Backend 계약 또는 안전 검증을 통과하지 못해 결과를 저장하지 않았습니다. 잘못된 결과는 사용자에게 공개되지 않았으며 원인 수정 후 새 심사를 실행할 수 있습니다." })
         : null,
       uncertain
         ? el("button", {
             className: "button button--secondary",
             text: "저장된 Job 상태 다시 확인",
-            attrs: { type: "button", ...disabledUnless(!this.state.busy) },
+            attrs: {
+              type: "button",
+              ...disabledUnless(!this.state.busy),
+            },
             on: { click: () => void this.reconcileTrackedJob(job.job_id) },
           })
         : null,
@@ -1215,7 +1350,12 @@ export class WorkbenchApp {
             "ol",
             { className: "live-stages", attrs: { "aria-label": "실시간 심사 진행 단계" } },
             ...this.state.liveStages.map((stage) =>
-              el("li", {}, el("strong", { text: humanize(stage.stage) }), el("span", { text: `${humanize(stage.status)} · ${humanize(stage.message)}` })),
+              el(
+                "li",
+                { className: `live-stage live-stage--${stage.status}` },
+                el("strong", { text: reviewStageLabel(stage.stage) }),
+                el("span", { text: `${reviewStageStatusLabel(stage.status)} · ${reviewStageMessage(stage.message)}` }),
+              ),
             ),
           )
         : el("span", { className: "section-help", text: "실행 단계 이벤트를 기다리는 중입니다." }),
@@ -1227,6 +1367,7 @@ export class WorkbenchApp {
     return this.state.job?.status === "queued"
       || this.state.job?.status === "running"
       || this.state.job?.status === "delivery_uncertain"
+      || this.state.job?.status === "response_persistence_uncertain"
       || (caseId !== undefined && this.recoveryByCase.has(caseId));
   }
 
@@ -1283,24 +1424,156 @@ export class WorkbenchApp {
       el(
         "nav",
         { className: "review-section-nav", attrs: { "aria-label": "심사 결과 섹션" } },
-        el("a", { text: "판정 요약", attrs: { href: "#review-summary" } }),
+        el("a", { text: "AI 심사 브리핑", attrs: { href: "#review-briefing" } }),
+        el("a", { text: "판정 상태", attrs: { href: "#review-summary" } }),
+        el("a", { text: "설명 보고서", attrs: { href: "#review-report" } }),
         el("a", { text: "통합 검토", attrs: { href: "#review-workspace" } }),
-        el("a", { text: "사전심사 보고서", attrs: { href: "#review-report" } }),
         el("a", { text: "사람 검토", attrs: { href: "#review-actions" } }),
         el("a", { text: "Case Chat", attrs: { href: "#review-chat" } }),
-        el("a", { text: "이력·감사", attrs: { href: "#review-history" } }),
+        el("a", { text: "기술 검증", attrs: { href: "#review-technical" } }),
       ),
+      this.renderUserBriefing(run),
       this.renderStatus(run),
-      this.renderUatAssertion(run),
-      this.renderRequiredActions(run.required_actions),
-      this.renderActionTimeline(run),
-      this.renderModelExecution("Review Claude 실행 증거", run.model_execution_summary),
-      this.renderParentChildDiff(run),
-      this.renderThreePane(run),
       this.renderNarrative(run),
+      this.renderRequiredActions(run.required_actions),
+      this.renderThreePane(run),
       this.renderHitl(run),
       this.renderChat(run),
-      this.renderHistory(run),
+      el(
+        "details",
+        { className: "technical-review-details", attrs: { id: "review-technical" } },
+        el("summary", { text: "기술 검증 상세 · UAT·실행 추적·감사 이력" }),
+        el("p", {
+          className: "section-help",
+          text: "아래 정보는 개발·감사 검증용입니다. 사용자의 업무 결론과 이유는 위 AI 심사 브리핑과 설명 보고서에서 먼저 확인하세요.",
+        }),
+        this.renderUatAssertion(run),
+        this.renderActionTimeline(run),
+        this.renderModelExecution("Review Claude 실행 증거", run.model_execution_summary),
+        this.renderParentChildDiff(run),
+        this.renderHistory(run),
+      ),
+    );
+  }
+
+  private renderUserBriefing(run: ReviewRun): HTMLElement {
+    const issueCount = run.issues.length;
+    const findingCount = run.findings.length;
+    const totalConcernCount = issueCount + findingCount;
+    const report = run.narrative_report;
+    const headline = run.assessment === "no_issue_detected"
+      ? "제출 문서와 조회된 규정 범위에서 중대한 문제를 발견하지 못했습니다."
+      : run.assessment === "issues_detected"
+        ? `담당자 확인이 필요한 문제 ${totalConcernCount}건을 발견했습니다.`
+        : "현재 근거만으로는 심사 결론을 확정할 수 없습니다.";
+    const disposition = run.review_disposition === "auto_review_complete"
+      ? "승인된 자동 사전심사 범위에서 검토가 완료되었습니다."
+      : run.review_disposition === "human_review_required"
+        ? "AI 사전심사는 끝났지만 최종 업무 처리를 위해 담당자 확인이 필요합니다."
+        : "필수 근거 또는 실행 단계가 충족되지 않아 처리가 차단되었습니다.";
+    const evidence = run.evidence_retrieval;
+    const evidenceMeaning = evidence?.status === "ok" && evidence.coverage === "complete"
+      ? `법령 Evidence 조회는 정상 완료됐습니다. 조회 결과 ${evidence.result_count}건이며 요건 발견 여부는 ${evidence.requirements_found === null ? "확정되지 않음" : evidence.requirements_found ? "있음" : "없음"}입니다.`
+      : evidence === undefined
+        ? "법령 Evidence 조회 상태가 공개 결과에 없어 근거 확인이 필요합니다."
+        : `법령 Evidence 조회가 ${humanize(evidence.status)}·${humanize(evidence.coverage)} 상태이므로 사람 검토가 필요합니다.`;
+    const reasonItems = [
+      ...run.issues.slice(0, 3).map((issue) => ({
+        id: issue.issue_id,
+        title: issue.code,
+        text: issue.message,
+        citations: issue.source_ids,
+      })),
+      ...run.findings.slice(0, Math.max(0, 3 - Math.min(issueCount, 3))).map((finding) => ({
+        id: finding.finding_id,
+        title: finding.title,
+        text: finding.detail,
+        citations: [...finding.evidence_ids, ...finding.source_ids],
+      })),
+    ];
+    const actionItems = run.required_actions.length > 0
+      ? run.required_actions.slice(0, 3).map((action) => ({
+          text: action.description,
+          citations: action.source_ids,
+        }))
+      : [{
+          text: run.review_disposition === "human_review_required"
+            ? "아래 근거와 추출값을 확인한 뒤 승인 또는 수정 제안을 기록하세요."
+            : "현재 Run에 별도의 필수 후속 조치는 없습니다.",
+          citations: [] as string[],
+        }];
+    const summaryClaims = report?.summary ?? [];
+    return el(
+      "section",
+      {
+        className: `user-briefing user-briefing--${run.assessment}`,
+        attrs: {
+          id: "review-briefing",
+          "aria-labelledby": "review-briefing-title",
+          "data-user-briefing": "ready",
+        },
+      },
+      el("p", { className: "eyebrow", text: "AI REVIEW BRIEFING" }),
+      el("div", { className: "user-briefing__heading" },
+        el("div", {},
+          el("h2", { text: "이번 심사 결과를 쉽게 설명해 드립니다", attrs: { id: "review-briefing-title" } }),
+          el("p", { className: "user-briefing__headline", text: headline }),
+        ),
+        el("span", { className: "user-briefing__disposition", text: run.review_disposition === "auto_review_complete" ? "사전심사 완료" : run.review_disposition === "blocked" ? "처리 차단" : "담당자 확인 필요" }),
+      ),
+      el("p", { className: "user-briefing__meaning", text: disposition }),
+      summaryClaims.length > 0
+        ? el(
+            "div",
+            { className: "user-briefing__summary", attrs: { "aria-label": "Agent 설명 요약" } },
+            ...summaryClaims.slice(0, 2).map((claim) =>
+              el("div", { className: "briefing-claim" }, el("p", { text: claim.text }), this.renderCitationButtons(claim.citation_ids))),
+          )
+        : null,
+      el(
+        "div",
+        { className: "user-briefing__grid" },
+        el(
+          "article",
+          {},
+          el("h3", { text: "왜 이런 결과가 나왔나요?" }),
+          reasonItems.length > 0
+            ? el(
+                "ol",
+                { className: "briefing-list" },
+                ...reasonItems.map((item) =>
+                  el("li", { attrs: { "data-source-id": item.id, tabindex: "-1" } },
+                    el("strong", { text: item.title }),
+                    el("p", { text: item.text }),
+                    this.renderCitationButtons(item.citations))),
+              )
+            : el("p", { text: "문서 간 핵심 값 비교와 규정 검토에서 별도의 Issue 또는 Finding이 생성되지 않았습니다." }),
+        ),
+        el(
+          "article",
+          {},
+          el("h3", { text: "법령 근거는 어떻게 확인됐나요?" }),
+          el("p", { text: evidenceMeaning }),
+          el("small", {
+            text: `현재 Run은 Evidence ${run.evidence.length}건과 원문 근거 ${run.sources.length}건에 결박되어 있습니다.`,
+          }),
+        ),
+        el(
+          "article",
+          {},
+          el("h3", { text: "이제 무엇을 해야 하나요?" }),
+          el(
+            "ul",
+            { className: "briefing-list" },
+            ...actionItems.map((item) =>
+              el("li", {}, el("p", { text: item.text }), item.citations.length > 0 ? this.renderCitationButtons(item.citations) : null)),
+          ),
+        ),
+      ),
+      el("p", {
+        className: "user-briefing__boundary",
+        text: "이 설명은 현재 Run의 문서·Issue·Finding·Evidence에만 결박된 AI 사전심사 결과이며 통관 승인 또는 법적 판단을 대신하지 않습니다.",
+      }),
     );
   }
 
@@ -2710,22 +2983,72 @@ export class WorkbenchApp {
 
   private renderChat(run: ReviewRun): HTMLElement {
     const canChat = this.canChat();
+    const request = this.state.chatRequest?.review_run_id === run.review_run_id
+      ? this.state.chatRequest
+      : undefined;
+    const chatBusy = request?.state === "requesting";
     const form = el(
       "form",
       { className: "chat-form", on: { submit: (event) => void this.handleChat(event, run) } },
-      labeledControl("Case에 대해 질문", el("textarea", { attrs: { name: "question", required: "", maxlength: "2000", rows: "3", placeholder: "왜 사람 검토가 필요한가요?", ...disabledUnless(canChat && !this.state.busy) } })),
-      el("button", { className: "button button--primary", text: "근거 기반 답변 요청", attrs: { type: "submit", ...disabledUnless(canChat && !this.state.busy) } }),
+      labeledControl(
+        "Case에 대해 질문",
+        el("textarea", {
+          attrs: {
+            name: "question",
+            required: "",
+            maxlength: "2000",
+            rows: "3",
+            placeholder: "왜 사람 검토가 필요한가요?",
+            ...disabledUnless(canChat && !this.state.busy && !chatBusy),
+          },
+        }),
+        "현재 Run의 문서·Issue·Finding·법령 Evidence에 근거해 답변합니다.",
+      ),
+      el("button", {
+        className: "button button--primary",
+        text: chatBusy ? "근거를 확인하고 있습니다…" : "근거 기반 답변 요청",
+        attrs: { type: "submit", ...disabledUnless(canChat && !this.state.busy && !chatBusy) },
+      }),
     );
     return el(
       "section",
-      { className: "card", attrs: { id: "review-chat", "aria-labelledby": "chat-title" } },
-      el("h2", { text: "Evidence-bound Case Chat", attrs: { id: "chat-title" } }),
-      el("p", { className: "section-help", text: "현재 Run과 Knowledge snapshot 밖의 질문은 거절됩니다. 답변은 심사 결과를 변경하지 않습니다." }),
+      {
+        className: "card case-chat",
+        attrs: {
+          id: "review-chat",
+          "aria-labelledby": "chat-title",
+          "data-chat-state": request?.state ?? "idle",
+        },
+      },
+      el("div", { className: "section-title-row" },
+        el("div", {}, el("p", { className: "eyebrow", text: "GROUNDED CASE ASSISTANT" }), el("h2", { text: "심사 결과에 대해 질문하세요", attrs: { id: "chat-title" } })),
+        el("span", { className: "chat-status", text: request?.state === "requesting" ? "답변 생성 중" : "현재 Run 근거 사용" }),
+      ),
+      el("p", { className: "section-help", text: "현재 Run과 Knowledge snapshot 밖의 질문은 안전하게 거절됩니다. Chat은 판정이나 저장된 심사 결과를 변경하지 않습니다." }),
       el(
         "div",
-        { className: "chat-log", attrs: { "aria-live": "polite" } },
+        { className: "chat-log", attrs: { "aria-live": "polite", "data-chat-log": "grounded" } },
         ...this.state.chat.map((message) => this.renderChatMessage(message)),
+        request ? this.renderLocalChatRequest(request) : null,
+        this.state.chat.length === 0 && !request
+          ? empty("아직 질문이 없습니다. 결과의 원인, 법령 근거, 필요한 조치를 질문해 보세요.")
+          : null,
       ),
+      request?.state === "requesting"
+        ? el(
+            "div",
+            { className: "chat-progress", attrs: { role: "status", "aria-live": "polite" } },
+            el("span", { className: "chat-progress__pulse", attrs: { "aria-hidden": "true" } }),
+            el("div", {},
+              el("strong", { text: "현재 Run의 근거를 확인하고 답변을 검증하고 있습니다." }),
+              el("p", { text: `경과 ${formatElapsed(Date.now() - request.started_at_ms)} · 일반적으로 ${CHAT_TYPICAL_SECONDS}` }),
+              el("small", { text: "정확한 완료 시각은 보장하지 않으며, 인용 검증이 끝난 답변만 표시합니다." }),
+            ),
+          )
+        : null,
+      this.state.busy && !chatBusy
+        ? el("p", { className: "notice notice--warning", text: "다른 Case 작업을 처리 중입니다. 작업이 끝난 뒤 질문을 제출해 주세요." })
+        : null,
       canChat
         ? form
         : el("p", { className: "section-help", text: "Auditor는 저장된 Chat 이력을 읽을 수 있지만 새 질문을 생성할 수 없습니다." }),
@@ -2736,20 +3059,76 @@ export class WorkbenchApp {
     if ("message_id" in message) {
       return el(
         "article",
-        { className: "chat-message" },
-        el("p", { className: "chat-question", text: message.question }),
-        el("p", { text: message.answer }),
+        { className: "chat-message", attrs: { "data-chat-message": "completed" } },
+        el("div", { className: "chat-turn chat-turn--user" },
+          el("span", { text: "질문" }),
+          this.renderStructuredText(message.question),
+        ),
+        el("div", { className: "chat-turn chat-turn--assistant" },
+          el("span", { text: "AI 답변" }),
+          this.renderStructuredText(message.answer),
+        ),
         el("span", { className: "chat-status", text: humanize(message.answer_status) }),
-        this.renderChatExecution(message.generation_mode, message.model_execution_summary),
         this.renderCitationButtons(message.citations.map((citation) => citation.citation_id ?? citation.evidence_id ?? citation.source_id ?? citation.reference_id ?? "unbound-citation")),
+        el("details", { className: "chat-technical" }, el("summary", { text: "모델 실행 정보" }), this.renderChatExecution(message.generation_mode, message.model_execution_summary)),
       );
     }
     return el(
       "article",
-      { className: "chat-message" },
+      { className: "chat-message", attrs: { "data-chat-message": "completed" } },
       el("span", { className: "chat-status", text: humanize(message.status) }),
-      this.renderChatExecution(message.generation_mode, message.model_execution_summary),
-      ...message.claims.map((claim) => el("div", {}, el("p", { text: claim.text }), this.renderCitationButtons(claim.citation_ids))),
+      ...message.claims.map((claim) =>
+        el("div", { className: "chat-turn chat-turn--assistant" }, this.renderStructuredText(claim.text), this.renderCitationButtons(claim.citation_ids))),
+      el("details", { className: "chat-technical" }, el("summary", { text: "모델 실행 정보" }), this.renderChatExecution(message.generation_mode, message.model_execution_summary)),
+    );
+  }
+
+  private renderLocalChatRequest(request: NonNullable<WorkbenchState["chatRequest"]>): HTMLElement {
+    return el(
+      "article",
+      {
+        className: `chat-message chat-message--${request.state}`,
+        attrs: { "data-chat-message": request.state },
+      },
+      el("div", { className: "chat-turn chat-turn--user" },
+        el("span", { text: "질문" }),
+        this.renderStructuredText(request.question),
+      ),
+      request.state === "requesting"
+        ? el("p", { className: "chat-pending-copy", text: "질문을 접수했습니다. Case 근거 조회와 답변 인용 검증을 진행하고 있습니다." })
+        : request.state === "failed"
+          ? el("div", { className: "notice notice--danger" },
+              el("strong", { text: "답변 완료 여부를 확인하지 못했습니다." }),
+              el("p", { text: request.error ?? "동일 질문으로 안전하게 다시 시도하거나 저장된 Chat 이력을 다시 불러오세요." }))
+          : request.answer
+            ? el(
+                "div",
+                { className: "chat-turn chat-turn--assistant" },
+                el("span", { text: "AI 답변" }),
+                ...request.answer.claims.map((claim) =>
+                  el("div", { className: "chat-claim" }, this.renderStructuredText(claim.text), this.renderCitationButtons(claim.citation_ids))),
+              )
+            : null,
+    );
+  }
+
+  private renderStructuredText(text: string): HTMLElement {
+    const paragraphs = text
+      .replaceAll("\r\n", "\n")
+      .split(/\n{2,}/)
+      .map((paragraph) => paragraph.trim())
+      .filter(Boolean);
+    return el(
+      "div",
+      { className: "structured-text" },
+      ...(paragraphs.length > 0 ? paragraphs : [text]).map((paragraph) => {
+        const lines = paragraph.split("\n");
+        return el(
+          "p",
+          {},
+          ...lines.flatMap((line, index) => index === 0 ? [line] : [el("br"), line]),
+        );
+      }),
     );
   }
 
@@ -3109,6 +3488,48 @@ export class WorkbenchApp {
     this.pollTimer = undefined;
   }
 
+  private startChatElapsedTimer(): void {
+    this.stopChatElapsedTimer();
+    this.chatElapsedTimer = window.setInterval(() => {
+      if (
+        this.destroyed
+        || this.state.chatRequest?.state !== "requesting"
+      ) {
+        this.stopChatElapsedTimer();
+        return;
+      }
+      this.render();
+    }, 1_000);
+  }
+
+  private stopChatElapsedTimer(): void {
+    if (this.chatElapsedTimer === undefined) return;
+    window.clearInterval(this.chatElapsedTimer);
+    this.chatElapsedTimer = undefined;
+  }
+
+  private startJobElapsedTimer(): void {
+    if (this.jobElapsedTimer !== undefined) return;
+    this.jobElapsedTimer = window.setInterval(() => {
+      if (
+        this.destroyed
+        || this.jobObservationPausedReason !== undefined
+        || this.state.job === undefined
+        || (this.state.job.status !== "queued" && this.state.job.status !== "running")
+      ) {
+        this.stopJobElapsedTimer();
+        return;
+      }
+      this.render();
+    }, 1_000);
+  }
+
+  private stopJobElapsedTimer(): void {
+    if (this.jobElapsedTimer === undefined) return;
+    window.clearInterval(this.jobElapsedTimer);
+    this.jobElapsedTimer = undefined;
+  }
+
   private invalidateJobLifecycle(): number {
     this.lifecycleEpoch += 1;
     this.cancelPollTimer();
@@ -3128,23 +3549,57 @@ export class WorkbenchApp {
       if (this.pollTimer === timer) this.pollTimer = undefined;
       if (!this.isJobLifecycleActive(lifecycleEpoch)) return;
       void this.pollJob(jobId, lifecycleEpoch).catch((error: unknown) => {
-        if (this.isJobLifecycleActive(lifecycleEpoch)) this.showError(error);
+        if (this.isJobLifecycleActive(lifecycleEpoch)) {
+          this.pauseJobObservation(
+            "권위 Job 상태 조회를 안전하게 완료하지 못해 자동 관측을 중단했습니다. 새 심사를 만들지 않고 같은 Job만 다시 조회합니다.",
+            "심사 상태를 더 이상 자동으로 확인할 수 없습니다. 동일 Job 상태를 다시 확인하세요.",
+            error,
+          );
+        }
       });
     }, delayMs);
     this.pollTimer = timer;
   }
 
   private beginJobTracking(jobId: string, force = false): void {
+    this.jobObservationPausedReason = undefined;
+    this.jobObservationPausedAtMs = undefined;
     if (force || this.trackedJobId !== jobId || this.jobTrackingStartedAtMs === undefined) {
       this.trackedJobId = jobId;
       this.jobTrackingStartedAtMs = Date.now();
     }
+    this.startJobElapsedTimer();
   }
 
   private resetJobTracking(jobId?: string): void {
     if (jobId !== undefined && this.trackedJobId !== jobId) return;
+    this.stopJobElapsedTimer();
+    this.jobObservationPausedReason = undefined;
+    this.jobObservationPausedAtMs = undefined;
     this.trackedJobId = undefined;
     this.jobTrackingStartedAtMs = undefined;
+  }
+
+  private pauseJobObservation(
+    reason: string,
+    userMessage: string,
+    cause?: unknown,
+  ): void {
+    // Invalidate the complete observation epoch so an already in-flight GET
+    // or SSE callback cannot silently resume stale tracking after this pause.
+    this.invalidateJobLifecycle();
+    this.stopJobElapsedTimer();
+    this.jobObservationPausedAtMs ??= Date.now();
+    this.jobObservationPausedReason = reason;
+    if (cause instanceof ApiError && cause.status === 401) {
+      this.showError(cause, false);
+    } else {
+      const requestSuffix = cause instanceof ApiError && cause.requestId
+        ? ` (요청 ${cause.requestId})`
+        : "";
+      this.state.error = `${userMessage}${requestSuffix}`;
+    }
+    this.render();
   }
 
   private stopIfJobTrackingExpired(jobId: string): boolean {
@@ -3155,9 +3610,10 @@ export class WorkbenchApp {
     ) {
       return false;
     }
-    this.streamAbort?.abort();
-    this.state.error = "12분 동안 심사가 완료되지 않았습니다. 실행 결과를 실패로 단정하지 않고 저장된 동일 Job 상태를 다시 확인해야 합니다.";
-    this.render();
+    this.pauseJobObservation(
+      "12분 동안 완료 상태를 확인하지 못했습니다. 실행 실패로 단정하지 않으며 같은 Job만 다시 조회합니다.",
+      "심사 상태 자동 관측을 일시 중단했습니다. 동일 Job 상태를 다시 확인하세요.",
+    );
     return true;
   }
 
@@ -3314,6 +3770,42 @@ export class WorkbenchApp {
     }
   }
 
+  private assertStoredChatBindings(
+    messages: Array<ChatRecord | GroundedAnswer>,
+    run: ReviewRun,
+  ): void {
+    const current = this.state.selectedCase;
+    const session = this.requireSession();
+    if (!current) throw new Error("Chat 이력을 확인할 현재 Case가 없습니다.");
+    const knownCitationIds = new Set([
+      ...run.fields.map((item) => item.field_id),
+      ...run.issues.map((item) => item.issue_id),
+      ...run.evidence.map((item) => item.evidence_id),
+      ...run.findings.map((item) => item.finding_id),
+      ...run.sources.map((item) => item.source_id),
+    ]);
+    for (const message of messages) {
+      if (
+        message.review_run_id !== run.review_run_id
+        || message.case_id !== current.case_id
+        || message.org_id !== session.org_id
+        || message.bound_result_digest !== run.result_digest
+      ) {
+        throw new Error("Backend 저장 Chat이 현재 Case·Run·결과 digest와 일치하지 않습니다.");
+      }
+      const status = "message_id" in message ? message.answer_status : message.status;
+      const citations = "message_id" in message
+        ? message.citations.map((citation) => citation.citation_id ?? citation.evidence_id ?? citation.source_id ?? citation.reference_id)
+        : message.claims.flatMap((claim) => claim.citation_ids);
+      if (status === "answered" && citations.length === 0) {
+        throw new Error("Backend가 근거 없는 저장 Chat 답변을 반환했습니다.");
+      }
+      if (citations.some((citationId) => !citationId || !knownCitationIds.has(citationId))) {
+        throw new Error("Backend 저장 Chat이 현재 Run 밖의 근거를 인용했습니다.");
+      }
+    }
+  }
+
   private removeRecovery(caseId: string, expectedJobId?: string): void {
     const existing = this.recoveryByCase.get(caseId);
     if (!existing || (expectedJobId !== undefined && existing.job_id !== expectedJobId)) return;
@@ -3327,7 +3819,11 @@ export class WorkbenchApp {
   }
 
   private clearIdempotencyKeysForJob(job: JobRecord): void {
-    if (job.status !== "succeeded" && job.status !== "failed") return;
+    if (
+      job.status !== "succeeded"
+      && job.status !== "failed"
+      && job.status !== "response_received_rejected"
+    ) return;
     const intent = this.jobIntentById.get(job.job_id);
     if (intent) this.idempotencyKeys.delete(intent);
     this.jobIntentById.delete(job.job_id);
@@ -3345,7 +3841,9 @@ export class WorkbenchApp {
     const existing = this.state.liveStages.findIndex((item) => item.event_id === event.event_id);
     if (existing >= 0) this.state.liveStages[existing] = event;
     else this.state.liveStages.push(event);
-    this.state.liveStages.sort((left, right) => left.occurred_at.localeCompare(right.occurred_at));
+    this.state.liveStages.sort((left, right) => (
+      left.sequence - right.sequence || left.occurred_at.localeCompare(right.occurred_at)
+    ));
     this.render();
   }
 
@@ -3363,7 +3861,14 @@ export class WorkbenchApp {
       if (!this.isJobLifecycleActive(lifecycleEpoch)) return;
       // Stage events are an observability channel. A transient event-endpoint
       // failure must not hide or cancel the authoritative Job state machine.
-      if (error instanceof ApiError && error.status === 401) throw error;
+      if (error instanceof ApiError && error.status === 401) {
+        this.pauseJobObservation(
+          "인증이 만료되어 권위 Job 상태 관측을 계속할 수 없습니다. 다시 로그인한 뒤 저장된 같은 Job에 재연결해야 합니다.",
+          "세션이 만료되어 심사 상태 자동 관측을 중단했습니다.",
+          error,
+        );
+        return;
+      }
       this.state.liveStages = [];
     }
     if (!this.isJobLifecycleActive(lifecycleEpoch)) return;
@@ -3392,7 +3897,11 @@ export class WorkbenchApp {
       } catch (error) {
         if (!this.isJobLifecycleActive(lifecycleEpoch) || signal.aborted) return;
         if (error instanceof ApiError && error.status === 401) {
-          this.showError(error);
+          this.pauseJobObservation(
+            "인증이 만료되어 권위 Job 상태 관측을 계속할 수 없습니다. 다시 로그인한 뒤 저장된 같은 Job에 재연결해야 합니다.",
+            "세션이 만료되어 심사 상태 자동 관측을 중단했습니다.",
+            error,
+          );
           return;
         }
       }
@@ -3461,15 +3970,21 @@ export class WorkbenchApp {
       }
       if (job.status === "succeeded") {
         if (!job.review_run_id) {
-          this.streamAbort?.abort();
-          this.state.error = "완료된 Job에 child Review Run ID가 없어 새 심사를 차단합니다.";
-          this.render();
+          this.pauseJobObservation(
+            "완료 상태 응답에 Review Run 식별자가 없어 권위 결과를 선택할 수 없습니다. 새 심사를 만들지 않고 같은 Job만 다시 조회합니다.",
+            "완료된 Job에 child Review Run ID가 없어 상태 관측을 중단했습니다. 동일 Job 상태를 다시 확인하세요.",
+          );
           return;
         }
         await this.handleTerminalJob(job, lifecycleEpoch);
         return;
       }
-      if (job.status === "failed" || job.status === "delivery_uncertain") {
+      if (
+        job.status === "failed"
+        || job.status === "delivery_uncertain"
+        || job.status === "response_received_rejected"
+        || job.status === "response_persistence_uncertain"
+      ) {
         await this.handleTerminalJob(job, lifecycleEpoch);
         return;
       }
@@ -3490,11 +4005,18 @@ export class WorkbenchApp {
         return;
       }
       if (transient) {
-        this.state.error = "Job 자동 재연결 한도를 소진했습니다. 새 심사는 계속 차단되며, 저장된 Job 상태를 다시 확인해야 합니다.";
-        this.render();
+        this.pauseJobObservation(
+          "Job 상태 조회의 일시 오류가 반복되어 자동 재연결을 멈췄습니다. 새 심사를 만들지 않고 같은 Job만 다시 조회합니다.",
+          "Job 자동 재연결 한도를 소진했습니다. 동일 Job 상태를 다시 확인하세요.",
+          error,
+        );
         return;
       }
-      this.showError(error);
+      this.pauseJobObservation(
+        "권위 Job 응답의 권한·식별자·계약을 안전하게 검증하지 못해 자동 관측을 중단했습니다. 새 심사를 만들지 않고 같은 Job만 다시 조회합니다.",
+        "심사 상태 응답을 안전하게 확인하지 못했습니다. 동일 Job 상태를 다시 확인하세요.",
+        error,
+      );
     }
   }
 
@@ -3528,6 +4050,25 @@ export class WorkbenchApp {
       this.render();
       return;
     }
+    if (job.status === "response_received_rejected") {
+      this.clearIdempotencyKeysForJob(job);
+      this.state.error = "Agent 응답이 도착했지만 Backend의 계약·근거·안전 검증을 통과하지 못했습니다. 결과는 저장하거나 공개하지 않았습니다. 기술 원인을 수정한 뒤 새 심사를 실행하세요.";
+      this.render();
+      return;
+    }
+    if (job.status === "response_persistence_uncertain") {
+      const existing = this.recoveryByCase.get(job.case_id);
+      if (!existing || existing.job_id !== job.job_id) {
+        this.state.error = "Agent 응답 저장 상태를 확정할 수 없고 정확한 요청 복구 기록도 없습니다. 중복 실행하지 말고 Backend 원장과 감사 로그를 운영 대조해야 합니다.";
+        this.render();
+        return;
+      }
+      this.assertJobRecoveryBinding(job, existing);
+      this.saveRecovery(existing);
+      this.state.error = "Agent 응답은 도착했지만 Review Run 저장 완료 여부가 불확실합니다. Job과 Idempotency-Key를 보존했으며 운영 대조 전까지 새 Agent 호출을 차단합니다.";
+      this.render();
+      return;
+    }
     if (job.status === "delivery_uncertain") {
       const existing = this.recoveryByCase.get(job.case_id);
       if (!existing || existing.job_id !== job.job_id) {
@@ -3551,6 +4092,7 @@ export class WorkbenchApp {
       this.render();
       return;
     }
+    this.jobObservationPausedReason = undefined;
     this.beginJobTracking(jobId, true);
     await this.act(async () => this.pollJob(jobId));
   }
@@ -3824,7 +4366,18 @@ export class WorkbenchApp {
 
   private async handleChat(event: Event, run: ReviewRun): Promise<void> {
     event.preventDefault();
-    if (!this.canChat() || this.state.busy) return;
+    if (!this.canChat()) {
+      this.state.error = "현재 역할은 새 Case Chat 질문을 생성할 수 없습니다.";
+      this.render();
+      return;
+    }
+    if (this.state.busy || this.state.chatRequest?.state === "requesting") {
+      this.state.notice = this.state.chatRequest?.state === "requesting"
+        ? "이미 답변을 생성하고 있습니다. 현재 질문이 끝난 뒤 다음 질문을 제출해 주세요."
+        : "다른 Case 작업을 처리 중입니다. 작업이 끝난 뒤 질문을 제출해 주세요.";
+      this.render();
+      return;
+    }
     const form = event.currentTarget as HTMLFormElement;
     if (!run.result_digest) {
       this.state.error = "결과 digest가 없어 현재 snapshot에 질문을 결박할 수 없습니다.";
@@ -3833,6 +4386,11 @@ export class WorkbenchApp {
     }
     const data = new FormData(form);
     const question = value(data, "question");
+    if (question.trim().length === 0) {
+      this.state.error = "질문 내용을 입력해 주세요.";
+      this.render();
+      return;
+    }
     const chatIdempotencyKey = `chat_${await sha256CanonicalJson({
       org_id: this.requireSession().org_id,
       subject: this.requireSession().subject,
@@ -3840,7 +4398,19 @@ export class WorkbenchApp {
       bound_result_digest: run.result_digest,
       question,
     })}`;
-    await this.act(async () => {
+    this.state.chatRequest = {
+      review_run_id: run.review_run_id,
+      question,
+      started_at_ms: Date.now(),
+      state: "requesting",
+    };
+    this.state.busy = true;
+    this.state.error = undefined;
+    this.state.notice = undefined;
+    form.reset();
+    this.startChatElapsedTimer();
+    this.render();
+    try {
       const answer = await this.api.answerCaseQuestion(run.review_run_id, {
         question,
         bound_result_digest: run.result_digest!,
@@ -3857,9 +4427,46 @@ export class WorkbenchApp {
         if (answer.status === "answered" && claim.citation_ids.length === 0) throw new Error("Backend가 근거 없는 Chat 답변을 반환했습니다.");
         if (claim.citation_ids.some((citationId) => !known.has(citationId))) throw new Error("Backend Chat 답변이 현재 Run 밖의 근거를 인용했습니다.");
       }
-      this.state.chat.push(answer);
-      form.reset();
-    });
+      this.state.chatRequest = {
+        ...this.state.chatRequest!,
+        state: "completed",
+        answer,
+      };
+      try {
+        const persisted = await this.api.listChat(run.review_run_id);
+        this.assertStoredChatBindings(persisted, run);
+        const saved = persisted.find((message) => "message_id" in message && message.message_id === answer.answer_id);
+        if (saved) {
+          this.state.chat = persisted;
+          this.state.chatRequest = undefined;
+        } else {
+          this.state.notice = "답변은 완료됐지만 저장된 Chat 목록 반영을 아직 확인하지 못했습니다. 현재 답변을 유지하며 새로고침 시 Backend 이력을 다시 확인합니다.";
+        }
+      } catch {
+        this.state.notice = "답변은 완료됐지만 저장된 Chat 이력을 다시 읽지 못했습니다. 현재 답변은 표시하며 새로고침 후 Backend 이력을 확인하세요.";
+      }
+    } catch (error) {
+      const timeout = isTimeoutError(error);
+      const message = timeout
+        ? "2분 동안 응답 완료를 확인하지 못했습니다. Backend 처리는 계속 완료됐을 수 있습니다. 동일 질문은 같은 Idempotency-Key로 안전하게 다시 시도하거나 저장된 Chat 이력을 다시 불러오세요."
+        : error instanceof ApiError
+          ? `${error.message}${error.requestId ? ` (요청 ${error.requestId})` : ""}`
+          : error instanceof Error
+            ? error.message
+            : "Chat 처리 중 알 수 없는 오류가 발생했습니다.";
+      this.state.chatRequest = {
+        ...this.state.chatRequest!,
+        state: "failed",
+        error: message,
+      };
+      this.state.error = message;
+    } finally {
+      this.stopChatElapsedTimer();
+      if (!this.destroyed) {
+        this.state.busy = false;
+        this.render();
+      }
+    }
   }
 
   private async refreshCases(): Promise<void> {
@@ -3924,13 +4531,19 @@ export class WorkbenchApp {
     }));
     if (!this.isJobLifecycleActive(lifecycleEpoch)) return;
     this.assertCaseAggregate(caseId, caseDetail, documents, supportingDocuments, runs, audit);
-    this.state.selectedCase = { ...caseDetail, documents, runs };
+    const orderedRuns = [...runs].sort((left, right) => {
+      const createdOrder = Date.parse(right.created_at) - Date.parse(left.created_at);
+      return createdOrder !== 0
+        ? createdOrder
+        : right.review_run_id.localeCompare(left.review_run_id);
+    });
+    this.state.selectedCase = { ...caseDetail, documents, runs: orderedRuns };
     this.state.documents = documents;
     this.state.supportingDocuments = supportingDocuments;
-    this.state.runs = runs;
+    this.state.runs = orderedRuns;
     this.state.audit = audit;
     this.state.selectedDocumentId = documents[0]?.document_id;
-    const runId = preferredRunId ?? runs[0]?.review_run_id;
+    const runId = preferredRunId ?? orderedRuns[0]?.review_run_id;
     if (runId) {
       await this.selectRun(runId, lifecycleEpoch);
       if (!this.isJobLifecycleActive(lifecycleEpoch)) return;
@@ -3965,14 +4578,25 @@ export class WorkbenchApp {
       if (job.status === "queued" || job.status === "running") await this.startJobTracking(job.job_id);
       else await this.handleTerminalJob(job);
     } catch (error) {
-      if (error instanceof ApiError && error.status === 401) throw error;
+      if (error instanceof ApiError && error.status === 401) {
+        this.pauseJobObservation(
+          "인증이 만료되어 저장된 Job에 재연결하지 못했습니다. 다시 로그인한 뒤 같은 Job을 확인해야 합니다.",
+          "세션이 만료되어 저장된 심사 상태를 확인하지 못했습니다.",
+          error,
+        );
+        return;
+      }
       if (isTransientJobPollingError(error)) {
         this.transientPollFailures = 1;
         this.state.notice = "저장된 Job에 일시적으로 연결하지 못했습니다. 새 심사는 차단하고 같은 Job을 자동 재조회합니다.";
         this.schedulePoll(recovery.job_id, 1_000);
         return;
       }
-      this.state.error = "저장된 Job 상태를 확인하지 못했습니다. 운영 대조 전까지 이 Case의 새 심사는 차단됩니다.";
+      this.pauseJobObservation(
+        "저장된 권위 Job 응답의 권한·식별자·계약을 안전하게 검증하지 못했습니다. 새 심사를 만들지 않고 같은 Job만 다시 조회합니다.",
+        "저장된 Job 상태를 안전하게 확인하지 못했습니다. 동일 Job 상태를 다시 확인하세요.",
+        error,
+      );
     }
   }
 
@@ -4047,31 +4671,7 @@ export class WorkbenchApp {
     if (proposals.some((item) => item.review_run_id !== runId || item.case_id !== current.case_id || item.org_id !== session.org_id)) {
       throw new Error("Backend Revision Proposal 목록에 다른 Case·Run·조직 계보가 포함되었습니다.");
     }
-    const knownCitationIds = new Set([
-      ...run.fields.map((item) => item.field_id),
-      ...run.issues.map((item) => item.issue_id),
-      ...run.evidence.map((item) => item.evidence_id),
-      ...run.findings.map((item) => item.finding_id),
-      ...run.sources.map((item) => item.source_id),
-    ]);
-    for (const message of chat) {
-      if (
-        message.review_run_id !== runId
-        || message.case_id !== current.case_id
-        || message.org_id !== session.org_id
-        || message.bound_result_digest !== run.result_digest
-      ) {
-        throw new Error("Backend 저장 Chat이 현재 Case·Run·결과 digest와 일치하지 않습니다.");
-      }
-      const status = "message_id" in message ? message.answer_status : message.status;
-      const citations = "message_id" in message
-        ? message.citations.map((citation) => citation.citation_id ?? citation.evidence_id ?? citation.source_id ?? citation.reference_id)
-        : message.claims.flatMap((claim) => claim.citation_ids);
-      if (status === "answered" && citations.length === 0) throw new Error("Backend가 근거 없는 저장 Chat 답변을 반환했습니다.");
-      if (citations.some((citationId) => !citationId || !knownCitationIds.has(citationId))) {
-        throw new Error("Backend 저장 Chat이 현재 Run 밖의 근거를 인용했습니다.");
-      }
-    }
+    this.assertStoredChatBindings(chat, run);
     let uatEvidenceTrace: UatEvidenceTrace | undefined;
     let uatEvidenceTraceStatus: WorkbenchState["uatEvidenceTraceStatus"] = "not_applicable";
     if (isScenarioEvalRuntime(this.state.uatMetadata)) {
@@ -4565,6 +5165,101 @@ function canonicalJson(value: unknown): string {
     return `{${Object.keys(object).sort().map((key) => `${JSON.stringify(key)}:${canonicalJson(object[key])}`).join(",")}}`;
   }
   throw new Error("멱등성 식별자에 직렬화할 수 없는 값이 포함되었습니다.");
+}
+
+function formatElapsed(milliseconds: number): string {
+  const totalSeconds = Math.max(0, Math.floor(milliseconds / 1_000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return minutes > 0 ? `${minutes}분 ${String(seconds).padStart(2, "0")}초` : `${seconds}초`;
+}
+
+function jobStatusLabel(status: JobRecord["status"]): string {
+  switch (status) {
+    case "queued": return "실행 대기";
+    case "running": return "심사 진행 중";
+    case "succeeded": return "심사 결과 저장 완료";
+    case "failed": return "심사 실행 실패";
+    case "delivery_uncertain": return "Agent 전달 확인 필요";
+    case "response_received_rejected": return "Agent 응답 검증 거절";
+    case "response_persistence_uncertain": return "결과 저장 확인 필요";
+  }
+}
+
+function jobStatusExplanation(job: JobRecord): string {
+  switch (job.status) {
+    case "queued":
+      return "심사 요청을 접수했으며 실행 Worker 연결을 기다리고 있습니다.";
+    case "running":
+      return "Claude 분석, 문서 정합성 검증, 법령 Evidence 조회를 진행하고 있습니다.";
+    case "succeeded":
+      return "Agent 응답 검증과 Review Run 저장이 모두 완료됐습니다. 아래 사용자 브리핑에서 결과와 이유를 확인하세요.";
+    case "failed":
+      return job.agent_call_state === "delivery_reconciled"
+        ? "운영 증거로 Agent 미처리를 확인해 기존 Job을 안전하게 종결했습니다."
+        : "심사 실행을 완료하지 못했습니다. 잘못된 결과는 저장하지 않았습니다.";
+    case "delivery_uncertain":
+      return "Agent가 요청을 받았는지 확정할 수 없어 중복 호출을 방지하도록 Case를 잠갔습니다.";
+    case "response_received_rejected":
+      return "Agent 응답은 도착했지만 Backend 안전 검증을 통과하지 못해 결과를 저장하지 않았습니다.";
+    case "response_persistence_uncertain":
+      return "검증된 Agent 응답의 저장 완료 여부를 확정할 수 없어 중복 처리를 방지하도록 Case를 잠갔습니다.";
+  }
+}
+
+function reviewStageLabel(stage: string): string {
+  const labels: Record<string, string> = {
+    queued: "심사 요청 접수",
+    input_validation: "입력 문서와 실행 조건 검증",
+    agent_analysis: "Claude 문서 분석·Agent 심사·법령 조회",
+    result_validation: "근거·계약·결과 안전 검증",
+    persistence: "검증된 Review Run 저장",
+    document_analysis: "문서별 Claude 분류·추출",
+    normalization: "추출값 정규화",
+    validation: "문서 간 정합성 검증",
+    evidence: "법령 Evidence 조회",
+    compliance: "규정 요건 검토",
+    report: "사용자 설명 보고서 작성",
+    completed: "심사 완료",
+    failed: "심사 중단",
+  };
+  return labels[stage] ?? humanize(stage);
+}
+
+function reviewStageStatusLabel(status: ReviewStageEvent["status"]): string {
+  switch (status) {
+    case "pending": return "대기";
+    case "running": return "진행 중";
+    case "succeeded": return "완료";
+    case "failed": return "실패";
+  }
+}
+
+function reviewStageMessage(message: string): string {
+  const messages: Record<string, string> = {
+    "review.queued": "심사 요청을 접수했습니다",
+    "revision.queued": "승인된 수정으로 재심사를 접수했습니다",
+    "review.input_validation_started": "문서 snapshot과 입력 한도를 확인하고 있습니다",
+    "review.input_validation_completed": "입력 검증을 완료했습니다",
+    "agent.analysis_started": "Claude와 Agent가 문서 분석·교차검증·Evidence 조회를 실행하고 있습니다",
+    "agent.analysis_completed": "Agent 분석과 Evidence 조회를 완료했습니다",
+    "agent.response_validation_started": "응답의 근거 결박과 안전 계약을 확인하고 있습니다",
+    "agent.response_validation_completed": "응답 안전 검증을 완료했습니다",
+    "review.persistence_started": "검증된 결과를 변경 불가능한 Run으로 저장하고 있습니다",
+    "review.completed": "심사 결과 저장을 완료했습니다",
+    "review.agent_pre_execution_retry_scheduled": "Agent 실행 전 준비 상태를 다시 확인한 뒤 같은 Job으로 재시도합니다",
+    "review.agent_pre_execution_retry_exhausted": "Agent 실행 전 준비 상태 확인이 반복 실패해 심사를 중단했습니다",
+    "review.delivery_uncertain": "Agent 전달 여부를 확정할 수 없습니다",
+    "review.response_received_rejected": "Agent 응답이 Backend 안전 검증을 통과하지 못했습니다",
+    "review.response_persistence_uncertain": "Agent 응답 저장 완료 여부를 확정할 수 없습니다",
+  };
+  return messages[message] ?? humanize(message);
+}
+
+function isTimeoutError(error: unknown): boolean {
+  return error instanceof DOMException
+    ? error.name === "TimeoutError" || error.name === "AbortError"
+    : error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError");
 }
 
 function isDefinitiveRequestRejection(error: unknown): boolean {

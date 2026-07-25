@@ -1,8 +1,7 @@
 import { createHash } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
 import { ApiClient } from "../src/api/v1/client";
-import { ContractError } from "../src/api/v1/decoders";
-import { decodeReviewRun } from "../src/api/v1/decoders";
+import { ContractError, decodeReviewRun, decodeStageEvent } from "../src/api/v1/decoders";
 import backendPublicReviewRun from "./fixtures/backend-63079af-public-review-run.json";
 
 const json = (value: unknown, status = 200): Response =>
@@ -31,6 +30,31 @@ const canonicalJson = (value: unknown): string => {
 };
 
 const canonicalSha256 = (value: unknown): string => createHash("sha256").update(canonicalJson(value)).digest("hex");
+
+describe("Backend progress contract", () => {
+  it.each([
+    "input_validation",
+    "agent_analysis",
+    "result_validation",
+    "persistence",
+    "document_analysis",
+    "normalization",
+    "validation",
+    "evidence",
+    "compliance",
+    "report",
+  ])("accepts the pinned %s stage while preserving legacy stage compatibility", (stage) => {
+    expect(decodeStageEvent({
+      event_id: `event-${stage}`,
+      job_id: "job-1",
+      sequence: 1,
+      stage,
+      state: "progress",
+      message_code: `${stage}.started`,
+      occurred_at: "2026-07-25T00:00:00Z",
+    })).toMatchObject({ stage, status: "running" });
+  });
+});
 
 const EMPTY_MODEL_EXECUTION = {
   provider: null,
@@ -550,6 +574,39 @@ describe("Backend API v1 client", () => {
     expect(init?.method).toBe("POST");
     expect(new Headers(init?.headers).get("Authorization")).toBe("Bearer memory-only-token");
     expect(JSON.parse(String(init?.body))).toEqual(payload);
+  });
+
+  it.each([
+    ["response_received_rejected", "response_received_rejected"],
+    ["response_persistence_uncertain", "response_persistence_uncertain"],
+  ] as const)("accepts the Backend-generated %s Job boundary", async (status, agentCallState) => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(json({
+      ...jobPayload("job-boundary"),
+      status,
+      agent_call_state: agentCallState,
+      error_code: `agent_${status}`,
+    }));
+
+    await expect(new ApiClient(fetcher).getJob("job-boundary")).resolves.toMatchObject({
+      status,
+      agent_call_state: agentCallState,
+    });
+  });
+
+  it.each([
+    ["response_received_rejected", "completed"],
+    ["failed", "response_received_rejected"],
+    ["response_persistence_uncertain", "completed"],
+    ["running", "response_persistence_uncertain"],
+  ] as const)("rejects mismatched Job/Agent boundary %s with %s", async (status, agentCallState) => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(json({
+      ...jobPayload("job-boundary"),
+      status,
+      agent_call_state: agentCallState,
+    }));
+
+    await expect(new ApiClient(fetcher).getJob("job-boundary"))
+      .rejects.toThrow(/state mismatch/);
   });
 
   it("rejects a Job or reconciliation response whose identity differs from the URL", async () => {

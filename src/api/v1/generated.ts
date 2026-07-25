@@ -1130,7 +1130,7 @@ export interface components {
              * Stage
              * @enum {string}
              */
-            stage: "queued" | "document_analysis" | "normalization" | "validation" | "evidence" | "compliance" | "report" | "completed" | "failed";
+            stage: "queued" | "input_validation" | "agent_analysis" | "result_validation" | "persistence" | "document_analysis" | "normalization" | "validation" | "evidence" | "compliance" | "report" | "completed" | "failed";
             /**
              * State
              * @enum {string}

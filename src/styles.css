@@ -1195,3 +1195,190 @@ input:hover, select:hover, textarea:hover { border-color: #9eb5c8; }
   .status-grid, .history-grid, .decision-grid, .hitl-form, .document-form, .supporting-form, .assertion-form, .proposal-decision-form, .revision-action-list, .uat-profile-grid, .uat-axis-grid, .uat-provenance-boundaries, .rag-query__facts, .rag-runtime-summary, .uat-store-counts { grid-template-columns: 1fr; }
   .review-pane { padding: 0.9rem; }
 }
+
+/* TASK-0025 — user-first review explanation, honest progress, and grounded Chat. */
+.user-briefing {
+  position: relative;
+  overflow: hidden;
+  margin-bottom: 1rem;
+  padding: clamp(1.4rem, 2.4vw, 2.1rem);
+  background:
+    radial-gradient(circle at 95% 0%, rgb(61 173 172 / 13%), transparent 22rem),
+    linear-gradient(135deg, #102b4e, #174f73);
+  border: 1px solid #285f82;
+  border-radius: var(--radius-lg);
+  box-shadow: 0 16px 42px rgb(12 40 67 / 14%);
+  color: #fff;
+}
+.user-briefing--issues_detected { background: linear-gradient(135deg, #3f2930, #6c3c3c); border-color: #865153; }
+.user-briefing--indeterminate { background: linear-gradient(135deg, #3a3528, #65552f); border-color: #82703f; }
+.user-briefing .eyebrow { color: #91e3e5; }
+.user-briefing__heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+.user-briefing__heading h2 { margin: 0 0 0.4rem; font-size: clamp(1.35rem, 2vw, 1.85rem); }
+.user-briefing__headline { max-width: 920px; margin: 0; color: #fff; font-size: 1.03rem; font-weight: 750; line-height: 1.65; }
+.user-briefing__disposition {
+  flex: 0 0 auto;
+  padding: 0.4rem 0.65rem;
+  color: #0c3f4b;
+  background: #b9eff0;
+  border: 1px solid rgb(255 255 255 / 34%);
+  border-radius: 999px;
+  font-size: 0.68rem;
+  font-weight: 900;
+}
+.user-briefing__meaning {
+  margin: 0.8rem 0 0;
+  padding: 0.7rem 0.8rem;
+  color: #d8e9f2;
+  background: rgb(255 255 255 / 8%);
+  border-left: 3px solid #61c7cd;
+  border-radius: 6px;
+}
+.user-briefing__summary { display: grid; gap: 0.45rem; margin-top: 0.8rem; }
+.briefing-claim { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.4rem; }
+.briefing-claim p { margin: 0; color: #f4fbff; font-size: 0.84rem; line-height: 1.6; }
+.user-briefing .citation { color: #d9f5ff; background: rgb(255 255 255 / 12%); border-color: rgb(255 255 255 / 24%); }
+.user-briefing__grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.75rem;
+  margin-top: 1rem;
+}
+.user-briefing__grid article {
+  min-width: 0;
+  padding: 1rem;
+  color: #15344e;
+  background: rgb(255 255 255 / 94%);
+  border: 1px solid rgb(255 255 255 / 38%);
+  border-radius: 10px;
+  box-shadow: 0 4px 14px rgb(7 27 47 / 9%);
+}
+.user-briefing__grid h3 { margin: 0 0 0.65rem; color: #174f73; font-size: 0.85rem; }
+.user-briefing__grid p { margin: 0.25rem 0; font-size: 0.78rem; line-height: 1.58; }
+.user-briefing__grid small { display: block; margin-top: 0.55rem; color: #5a6e81; line-height: 1.5; }
+.briefing-list { display: grid; gap: 0.5rem; margin: 0; padding-left: 1.15rem; }
+.briefing-list li::marker { color: #188390; font-weight: 800; }
+.briefing-list strong { font-size: 0.72rem; }
+.user-briefing__boundary { margin: 0.9rem 0 0; color: #c4dbe7; font-size: 0.7rem; }
+
+.technical-review-details {
+  overflow: hidden;
+  margin-top: 1rem;
+  padding: 0;
+  background: #f8fafc;
+  border: 1px solid #d8e2eb;
+  border-radius: var(--radius-md);
+}
+.technical-review-details > summary {
+  padding: 1rem 1.2rem;
+  color: #36546d;
+  background: #eef3f7;
+  font-size: 0.8rem;
+  font-weight: 850;
+  cursor: pointer;
+}
+.technical-review-details[open] > summary { border-bottom: 1px solid #d8e2eb; }
+.technical-review-details > .section-help { margin: 1rem 1rem 0; }
+.technical-review-details > .card,
+.technical-review-details > .uat-assertion,
+.technical-review-details > .history-grid {
+  margin: 1rem;
+  box-shadow: none;
+}
+
+.job-status {
+  grid-template-columns: 1fr;
+  gap: 0.7rem;
+  padding: 1rem;
+  background: linear-gradient(135deg, #eef7fb, #f5fbfa);
+  border-color: #bcd9e4;
+}
+.job-status__heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; }
+.job-status__heading .eyebrow { margin: 0 0 0.15rem; }
+.job-state-pill {
+  flex: 0 0 auto;
+  padding: 0.3rem 0.55rem;
+  color: #245471;
+  background: #fff;
+  border: 1px solid #c6dce7;
+  border-radius: 999px;
+  font-size: 0.66rem;
+  font-weight: 850;
+}
+.job-state-pill--succeeded { color: var(--positive); border-color: #9bcdb3; background: var(--positive-bg); }
+.job-state-pill--failed,
+.job-state-pill--response_received_rejected { color: var(--negative); border-color: #e1aaaa; background: var(--negative-bg); }
+.job-state-pill--delivery_uncertain,
+.job-state-pill--response_persistence_uncertain { color: var(--caution); border-color: #dfc16c; background: var(--caution-bg); }
+.review-progress-summary { display: grid; grid-template-columns: 1.4fr repeat(3, minmax(105px, 0.55fr)); gap: 0.6rem; }
+.review-progress-summary > div { min-width: 0; padding: 0.7rem; background: rgb(255 255 255 / 82%); border: 1px solid #d7e7ed; border-radius: 8px; }
+.review-progress-summary span, .review-progress-summary strong { display: block; }
+.review-progress-summary span { color: #62798c; font-size: 0.65rem; }
+.review-progress-summary strong { margin-top: 0.2rem; color: #173e5b; font-size: 0.78rem; overflow-wrap: anywhere; }
+.review-progress-track { height: 5px; overflow: hidden; background: #d8e7ec; border-radius: 999px; }
+.review-progress-track span {
+  display: block;
+  width: 32%;
+  height: 100%;
+  background: linear-gradient(90deg, #1769aa, #16a0a4);
+  border-radius: inherit;
+  animation: progress-scan 1.8s ease-in-out infinite alternate;
+}
+@keyframes progress-scan { from { transform: translateX(-20%); } to { transform: translateX(230%); } }
+.job-terminal-explanation { margin: 0; color: #405a70; line-height: 1.6; }
+.review-progress-completed { margin: 0; color: #3d675e; font-size: 0.72rem; font-weight: 750; }
+.job-error-detail { color: #6e3740; font-size: 0.72rem; }
+.job-error-detail code { display: block; margin-top: 0.4rem; padding: 0.55rem; overflow-wrap: anywhere; background: rgb(255 255 255 / 72%); border-radius: 6px; }
+.job-status--rejected { color: inherit; background: var(--negative-bg); border-color: #dfaeae; }
+.job-status--paused {
+  background: linear-gradient(135deg, #fff9e9, #fffdf6);
+  border-color: #d9bd69;
+}
+.review-progress-summary--paused > div {
+  background: rgb(255 255 255 / 68%);
+  border-color: #e3d5a8;
+}
+.live-stages { padding: 0.65rem 0.75rem 0.65rem 2rem; background: rgb(255 255 255 / 70%); border-radius: 8px; }
+.live-stage strong { color: #264a63; }
+.live-stage--succeeded strong::after { margin-left: 0.35rem; color: var(--positive); content: "✓"; }
+
+.case-chat { border-top: 4px solid #1769aa; }
+.case-chat .section-title-row { align-items: flex-start; }
+.case-chat .eyebrow { margin-bottom: 0.2rem; }
+.chat-log { max-height: 620px; gap: 0.9rem; }
+.chat-message { display: grid; gap: 0.65rem; padding: 1rem; }
+.chat-message--requesting { border-color: #8eb9d4; background: #f5fbff; }
+.chat-message--failed { border-color: #dfaeae; background: #fffafa; }
+.chat-turn { display: grid; gap: 0.3rem; }
+.chat-turn > span { color: #617789; font-size: 0.64rem; font-weight: 850; letter-spacing: 0.08em; }
+.chat-turn--user { width: min(82%, 820px); justify-self: end; padding: 0.7rem 0.8rem; background: #e9f3fa; border-radius: 10px 10px 2px 10px; }
+.chat-turn--assistant { width: min(92%, 980px); padding: 0.2rem 0; }
+.structured-text { display: grid; gap: 0.55rem; min-width: 0; }
+.structured-text p { margin: 0; white-space: normal; overflow-wrap: anywhere; font-size: 0.84rem; line-height: 1.75; }
+.chat-pending-copy { margin: 0; color: #42647d; font-size: 0.76rem; }
+.chat-progress { display: flex; gap: 0.75rem; align-items: flex-start; margin-bottom: 0.8rem; padding: 0.8rem; color: #23475f; background: #edf7fb; border: 1px solid #c5dfe9; border-radius: 9px; }
+.chat-progress p, .chat-progress small { display: block; margin: 0.15rem 0 0; color: #5b7385; }
+.chat-progress__pulse { width: 10px; height: 10px; flex: 0 0 auto; margin-top: 0.35rem; background: #128b98; border-radius: 50%; box-shadow: 0 0 0 0 rgb(18 139 152 / 30%); animation: chat-pulse 1.4s ease-out infinite; }
+@keyframes chat-pulse { 70% { box-shadow: 0 0 0 8px rgb(18 139 152 / 0%); } 100% { box-shadow: 0 0 0 0 rgb(18 139 152 / 0%); } }
+.chat-technical { color: #607485; font-size: 0.7rem; }
+.chat-technical > summary { cursor: pointer; font-weight: 750; }
+.chat-technical .section-help { margin: 0.4rem 0 0; overflow-wrap: anywhere; }
+
+@media (max-width: 1024px) {
+  .user-briefing__grid { grid-template-columns: 1fr; }
+  .review-progress-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (max-width: 780px) {
+  .user-briefing__heading { display: grid; }
+  .user-briefing__disposition { justify-self: start; }
+  .review-progress-summary { grid-template-columns: 1fr; }
+  .job-status__heading { display: grid; }
+  .job-state-pill { justify-self: start; }
+  .chat-turn--user, .chat-turn--assistant { width: 100%; }
+}

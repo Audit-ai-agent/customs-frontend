@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
 import { WorkbenchApp, type WorkbenchAuth } from "../src/app";
 import { ApiError, type ApiClient } from "../src/api/v1/client";
-import type { CaseDocument, ChatRecord, CorrectionProposal, CorrectionProposalDecisionResponse, JobRecord, ModelExecutionSummary, ReviewRun } from "../src/api/v1/types";
+import type { CaseDocument, ChatRecord, CorrectionProposal, CorrectionProposalDecisionResponse, JobRecord, ModelExecutionSummary, ReviewRun, ReviewStageEvent } from "../src/api/v1/types";
 import {
   LOCAL_UAT_EVIDENCE_PROFILES,
   localUatExpectedSemanticsSha256,
@@ -416,8 +416,14 @@ describe("review workbench", () => {
     caseButton!.click();
     await vi.waitFor(() => expect(root.textContent).toContain("문서 정합성 문제가 없습니다."));
     expect(root.querySelectorAll(".case-stepper .case-step")).toHaveLength(3);
-    expect(root.querySelectorAll(".review-section-nav a")).toHaveLength(6);
+    expect(root.querySelectorAll(".review-section-nav a")).toHaveLength(7);
     expect(root.textContent).toContain("Claude 표현 · 코드 검증");
+    expect(root.querySelector('[data-user-briefing="ready"]')).not.toBeNull();
+    expect(root.textContent).toContain("이번 심사 결과를 쉽게 설명해 드립니다");
+    expect(root.textContent).toContain("왜 이런 결과가 나왔나요?");
+    expect(root.textContent).toContain("법령 근거는 어떻게 확인됐나요?");
+    expect(root.textContent).toContain("이제 무엇을 해야 하나요?");
+    expect(root.querySelector<HTMLDetailsElement>(".technical-review-details")?.open).toBe(false);
 
     expect(root.querySelector("img")).toBeNull();
     expect(root.textContent).toContain("실행");
@@ -439,6 +445,300 @@ describe("review workbench", () => {
     expect((document.activeElement as HTMLElement | null)?.dataset.sourceId).toBe("source-1");
     const accessibility = await axe.run(root);
     expect(accessibility.violations).toEqual([]);
+  });
+
+  it("shows an honest current phase, elapsed time and empirical duration range without a fake percentage", async () => {
+    const root = document.createElement("div");
+    document.body.append(root);
+    const app = new WorkbenchApp(root, fakeApi(), auth(true));
+    await app.start();
+    [...root.querySelectorAll<HTMLButtonElement>("button")]
+      .find((item) => item.textContent?.includes("<img src=x"))
+      ?.click();
+    await vi.waitFor(() => expect(root.textContent).toContain("문서 정합성 문제가 없습니다."));
+
+    const internals = app as unknown as {
+      state: {
+        job: JobRecord | undefined;
+        liveStages: Array<{
+          event_id: string;
+          job_id: string;
+          sequence: number;
+          stage: string;
+          status: "pending" | "running" | "succeeded" | "failed";
+          message: string;
+          occurred_at: string;
+        }>;
+      };
+      jobTrackingStartedAtMs: number | undefined;
+      render(): void;
+    };
+    internals.state.job = {
+      ...jobRecord("job-progress"),
+      status: "running",
+      agent_call_state: "started",
+      created_at: new Date(Date.now() - 125_000).toISOString(),
+    };
+    internals.state.liveStages = [
+      {
+        event_id: "event-input",
+        job_id: "job-progress",
+        sequence: 1,
+        stage: "input_validation",
+        status: "succeeded",
+        message: "review.input_validation_completed",
+        occurred_at: new Date(Date.now() - 120_000).toISOString(),
+      },
+      {
+        event_id: "event-agent",
+        job_id: "job-progress",
+        sequence: 2,
+        stage: "agent_analysis",
+        status: "running",
+        message: "agent.analysis_started",
+        occurred_at: new Date(Date.now() - 115_000).toISOString(),
+      },
+    ];
+    internals.jobTrackingStartedAtMs = Date.now() - 125_000;
+    internals.render();
+
+    const progress = root.querySelector('[data-review-progress="running"]');
+    expect(progress).not.toBeNull();
+    expect(progress?.textContent).toContain("Claude 문서 분석·Agent 심사·법령 조회");
+    expect(progress?.textContent).toContain("2분 05초");
+    expect(progress?.textContent).toContain("4~7분");
+    expect(progress?.textContent).toContain("완료된 단계: 입력 문서와 실행 조건 검증");
+    expect(progress?.textContent).toContain("정확한 완료 시각이나 진행률을 보장하지 않습니다");
+    expect(progress?.querySelector('[role="progressbar"]')?.getAttribute("aria-valuenow")).toBeNull();
+    app.destroy();
+  });
+
+  it("pauses stale Job observation and offers exact same-Job reconnection", async () => {
+    const root = document.createElement("div");
+    document.body.append(root);
+    const app = new WorkbenchApp(root, fakeApi(), auth(true));
+    await app.start();
+    [...root.querySelectorAll<HTMLButtonElement>("button")]
+      .find((item) => item.textContent?.includes("<img src=x"))
+      ?.click();
+    await vi.waitFor(() => expect(root.textContent).toContain("문서 정합성 문제가 없습니다."));
+
+    const internals = app as unknown as {
+      state: {
+        job: JobRecord | undefined;
+        liveStages: ReviewStageEvent[];
+      };
+      jobTrackingStartedAtMs: number | undefined;
+      jobElapsedTimer: number | undefined;
+      beginJobTracking(jobId: string): void;
+      stopIfJobTrackingExpired(jobId: string): boolean;
+    };
+    internals.state.job = {
+      ...jobRecord("job-observation-paused"),
+      status: "running",
+      agent_call_state: "started",
+    };
+    internals.state.liveStages = [{
+      event_id: "event-agent-paused",
+      job_id: "job-observation-paused",
+      sequence: 1,
+      stage: "agent_analysis",
+      status: "running",
+      message: "agent.analysis_started",
+      occurred_at: new Date(Date.now() - 60_000).toISOString(),
+    }];
+    internals.beginJobTracking("job-observation-paused");
+    internals.jobTrackingStartedAtMs = Date.now() - (12 * 60_000 + 1);
+
+    expect(internals.stopIfJobTrackingExpired("job-observation-paused")).toBe(true);
+    expect(internals.jobElapsedTimer).toBeUndefined();
+    expect(root.querySelector('[data-job-observation="paused"]')).not.toBeNull();
+    expect(root.textContent).toContain("마지막으로 확인한 상태 이후의 진행 상황은 아직 확인되지 않았습니다.");
+    expect(root.textContent).toContain("동일 Job 상태 다시 확인");
+    const pausedJob = root.querySelector('[data-review-progress="running"]');
+    expect(pausedJob?.classList.contains("job-status--paused")).toBe(true);
+    expect(pausedJob?.textContent).toContain("마지막 확인 단계");
+    expect(pausedJob?.textContent).toContain("Claude 문서 분석·Agent 심사·법령 조회");
+    expect(pausedJob?.textContent).toContain("마지막 관측 경과");
+    expect(pausedJob?.querySelector('[role="progressbar"]')).toBeNull();
+    app.destroy();
+  });
+
+  it.each(["http-403", "http-404", "contract", "binding"] as const)(
+    "pauses a %s authoritative polling failure and reconnects only the exact same Job",
+    async (failureKind) => {
+      const root = document.createElement("div");
+      document.body.append(root);
+      const api = fakeApi();
+      const expectedJob = {
+        ...jobRecord("job-authoritative-pause"),
+        status: "running" as const,
+        agent_call_state: "started" as const,
+      };
+      if (failureKind === "http-403") {
+        vi.mocked(api.getJob)
+          .mockRejectedValueOnce(new ApiError("forbidden", 403, "job_forbidden", "request-403"))
+          .mockResolvedValue(expectedJob);
+      } else if (failureKind === "http-404") {
+        vi.mocked(api.getJob)
+          .mockRejectedValueOnce(new ApiError("missing", 404, "job_missing", "request-404"))
+          .mockResolvedValue(expectedJob);
+      } else if (failureKind === "contract") {
+        vi.mocked(api.getJob)
+          .mockRejectedValueOnce(new Error("Backend Job 계약을 해석할 수 없습니다."))
+          .mockResolvedValue(expectedJob);
+      } else {
+        vi.mocked(api.getJob)
+          .mockResolvedValueOnce({ ...expectedJob, job_id: "job-wrong-binding" })
+          .mockResolvedValue(expectedJob);
+      }
+      const app = new WorkbenchApp(root, api, auth(true));
+      await app.start();
+      [...root.querySelectorAll<HTMLButtonElement>("button")]
+        .find((item) => item.textContent?.includes("<img src=x"))
+        ?.click();
+      await vi.waitFor(() => expect(root.textContent).toContain("문서 정합성 문제가 없습니다."));
+
+      const internals = app as unknown as {
+        state: { job: JobRecord | undefined };
+        jobElapsedTimer: number | undefined;
+        beginJobTracking(jobId: string): void;
+        pollJob(jobId: string): Promise<void>;
+      };
+      internals.state.job = expectedJob;
+      internals.beginJobTracking(expectedJob.job_id);
+      await internals.pollJob(expectedJob.job_id);
+
+      expect(internals.jobElapsedTimer).toBeUndefined();
+      expect(root.querySelector('[data-job-observation="paused"]')).not.toBeNull();
+      expect(root.querySelector('[data-review-progress="running"] [role="progressbar"]')).toBeNull();
+      expect(root.textContent).toContain("심사 상태 응답을 안전하게 확인하지 못했습니다.");
+      expect(root.textContent).toContain("동일 Job 상태 다시 확인");
+      if (failureKind === "http-403") expect(root.textContent).toContain("request-403");
+      if (failureKind === "http-404") expect(root.textContent).toContain("request-404");
+      expect(api.enqueueReview).not.toHaveBeenCalled();
+
+      [...root.querySelectorAll<HTMLButtonElement>("button")]
+        .find((item) => item.textContent === "동일 Job 상태 다시 확인")
+        ?.click();
+      await vi.waitFor(() => expect(api.getJob).toHaveBeenCalledTimes(2));
+      await vi.waitFor(() => expect(root.querySelector('[data-job-observation="paused"]')).toBeNull());
+      expect(root.querySelector('[data-review-progress="running"] [role="progressbar"]')).not.toBeNull();
+      expect(api.getJob).toHaveBeenLastCalledWith(expectedJob.job_id);
+      expect(api.enqueueReview).not.toHaveBeenCalled();
+      app.destroy();
+    },
+  );
+
+  it.each([
+    [
+      "response_received_rejected",
+      "response_received_rejected",
+      "Agent 응답 검증 거절",
+      "잘못된 결과는 사용자에게 공개되지 않았으며",
+    ],
+    [
+      "response_persistence_uncertain",
+      "response_persistence_uncertain",
+      "결과 저장 확인 필요",
+      "같은 심사를 다시 실행하면 중복 처리될 수 있으므로",
+    ],
+  ] as const)("renders the %s terminal boundary in clear Korean", async (status, agentCallState, title, explanation) => {
+    const root = document.createElement("div");
+    document.body.append(root);
+    const app = new WorkbenchApp(root, fakeApi(), auth(true));
+    await app.start();
+    [...root.querySelectorAll<HTMLButtonElement>("button")]
+      .find((item) => item.textContent?.includes("<img src=x"))
+      ?.click();
+    await vi.waitFor(() => expect(root.textContent).toContain("문서 정합성 문제가 없습니다."));
+
+    const internals = app as unknown as {
+      state: { job: JobRecord | undefined };
+      render(): void;
+    };
+    internals.state.job = {
+      ...jobRecord(`job-${status}`),
+      status,
+      agent_call_state: agentCallState,
+      error_code: `agent_${status}`,
+    };
+    internals.render();
+
+    const terminal = root.querySelector(`[data-review-progress="${status}"]`);
+    expect(terminal?.textContent).toContain(title);
+    expect(terminal?.textContent).toContain(explanation);
+    expect(terminal?.textContent).toContain("기술 원인 코드");
+    const runButton = [...root.querySelectorAll<HTMLButtonElement>("button")]
+      .find((item) => item.textContent === "새 심사 실행");
+    expect(runButton?.disabled).toBe(status === "response_persistence_uncertain");
+    app.destroy();
+  });
+
+  it("preserves a submitted Chat question immediately and renders the durable multiline answer as structured paragraphs", async () => {
+    const root = document.createElement("div");
+    document.body.append(root);
+    const api = fakeApi();
+    let resolveAnswer: ((answer: {
+      answer_id: string;
+      review_run_id: string;
+      case_id: string;
+      org_id: string;
+      bound_result_digest: string;
+      status: "answered";
+      claims: Array<{ claim_id: string; text: string; citation_ids: string[] }>;
+      generation_mode: "claude";
+      model_execution_summary: ModelExecutionSummary;
+      snapshot_id: string;
+      created_at: string;
+    }) => void) | undefined;
+    vi.mocked(api.answerCaseQuestion).mockImplementation(() => new Promise((resolve) => {
+      resolveAnswer = resolve;
+    }));
+    const durableChat: ChatRecord = {
+      ...CLAUDE_CHAT,
+      answer: "첫 번째 문단에서 결론을 설명합니다.\n\n두 번째 문단에서 근거와 조치를 설명합니다.",
+    };
+    vi.mocked(api.listChat)
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([durableChat]);
+    const app = new WorkbenchApp(root, api, auth(true));
+    await app.start();
+    [...root.querySelectorAll<HTMLButtonElement>("button")]
+      .find((item) => item.textContent?.includes("<img src=x"))
+      ?.click();
+    await vi.waitFor(() => expect(root.querySelector<HTMLFormElement>(".chat-form")).not.toBeNull());
+
+    const form = root.querySelector<HTMLFormElement>(".chat-form")!;
+    form.querySelector<HTMLTextAreaElement>('textarea[name="question"]')!.value = CLAUDE_CHAT.question;
+    form.requestSubmit();
+    await vi.waitFor(() => expect(root.querySelector('[data-chat-state="requesting"]')).not.toBeNull());
+    expect(root.querySelector('[data-chat-message="requesting"]')?.textContent).toContain(CLAUDE_CHAT.question);
+    expect(root.textContent).toContain("Case 근거 조회와 답변 인용 검증");
+    expect(root.textContent).toContain("일반적으로 약 1~2분");
+
+    resolveAnswer?.({
+      answer_id: "message-1",
+      review_run_id: "run-001",
+      case_id: "case-1",
+      org_id: "org-1",
+      bound_result_digest: "a".repeat(64),
+      status: "answered",
+      claims: [{ claim_id: "chat-claim-1", text: durableChat.answer, citation_ids: ["source-1"] }],
+      generation_mode: "claude",
+      model_execution_summary: durableChat.model_execution_summary,
+      snapshot_id: "a".repeat(64),
+      created_at: "2026-07-21T12:00:00Z",
+    });
+    await vi.waitFor(() => expect(root.querySelector('[data-chat-state="idle"]')).not.toBeNull());
+
+    const completed = root.querySelector('[data-chat-message="completed"]');
+    expect(completed?.textContent).toContain(CLAUDE_CHAT.question);
+    expect(completed?.querySelectorAll(".chat-turn--assistant .structured-text p")).toHaveLength(2);
+    expect(completed?.textContent).toContain("첫 번째 문단");
+    expect(completed?.textContent).toContain("두 번째 문단");
+    expect(root.querySelector<HTMLDetailsElement>(".chat-technical")?.open).toBe(false);
+    app.destroy();
   });
 
   it("shows unverified or unsafe runtime identity as a visible blocking state", async () => {
@@ -726,6 +1026,7 @@ describe("review workbench", () => {
     const parent: ReviewRun = {
       ...run,
       review_run_id: "run-parent",
+      created_at: "2026-07-21T12:00:00Z",
       assessment: "issues_detected",
       fields: [{ ...run.fields[0]!, value: "CI-1" }],
       issues: [{ issue_id: "issue-parent", code: "INVOICE_NO_MISMATCH", severity: "high", message: "mismatch", source_ids: ["source-1"] }],
@@ -734,11 +1035,12 @@ describe("review workbench", () => {
       ...run,
       review_run_id: "run-child",
       parent_run_id: "run-parent",
+      created_at: "2026-07-21T12:01:00Z",
       assessment: "no_issue_detected",
       fields: [{ ...run.fields[0]!, value: "CI-2" }],
       issues: [],
     };
-    vi.mocked(api.listReviewRuns).mockResolvedValue([child, parent]);
+    vi.mocked(api.listReviewRuns).mockResolvedValue([parent, child]);
     vi.mocked(api.getReviewRun).mockImplementation(async (runId) => runId === "run-child" ? child : parent);
     const app = new WorkbenchApp(root, api, auth(true));
 

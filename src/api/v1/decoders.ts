@@ -1231,14 +1231,38 @@ export function decodeJob(value: unknown): JobRecord {
     string(raw[key], `job.${key}`);
   }
   if (raw.kind !== "review" && raw.kind !== "revision") throw new ContractError("job.kind: unsupported kind");
-  if (raw.status !== "queued" && raw.status !== "running" && raw.status !== "succeeded" && raw.status !== "failed" && raw.status !== "delivery_uncertain") {
+  const jobStatuses = new Set([
+    "queued",
+    "running",
+    "succeeded",
+    "failed",
+    "delivery_uncertain",
+    "response_received_rejected",
+    "response_persistence_uncertain",
+  ]);
+  if (!jobStatuses.has(String(raw.status))) {
     throw new ContractError("job.status: unsupported status");
   }
-  if (raw.agent_call_state !== "not_started" && raw.agent_call_state !== "started" && raw.agent_call_state !== "completed" && raw.agent_call_state !== "delivery_uncertain" && raw.agent_call_state !== "delivery_reconciled") {
+  const agentCallStates = new Set([
+    "not_started",
+    "started",
+    "completed",
+    "delivery_uncertain",
+    "delivery_reconciled",
+    "response_received_rejected",
+    "response_persistence_uncertain",
+  ]);
+  if (!agentCallStates.has(String(raw.agent_call_state))) {
     throw new ContractError("job.agent_call_state: unsupported state");
   }
   if ((raw.status === "delivery_uncertain") !== (raw.agent_call_state === "delivery_uncertain")) {
     throw new ContractError("job: delivery uncertainty state mismatch");
+  }
+  if ((raw.status === "response_received_rejected") !== (raw.agent_call_state === "response_received_rejected")) {
+    throw new ContractError("job: rejected Agent response state mismatch");
+  }
+  if ((raw.status === "response_persistence_uncertain") !== (raw.agent_call_state === "response_persistence_uncertain")) {
+    throw new ContractError("job: Agent response persistence state mismatch");
   }
   if (raw.status === "succeeded" && raw.agent_call_state !== "completed") {
     throw new ContractError("job: succeeded Job requires a completed Agent call");
