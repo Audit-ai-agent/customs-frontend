@@ -8,7 +8,7 @@ const rootPath = fileURLToPath(root);
 const files = await walk(src);
 const violations = [];
 
-for (const file of files.filter((name) => [".ts", ".css"].includes(extname(name)))) {
+for (const file of files.filter((name) => [".ts", ".tsx", ".css"].includes(extname(name)))) {
   const content = await readFile(file, "utf8");
   const label = relative(rootPath, file);
   for (const [pattern, message] of [
@@ -21,6 +21,25 @@ for (const file of files.filter((name) => [".ts", ".css"].includes(extname(name)
   ]) {
     if (pattern.test(content)) violations.push(`${label}: ${message}`);
   }
+}
+
+const v2Client = await readFile(new URL("../src/api/v2/client.ts", import.meta.url), "utf8");
+if (!v2Client.includes('const API_BASE = "/api/v2"')) {
+  violations.push("Enhanced experience client must keep a literal /api/v2 Backend-only boundary");
+}
+const mainEntry = await readFile(new URL("../src/main.ts", import.meta.url), "utf8");
+if (/from\s+["']\.\/app["']/.test(mainEntry)) {
+  violations.push("Enhanced entry must not statically include the legacy developer workbench");
+}
+if (!mainEntry.includes('await import("./app")') || !mainEntry.includes('await import("./experience/bootstrap")')) {
+  violations.push("Legacy and commercial workbenches must remain isolated dynamic entry chunks");
+}
+const experienceFiles = files.filter((name) => name.includes(`${join("src", "experience")}`) && [".ts", ".tsx"].includes(extname(name)));
+for (const file of experienceFiles) {
+  const content = await readFile(file, "utf8");
+  const label = relative(rootPath, file);
+  if (/\bhumanize\s*\(/.test(content)) violations.push(`${label}: user wording must use an exhaustive Korean catalog`);
+  if (/dangerouslySetInnerHTML/.test(content)) violations.push(`${label}: enhanced experience must never render untrusted HTML`);
 }
 
 const client = await readFile(new URL("../src/api/v1/client.ts", import.meta.url), "utf8");

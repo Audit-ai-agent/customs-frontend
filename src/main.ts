@@ -1,7 +1,6 @@
-import "./styles.css";
 import { ApiClient } from "./api/v1/client";
 import { OidcSession } from "./auth";
-import { createWorkbench } from "./app";
+import { enhancedExperienceEnabled } from "./experience/feature-flags";
 
 async function bootstrap(): Promise<void> {
   const root = document.querySelector<HTMLElement>("#app");
@@ -12,8 +11,16 @@ async function bootstrap(): Promise<void> {
   try {
     oidc.configure(await bootstrapClient.getAuthConfig());
     await oidc.finishCallbackIfPresent();
-    const app = createWorkbench(root, new ApiClient(fetch, oidc.freshAccessToken), oidc);
-    await app.start();
+    const api = new ApiClient(fetch, oidc.freshAccessToken);
+    if (enhancedExperienceEnabled()) {
+      const { mountCommercialWorkbench } = await import("./experience/bootstrap");
+      mountCommercialWorkbench(root, api, oidc);
+    } else {
+      await import("./styles.css");
+      const { createWorkbench } = await import("./app");
+      const app = createWorkbench(root, api, oidc);
+      await app.start();
+    }
   } catch (error) {
     const main = document.createElement("main");
     main.id = "main-content";

@@ -429,6 +429,161 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v2/assistant/conversations/{conversation_id}/messages": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Assistant Messages Endpoint */
+        get: operations["list_assistant_messages_endpoint_api_v2_assistant_conversations__conversation_id__messages_get"];
+        put?: never;
+        /** Enqueue Assistant Message Endpoint */
+        post: operations["enqueue_assistant_message_endpoint_api_v2_assistant_conversations__conversation_id__messages_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/assistant/jobs/{assistant_job_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Assistant Job Endpoint */
+        get: operations["get_assistant_job_endpoint_api_v2_assistant_jobs__assistant_job_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/assistant/jobs/{assistant_job_id}/events/stream": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Stream Assistant Job Events Endpoint */
+        get: operations["stream_assistant_job_events_endpoint_api_v2_assistant_jobs__assistant_job_id__events_stream_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/cases/{case_id}/reviews": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Enqueue Experience Review Endpoint */
+        post: operations["enqueue_experience_review_endpoint_api_v2_cases__case_id__reviews_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/jobs/{job_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Experience Job Endpoint */
+        get: operations["get_experience_job_endpoint_api_v2_jobs__job_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/jobs/{job_id}/events/stream": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Stream Experience Job Events Endpoint */
+        get: operations["stream_experience_job_events_endpoint_api_v2_jobs__job_id__events_stream_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/review-runs/{review_run_id}/assistant/conversations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Assistant Conversations Endpoint */
+        get: operations["list_assistant_conversations_endpoint_api_v2_review_runs__review_run_id__assistant_conversations_get"];
+        put?: never;
+        /** Create Assistant Conversation Endpoint */
+        post: operations["create_assistant_conversation_endpoint_api_v2_review_runs__review_run_id__assistant_conversations_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/review-runs/{review_run_id}/experience": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Review Experience Endpoint */
+        get: operations["get_review_experience_endpoint_api_v2_review_runs__review_run_id__experience_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/uat/metadata": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Uat Metadata V2 */
+        get: operations["uat_metadata_v2_api_v2_uat_metadata_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -439,10 +594,457 @@ export interface components {
          */
         AgentCallState: "not_started" | "started" | "completed" | "delivery_uncertain" | "delivery_reconciled" | "response_received_rejected" | "response_persistence_uncertain";
         /**
+         * AgentReviewResultV3
+         * @description Strict top-level consumer for the provider-owned V3 wire.
+         *
+         *     Complex V2-compatible details remain opaque JSON, but every provider top-level
+         *     member is enumerated and additional members are rejected.  The provider's
+         *     canonical result hash is independently recomputed before any field is used.
+         */
+        AgentReviewResultV3: {
+            /** Action Trace */
+            action_trace?: {
+                [key: string]: unknown;
+            }[];
+            assessment: components["schemas"]["Assessment"];
+            assurance_level: components["schemas"]["AssuranceLevel"];
+            /** Audit Trail */
+            audit_trail?: {
+                [key: string]: unknown;
+            }[];
+            /** Case Id */
+            case_id: string;
+            completion_eligibility: components["schemas"]["CompletionEligibility"];
+            /** Document Results */
+            document_results?: {
+                [key: string]: unknown;
+            }[];
+            execution_status: components["schemas"]["ExecutionStatus"];
+            /** Fact Ledger */
+            fact_ledger: {
+                [key: string]: unknown;
+            };
+            /** Input Manifest Sha256 */
+            input_manifest_sha256: string;
+            /**
+             * Jurisdiction
+             * @constant
+             */
+            jurisdiction: "KR";
+            /** Knowledge Snapshot Id */
+            knowledge_snapshot_id?: string | null;
+            /** Model Calls */
+            model_calls?: {
+                [key: string]: unknown;
+            }[];
+            /** Model Conflicts */
+            model_conflicts?: {
+                [key: string]: unknown;
+            }[];
+            /** Model Errors */
+            model_errors?: {
+                [key: string]: unknown;
+            }[];
+            /** Narrative Report */
+            narrative_report?: {
+                [key: string]: unknown;
+            };
+            /** Observations */
+            observations?: {
+                [key: string]: unknown;
+            }[];
+            /** Rag Evidence */
+            rag_evidence?: {
+                [key: string]: unknown;
+            }[];
+            /** Regulatory Findings */
+            regulatory_findings?: {
+                [key: string]: unknown;
+            }[];
+            /** Report */
+            report: {
+                [key: string]: unknown;
+            };
+            /** Required Actions */
+            required_actions?: components["schemas"]["RequiredAction"][];
+            /** Requires Human Review */
+            requires_human_review: boolean;
+            /** Result Sha256 */
+            result_sha256: string;
+            /**
+             * Retrieval Coverage
+             * @enum {string}
+             */
+            retrieval_coverage: "complete" | "partial" | "unknown";
+            /** Retrieval Errors */
+            retrieval_errors?: {
+                [key: string]: unknown;
+            }[];
+            /** Retrieval Request */
+            retrieval_request?: {
+                [key: string]: unknown;
+            } | null;
+            /** Retrieval Results */
+            retrieval_results?: {
+                [key: string]: unknown;
+            }[];
+            /**
+             * Retrieval Status
+             * @enum {string}
+             */
+            retrieval_status: "ok" | "partial" | "failed";
+            /**
+             * Review As Of
+             * Format: date
+             */
+            review_as_of: string;
+            review_disposition: components["schemas"]["ReviewDisposition"];
+            /** Review Gaps */
+            review_gaps?: components["schemas"]["ReviewGap"][];
+            /** Review Plan */
+            review_plan: {
+                [key: string]: unknown;
+            };
+            /** Review Run Id */
+            review_run_id: string;
+            runtime_release: components["schemas"]["ReleaseIdentityV3"];
+            /**
+             * Schema Version
+             * @constant
+             */
+            schema_version: "3.0";
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "completed" | "needs_review" | "blocked";
+            /**
+             * Trade Type
+             * @enum {string}
+             */
+            trade_type: "import" | "export";
+            /** Validation Issues */
+            validation_issues?: {
+                [key: string]: unknown;
+            }[];
+        };
+        /** AgentUatCapabilityAttestationV1 */
+        AgentUatCapabilityAttestationV1: {
+            /** Adaptive Active */
+            adaptive_active: boolean;
+            /** Agent Code Snapshot Sha256 */
+            agent_code_snapshot_sha256: string;
+            /** Agent Commit */
+            agent_commit: string;
+            /**
+             * Auto Completion Enabled
+             * @constant
+             */
+            auto_completion_enabled: false;
+            /** Capability Sha256 */
+            capability_sha256: string;
+            /**
+             * Environment
+             * @constant
+             */
+            environment: "local_uat";
+            /**
+             * Evidence Profile
+             * @constant
+             */
+            evidence_profile: "preserved-3law-v3-scenario-eval";
+            /** Evidence Runtime V3 Sha256 */
+            evidence_runtime_v3_sha256: string;
+            /**
+             * Expires At
+             * Format: date-time
+             */
+            expires_at: string;
+            /**
+             * Issued At
+             * Format: date-time
+             */
+            issued_at: string;
+            /**
+             * Loopback Only
+             * @constant
+             */
+            loopback_only: true;
+            /**
+             * Max Cycles
+             * @constant
+             */
+            max_cycles: 2;
+            /**
+             * Max Rereads Per Field
+             * @constant
+             */
+            max_rereads_per_field: 1;
+            /**
+             * Max Tool Calls
+             * @constant
+             */
+            max_tool_calls: 6;
+            /** Model Id */
+            model_id: string;
+            /** Profile Id */
+            profile_id: string;
+            /** Prompt Bundle Sha256 */
+            prompt_bundle_sha256: string;
+            /** Schema Bundle Sha256 */
+            schema_bundle_sha256: string;
+            /**
+             * Schema Version
+             * @default 1.0
+             * @constant
+             */
+            schema_version: "1.0";
+            /** Tool Registry Id */
+            tool_registry_id: string;
+            /** Tool Registry Sha256 */
+            tool_registry_sha256: string;
+        };
+        /** AnswerScopeClassificationAuditV1 */
+        AnswerScopeClassificationAuditV1: {
+            /**
+             * Classified Scope
+             * @enum {string}
+             */
+            classified_scope: "case_grounded" | "evidence_grounded" | "general_customs_guidance" | "clarification_needed" | "insufficient_evidence" | "out_of_scope";
+            /** Guidance Topics */
+            guidance_topics?: ("invoice" | "packing_list" | "bill_of_lading" | "certificate_of_origin" | "hsk" | "customs_review")[];
+            /**
+             * Input Tokens
+             * @default 0
+             */
+            input_tokens: number;
+            /**
+             * Latency Ms
+             * @default 0
+             */
+            latency_ms: number;
+            /**
+             * Mode
+             * @enum {string}
+             */
+            mode: "claude" | "deterministic_guard" | "fallback";
+            /** Model Id */
+            model_id?: string | null;
+            /** Output Schema Sha256 */
+            output_schema_sha256: string;
+            /**
+             * Output Tokens
+             * @default 0
+             */
+            output_tokens: number;
+            /** Prompt Sha256 */
+            prompt_sha256: string;
+            /** Reason Code */
+            reason_code: string;
+            /** Semantic Output Schema Sha256 */
+            semantic_output_schema_sha256: string;
+            /**
+             * Task Id
+             * @constant
+             */
+            task_id: "customs_case_scope_classifier";
+        };
+        /**
          * Assessment
          * @enum {string}
          */
         Assessment: "no_issue_detected" | "issues_detected" | "indeterminate";
+        /** AssistantAnswerV2 */
+        AssistantAnswerV2: {
+            /**
+             * Answer Scope
+             * @enum {string}
+             */
+            answer_scope: "case_grounded" | "evidence_grounded" | "general_customs_guidance" | "clarification_needed" | "insufficient_evidence" | "out_of_scope";
+            /** Answer Sha256 */
+            answer_sha256: string;
+            /** Citations */
+            citations?: components["schemas"]["CitationReferenceV1"][];
+            /** Direct Answer */
+            direct_answer: string;
+            /** Evidence Meaning */
+            evidence_meaning?: string[];
+            /** Explanation */
+            explanation?: string[];
+            generation_audit: components["schemas"]["ExperienceGenerationAuditV1"];
+            /** Impact */
+            impact?: string[];
+            /** Limitations */
+            limitations?: string[];
+            /** Next Steps */
+            next_steps?: string[];
+            /**
+             * Schema Version
+             * @default 2.0
+             * @constant
+             */
+            schema_version: "2.0";
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "answered" | "clarification_needed" | "insufficient_evidence" | "out_of_scope";
+            /** Suggested Questions */
+            suggested_questions?: string[];
+            /** Used Context Message Ids */
+            used_context_message_ids?: string[];
+            verification_audit: components["schemas"]["ExperienceVerificationAuditV1"];
+        };
+        /** AssistantConversationListResponse */
+        AssistantConversationListResponse: {
+            /** Items */
+            items: components["schemas"]["AssistantConversationRecord"][];
+        };
+        /** AssistantConversationRecord */
+        AssistantConversationRecord: {
+            /** Bound Effective Result Digest */
+            bound_effective_result_digest: string;
+            /** Bound Result Sha256 */
+            bound_result_sha256: string;
+            /** Case Id */
+            case_id: string;
+            /** Conversation Id */
+            conversation_id: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Created By */
+            created_by: string;
+            /** Org Id */
+            org_id: string;
+            /** Review Run Id */
+            review_run_id: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+        };
+        /** AssistantJobEnqueueResponse */
+        AssistantJobEnqueueResponse: {
+            /** Idempotency Reused */
+            idempotency_reused: boolean;
+            job: components["schemas"]["AssistantJobView"];
+            user_message: components["schemas"]["AssistantMessageRecord"];
+        };
+        /**
+         * AssistantJobState
+         * @enum {string}
+         */
+        AssistantJobState: "queued" | "running" | "succeeded" | "failed" | "delivery_uncertain" | "response_received_rejected" | "response_persistence_uncertain";
+        /** AssistantJobView */
+        AssistantJobView: {
+            /** Answer Message Id */
+            answer_message_id?: string | null;
+            /** Assistant Job Id */
+            assistant_job_id: string;
+            /** Case Id */
+            case_id: string;
+            /** Conversation Id */
+            conversation_id: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Error Code */
+            error_code?: string | null;
+            /** Events */
+            events: components["schemas"]["AssistantStageEvent"][];
+            /** Review Run Id */
+            review_run_id: string;
+            state: components["schemas"]["AssistantJobState"];
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+        };
+        /** AssistantMessageCreateV2 */
+        AssistantMessageCreateV2: {
+            /** Bound Result Sha256 */
+            bound_result_sha256: string;
+            /** Parent Message Id */
+            parent_message_id?: string | null;
+            /** Question */
+            question: string;
+        };
+        /** AssistantMessageListResponse */
+        AssistantMessageListResponse: {
+            /** Items */
+            items: components["schemas"]["AssistantMessageRecord"][];
+        };
+        /** AssistantMessageRecord */
+        AssistantMessageRecord: {
+            /** Bound Result Sha256 */
+            bound_result_sha256: string;
+            /** Case Id */
+            case_id: string;
+            /** Content */
+            content: string;
+            /** Conversation Id */
+            conversation_id: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Created By */
+            created_by: string;
+            /** Message Id */
+            message_id: string;
+            /** Org Id */
+            org_id: string;
+            /** Parent Message Id */
+            parent_message_id?: string | null;
+            /** Review Run Id */
+            review_run_id: string;
+            /**
+             * Role
+             * @enum {string}
+             */
+            role: "user" | "assistant";
+            structured_answer?: components["schemas"]["AssistantAnswerV2"] | null;
+        };
+        /** AssistantStageEvent */
+        AssistantStageEvent: {
+            /** Assistant Job Id */
+            assistant_job_id: string;
+            /** Duration Ms */
+            duration_ms: number;
+            /** Event Id */
+            event_id: string;
+            /** Message Key */
+            message_key: string;
+            /**
+             * Occurred At
+             * Format: date-time
+             */
+            occurred_at: string;
+            /** Safe Counts */
+            safe_counts?: {
+                [key: string]: number;
+            };
+            /** Sequence */
+            sequence: number;
+            /**
+             * Stage Code
+             * @enum {string}
+             */
+            stage_code: "queued" | "request_validation" | "conversation_binding" | "answer_planning" | "answer_composition" | "grounding_verification" | "persistence" | "completed" | "failed";
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "started" | "completed" | "skipped" | "failed";
+        };
         /**
          * AssuranceLevel
          * @enum {string}
@@ -624,6 +1226,16 @@ export interface components {
             /** Review Run Id */
             review_run_id: string;
         };
+        /** CitationReferenceV1 */
+        CitationReferenceV1: {
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "field_source" | "issue" | "finding" | "evidence" | "outcome";
+            /** Reference Id */
+            reference_id: string;
+        };
         /** CompletionEligibility */
         CompletionEligibility: {
             /**
@@ -637,6 +1249,11 @@ export interface components {
             scope?: string[];
             /** Unmet Reason Codes */
             unmet_reason_codes?: string[];
+        };
+        /** ConversationCreateV2 */
+        ConversationCreateV2: {
+            /** Bound Result Sha256 */
+            bound_result_sha256: string;
         };
         /** CorrectionOperation */
         CorrectionOperation: {
@@ -773,6 +1390,85 @@ export interface components {
          * @enum {string}
          */
         ExecutionStatus: "succeeded" | "partial" | "failed";
+        /** ExperienceGenerationAuditV1 */
+        ExperienceGenerationAuditV1: {
+            /**
+             * Attempt Count
+             * @default 1
+             */
+            attempt_count: number;
+            /**
+             * Input Tokens
+             * @default 0
+             */
+            input_tokens: number;
+            /**
+             * Latency Ms
+             * @default 0
+             */
+            latency_ms: number;
+            /**
+             * Mode
+             * @enum {string}
+             */
+            mode: "claude" | "deterministic_fallback";
+            /** Model Id */
+            model_id?: string | null;
+            /** Output Schema Sha256 */
+            output_schema_sha256: string;
+            /**
+             * Output Tokens
+             * @default 0
+             */
+            output_tokens: number;
+            /** Prompt Sha256 */
+            prompt_sha256: string;
+            scope_classification?: components["schemas"]["AnswerScopeClassificationAuditV1"] | null;
+            /** Task Id */
+            task_id: string;
+        };
+        /** ExperienceVerificationAuditV1 */
+        ExperienceVerificationAuditV1: {
+            /** Checked Statement Count */
+            checked_statement_count: number;
+            /** Deterministic Checks Passed */
+            deterministic_checks_passed: boolean;
+            /**
+             * Entailment Verifier
+             * @enum {string}
+             */
+            entailment_verifier: "claude" | "not_run";
+            /** Reason Codes */
+            reason_codes?: string[];
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "passed" | "fallback";
+            /** Verifier Model Id */
+            verifier_model_id?: string | null;
+            /** Verifier Prompt Sha256 */
+            verifier_prompt_sha256: string;
+            /** Verifier Schema Sha256 */
+            verifier_schema_sha256: string;
+        };
+        /** GroundedPresentationV1 */
+        GroundedPresentationV1: {
+            generation_audit: components["schemas"]["ExperienceGenerationAuditV1"];
+            /** Headline */
+            headline: string;
+            /** Presentation Sha256 */
+            presentation_sha256: string;
+            /**
+             * Schema Version
+             * @default 1.0
+             * @constant
+             */
+            schema_version: "1.0";
+            /** Sections */
+            sections: components["schemas"]["PresentationSection"][];
+            verification_audit: components["schemas"]["ExperienceVerificationAuditV1"];
+        };
         /** GroundedQuestion */
         GroundedQuestion: {
             /** Bound Result Digest */
@@ -829,6 +1525,50 @@ export interface components {
         JobEventsResponse: {
             /** Items */
             items: components["schemas"]["StageEvent"][];
+        };
+        /** JobExperienceResponse */
+        JobExperienceResponse: {
+            /** Idempotency Reused */
+            idempotency_reused: boolean;
+            job: components["schemas"]["JobExperienceView"];
+        };
+        /** JobExperienceView */
+        JobExperienceView: {
+            /** Agent Call State */
+            agent_call_state: string;
+            /** Attempt Count */
+            attempt_count: number;
+            /** Case Id */
+            case_id: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Created By */
+            created_by: string;
+            /** Elapsed Seconds */
+            elapsed_seconds: number;
+            /** Error Code */
+            error_code?: string | null;
+            eta: components["schemas"]["ReviewEta"];
+            /** Job Id */
+            job_id: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "review" | "revision";
+            /** Parent Run Id */
+            parent_run_id?: string | null;
+            /** Review Run Id */
+            review_run_id: string;
+            status: components["schemas"]["JobStatus"];
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
         };
         /** JobResponse */
         JobResponse: {
@@ -908,6 +1648,39 @@ export interface components {
             /** Unmet Reason Codes */
             unmet_reason_codes: ("no_model_calls" | "provider_not_anthropic" | "model_id_incomplete_or_mixed" | "non_text_model_call" | "non_positive_input_tokens" | "non_positive_output_tokens" | "prompt_hash_incomplete" | "schema_hash_incomplete" | "runtime_identity_mismatch")[];
         };
+        /** PresentationSection */
+        PresentationSection: {
+            /**
+             * Section Code
+             * @enum {string}
+             */
+            section_code: "conclusion" | "process" | "document_comparison" | "issues_and_causes" | "regulatory_meaning" | "business_impact" | "next_actions" | "scope_and_limits";
+            /** Statements */
+            statements: components["schemas"]["PresentationStatement"][];
+            /** Title */
+            title: string;
+        };
+        /** PresentationStatement */
+        PresentationStatement: {
+            /** Citation References */
+            citation_references?: components["schemas"]["CitationReferenceV1"][];
+            /**
+             * Material
+             * @default true
+             */
+            material: boolean;
+            /**
+             * Role
+             * @enum {string}
+             */
+            role: "conclusion" | "observation" | "reason" | "evidence" | "impact" | "action" | "limitation";
+            /** Source Claim Ids */
+            source_claim_ids: string[];
+            /** Statement Id */
+            statement_id: string;
+            /** Text */
+            text: string;
+        };
         /** ProblemDetailsV1 */
         ProblemDetailsV1: {
             /** Code */
@@ -953,6 +1726,71 @@ export interface components {
             /** Media Type */
             media_type: string;
         };
+        /** ReleaseIdentityV3 */
+        ReleaseIdentityV3: {
+            /** Agent Code Snapshot Sha256 */
+            agent_code_snapshot_sha256: string;
+            /** Agent Git Sha */
+            agent_git_sha?: string | null;
+            /** Agent Package Version */
+            agent_package_version: string;
+            /** Agent Source Snapshot Sha256 */
+            agent_source_snapshot_sha256?: string | null;
+            /** Assertion Trust Store Sha256 */
+            assertion_trust_store_sha256: string;
+            /**
+             * Assertion Trust Store State
+             * @enum {string}
+             */
+            assertion_trust_store_state: "unreleased" | "active";
+            /** Chat Prompt Sha256 */
+            chat_prompt_sha256: string;
+            /** Chat Schema Sha256 */
+            chat_schema_sha256: string;
+            /** Coordinator Prompt Sha256 */
+            coordinator_prompt_sha256: string;
+            /** Coordinator Schema Sha256 */
+            coordinator_schema_sha256: string;
+            /** Evidence Runtime V3 Sha256 */
+            evidence_runtime_v3_sha256?: string | null;
+            /** Evidence Snapshot Id */
+            evidence_snapshot_id?: string | null;
+            /** Extraction Prompt Sha256 */
+            extraction_prompt_sha256: string;
+            /** Extraction Schema Sha256 */
+            extraction_schema_sha256: string;
+            /** Kill Switch Active */
+            kill_switch_active: boolean;
+            /** Model Id */
+            model_id: string;
+            /** Model Revision */
+            model_revision?: string | null;
+            /** Narrative Prompt Sha256 */
+            narrative_prompt_sha256: string;
+            /** Narrative Schema Sha256 */
+            narrative_schema_sha256: string;
+            /** Policy Id */
+            policy_id: string;
+            /** Release Profile Evaluation Report Sha256 */
+            release_profile_evaluation_report_sha256?: string | null;
+            /** Release Profile Id */
+            release_profile_id: string;
+            /** Release Profile Sha256 */
+            release_profile_sha256?: string | null;
+            /**
+             * Release Profile State
+             * @enum {string}
+             */
+            release_profile_state: "unreleased" | "approved";
+            /** Release Profile Subject Sha256 */
+            release_profile_subject_sha256?: string | null;
+            /** Result Schema Sha256 */
+            result_schema_sha256: string;
+            /** Reviewer Trust Store Sha256 */
+            reviewer_trust_store_sha256?: string | null;
+            /** Tool Registry Id */
+            tool_registry_id: string;
+        };
         /** RequiredAction */
         RequiredAction: {
             /** Action Code */
@@ -979,6 +1817,60 @@ export interface components {
              * @enum {string}
              */
             trade_type: "import" | "export";
+        };
+        /** ReviewEta */
+        ReviewEta: {
+            /** P50 Seconds */
+            p50_seconds?: number | null;
+            /** P90 Seconds */
+            p90_seconds?: number | null;
+            /** Range Max Seconds */
+            range_max_seconds: number;
+            /** Range Min Seconds */
+            range_min_seconds: number;
+            /** Sample Size */
+            sample_size: number;
+            /**
+             * Source
+             * @enum {string}
+             */
+            source: "observed" | "validated_default";
+        };
+        /** ReviewExperienceEnvelopeV1 */
+        ReviewExperienceEnvelopeV1: {
+            canonical_result: components["schemas"]["AgentReviewResultV3"];
+            capability_attestation: components["schemas"]["AgentUatCapabilityAttestationV1"];
+            /** Envelope Sha256 */
+            envelope_sha256: string;
+            /**
+             * Schema Version
+             * @default 1.0
+             * @constant
+             */
+            schema_version: "1.0";
+            /** User Action Events */
+            user_action_events?: components["schemas"]["UserActionEventV1"][];
+            user_presentation: components["schemas"]["GroundedPresentationV1"];
+        };
+        /** ReviewGap */
+        ReviewGap: {
+            /** Gap Id */
+            gap_id: string;
+            /**
+             * Gap Type
+             * @enum {string}
+             */
+            gap_type: "field_uncertainty" | "validation_issue" | "regulatory_finding" | "evidence_incomplete" | "human_approval_required" | "release_gate";
+            /** Reason Code */
+            reason_code: string;
+            /** Source Reference Ids */
+            source_reference_ids?: string[];
+            /**
+             * Status
+             * @default open
+             * @enum {string}
+             */
+            status: "open" | "resolved" | "deferred";
         };
         /** ReviewRunListResponse */
         ReviewRunListResponse: {
@@ -1130,12 +2022,12 @@ export interface components {
              * Stage
              * @enum {string}
              */
-            stage: "queued" | "input_validation" | "agent_analysis" | "result_validation" | "persistence" | "document_analysis" | "normalization" | "validation" | "evidence" | "compliance" | "report" | "completed" | "failed";
+            stage: "queued" | "input_validation" | "agent_analysis" | "result_validation" | "persistence" | "request_validation" | "document_analysis" | "normalization" | "document_pairing" | "cross_validation" | "adaptive_investigation" | "evidence_retrieval" | "compliance_review" | "report_composition" | "grounding_verification" | "conversation_binding" | "answer_planning" | "answer_composition" | "validation" | "evidence" | "compliance" | "report" | "completed" | "failed";
             /**
              * State
              * @enum {string}
              */
-            state: "started" | "progress" | "completed" | "failed";
+            state: "started" | "progress" | "completed" | "skipped" | "failed";
         };
         /** SupportingDocumentCreate */
         SupportingDocumentCreate: {
@@ -1410,6 +2302,132 @@ export interface components {
              * @constant
              */
             text_only: true;
+        };
+        /** UatMetadataV2Response */
+        UatMetadataV2Response: {
+            /**
+             * Actual Stage Streaming
+             * @default false
+             */
+            actual_stage_streaming: boolean;
+            /**
+             * Agent Experience Api Version
+             * @default disabled
+             * @enum {string}
+             */
+            agent_experience_api_version: "disabled" | "3.0";
+            /**
+             * Assistant Api Version
+             * @default disabled
+             * @enum {string}
+             */
+            assistant_api_version: "disabled" | "2.0";
+            /**
+             * Assurance Ceiling
+             * @default diagnostic
+             * @constant
+             */
+            assurance_ceiling: "diagnostic";
+            /**
+             * Auto Completion Enabled
+             * @default false
+             * @constant
+             */
+            auto_completion_enabled: false;
+            /**
+             * Claude Mode
+             * @default actual
+             * @constant
+             */
+            claude_mode: "actual";
+            /**
+             * Enhanced Agent Experience
+             * @default false
+             */
+            enhanced_agent_experience: boolean;
+            /**
+             * Evidence Data Source
+             * @enum {string}
+             */
+            evidence_data_source: "SYNTHETIC_V3_NO_RAG_QUALITY" | "ACTUAL_POSTGRESQL_QDRANT_NEO4J_READ_ONLY" | "UNKNOWN";
+            evidence_dataset: components["schemas"]["UatEvidenceDatasetResponse"];
+            /**
+             * Evidence Policy Mode
+             * @enum {string}
+             */
+            evidence_policy_mode: "SYNTHETIC_FIXTURE" | "ACTUAL_CODES_HUMAN_ONLY" | "SEALED_TEST_ONLY_ACTUAL_CCCT_HUMAN_ONLY" | "UNKNOWN";
+            /**
+             * Evidence Profile
+             * @enum {string}
+             */
+            evidence_profile: "synthetic-v3" | "preserved-3law-v3-diagnostic" | "preserved-3law-v3-scenario-eval" | "unknown";
+            /**
+             * Evidence Scope
+             * @enum {string}
+             */
+            evidence_scope: "TEST_ONLY_V3" | "ACTUAL_3_LAW_RAG_3_OF_58" | "ACTUAL_3_LAW_RAG_SCENARIO_EVAL_3_OF_58" | "UNKNOWN";
+            /**
+             * Evidence Scope Label
+             * @enum {string}
+             */
+            evidence_scope_label: "TEST_ONLY_V3" | "ACTUAL_3_LAW_RAG_3_OF_58" | "ACTUAL_3_LAW_RAG_SCENARIO_EVAL_3_OF_58" | "UNKNOWN";
+            /**
+             * Mode
+             * @default local_uat
+             * @constant
+             */
+            mode: "local_uat";
+            /**
+             * Planner Mode
+             * @enum {string}
+             */
+            planner_mode: "shadow" | "diagnostic_active";
+            /**
+             * Production Release
+             * @default false
+             * @constant
+             */
+            production_release: false;
+            /**
+             * Supported Review As Of
+             * Format: date
+             */
+            supported_review_as_of: string;
+            /**
+             * Text Only
+             * @default true
+             * @constant
+             */
+            text_only: true;
+            /**
+             * Uat Adaptive Active
+             * @default false
+             */
+            uat_adaptive_active: boolean;
+        };
+        /** UserActionEventV1 */
+        UserActionEventV1: {
+            /** Action Code */
+            action_code: string;
+            /** Description */
+            description: string;
+            /** Event Id */
+            event_id: string;
+            /**
+             * Schema Version
+             * @default 1.0
+             * @constant
+             */
+            schema_version: "1.0";
+            /** Source Reference Ids */
+            source_reference_ids?: string[];
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "completed" | "needs_attention" | "deferred";
+            /** Title */
+            title: string;
         };
         /** VerificationAssertionCreate */
         VerificationAssertionCreate: {
@@ -4557,6 +5575,1157 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["UatEvidenceTraceResponse"];
+                };
+            };
+            /** @description Problem Details V1 fail-closed response. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetailsV1"];
+                };
+            };
+            /** @description Problem Details V1 fail-closed response. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetailsV1"];
+                };
+            };
+            /** @description Problem Details V1 fail-closed response. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetailsV1"];
+                };
+            };
+            /** @description Problem Details V1 fail-closed response. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetailsV1"];
+                };
+            };
+            /** @description Problem Details V1 fail-closed response. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetailsV1"];
+                };
+            };
+            /** @description Problem Details V1 fail-closed response. */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetailsV1"];
+                };
+            };
+            /** @description Problem Details V1 fail-closed response. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetailsV1"];
+                };
+            };
+            /** @description Problem Details V1 fail-closed response. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetailsV1"];
+                };
+            };
+            /** @description Problem Details V1 fail-closed response. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetailsV1"];
+                };
+            };
+        };
+    };
+    list_assistant_messages_endpoint_api_v2_assistant_conversations__conversation_id__messages_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                conversation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AssistantMessageListResponse"];
+                };
+            };
+            /** @description Problem Details V1 fail-closed response. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetailsV1"];
+                };
+            };
+            /** @description Problem Details V1 fail-closed response. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetailsV1"];
+                };
+            };
+            /** @description Problem Details V1 fail-closed response. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetailsV1"];
+                };
+            };
+            /** @description Problem Details V1 fail-closed response. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetailsV1"];
+                };
+            };
+            /** @description Problem Details V1 fail-closed response. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetailsV1"];
+                };
+            };
+            /** @description Problem Details V1 fail-closed response. */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetailsV1"];
+                };
+            };
+            /** @description Problem Details V1 fail-closed response. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetailsV1"];
+                };
+            };
+            /** @description Problem Details V1 fail-closed response. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetailsV1"];
+                };
+            };
+            /** @description Problem Details V1 fail-closed response. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetailsV1"];
+                };
+            };
+        };
+    };
+    enqueue_assistant_message_endpoint_api_v2_assistant_conversations__conversation_id__messages_post: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+            };
+            path: {
+                conversation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AssistantMessageCreateV2"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AssistantJobEnqueueResponse"];
+                };
+            };
+            /** @description Problem Details V1 fail-closed response. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetailsV1"];
+                };
+            };
+            /** @description Problem Details V1 fail-closed response. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetailsV1"];
+                };
+            };
+            /** @description Problem Details V1 fail-closed response. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetailsV1"];
+                };
+            };
+            /** @description Problem Details V1 fail-closed response. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetailsV1"];
+                };
+            };
+            /** @description Problem Details V1 fail-closed response. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetailsV1"];
+                };
+            };
+            /** @description Problem Details V1 fail-closed response. */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetailsV1"];
+                };
+            };
+            /** @description Problem Details V1 fail-closed response. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetailsV1"];
+                };
+            };
+            /** @description Problem Details V1 fail-closed response. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetailsV1"];
+                };
+            };
+            /** @description Problem Details V1 fail-closed response. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetailsV1"];
+                };
+            };
+        };
+    };
+    get_assistant_job_endpoint_api_v2_assistant_jobs__assistant_job_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                assistant_job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AssistantJobView"];
+                };
+            };
+            /** @description Problem Details V1 fail-closed response. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetailsV1"];
+                };
+            };
+            /** @description Problem Details V1 fail-closed response. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetailsV1"];
+                };
+            };
+            /** @description Problem Details V1 fail-closed response. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetailsV1"];
+                };
+            };
+            /** @description Problem Details V1 fail-closed response. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetailsV1"];
+                };
+            };
+            /** @description Problem Details V1 fail-closed response. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetailsV1"];
+                };
+            };
+            /** @description Problem Details V1 fail-closed response. */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetailsV1"];
+                };
+            };
+            /** @description Problem Details V1 fail-closed response. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetailsV1"];
+                };
+            };
+            /** @description Problem Details V1 fail-closed response. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetailsV1"];
+                };
+            };
+            /** @description Problem Details V1 fail-closed response. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetailsV1"];
+                };
+            };
+        };
+    };
+    stream_assistant_job_events_endpoint_api_v2_assistant_jobs__assistant_job_id__events_stream_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "Last-Event-ID"?: string | null;
+            };
+            path: {
+                assistant_job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Problem Details V1 fail-closed response. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetailsV1"];
+                };
+            };
+            /** @description Problem Details V1 fail-closed response. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetailsV1"];
+                };
+            };
+            /** @description Problem Details V1 fail-closed response. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetailsV1"];
+                };
+            };
+            /** @description Problem Details V1 fail-closed response. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetailsV1"];
+                };
+            };
+            /** @description Problem Details V1 fail-closed response. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetailsV1"];
+                };
+            };
+            /** @description Problem Details V1 fail-closed response. */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetailsV1"];
+                };
+            };
+            /** @description Problem Details V1 fail-closed response. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetailsV1"];
+                };
+            };
+            /** @description Problem Details V1 fail-closed response. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetailsV1"];
+                };
+            };
+            /** @description Problem Details V1 fail-closed response. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetailsV1"];
+                };
+            };
+        };
+    };
+    enqueue_experience_review_endpoint_api_v2_cases__case_id__reviews_post: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+            };
+            path: {
+                case_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReviewEnqueueRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JobExperienceResponse"];
+                };
+            };
+            /** @description Problem Details V1 fail-closed response. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetailsV1"];
+                };
+            };
+            /** @description Problem Details V1 fail-closed response. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetailsV1"];
+                };
+            };
+            /** @description Problem Details V1 fail-closed response. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetailsV1"];
+                };
+            };
+            /** @description Problem Details V1 fail-closed response. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetailsV1"];
+                };
+            };
+            /** @description Problem Details V1 fail-closed response. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetailsV1"];
+                };
+            };
+            /** @description Problem Details V1 fail-closed response. */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetailsV1"];
+                };
+            };
+            /** @description Problem Details V1 fail-closed response. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetailsV1"];
+                };
+            };
+            /** @description Problem Details V1 fail-closed response. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetailsV1"];
+                };
+            };
+            /** @description Problem Details V1 fail-closed response. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetailsV1"];
+                };
+            };
+        };
+    };
+    get_experience_job_endpoint_api_v2_jobs__job_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JobExperienceView"];
+                };
+            };
+            /** @description Problem Details V1 fail-closed response. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetailsV1"];
+                };
+            };
+            /** @description Problem Details V1 fail-closed response. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetailsV1"];
+                };
+            };
+            /** @description Problem Details V1 fail-closed response. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetailsV1"];
+                };
+            };
+            /** @description Problem Details V1 fail-closed response. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetailsV1"];
+                };
+            };
+            /** @description Problem Details V1 fail-closed response. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetailsV1"];
+                };
+            };
+            /** @description Problem Details V1 fail-closed response. */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetailsV1"];
+                };
+            };
+            /** @description Problem Details V1 fail-closed response. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetailsV1"];
+                };
+            };
+            /** @description Problem Details V1 fail-closed response. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetailsV1"];
+                };
+            };
+            /** @description Problem Details V1 fail-closed response. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetailsV1"];
+                };
+            };
+        };
+    };
+    stream_experience_job_events_endpoint_api_v2_jobs__job_id__events_stream_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "Last-Event-ID"?: string | null;
+            };
+            path: {
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Problem Details V1 fail-closed response. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetailsV1"];
+                };
+            };
+            /** @description Problem Details V1 fail-closed response. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetailsV1"];
+                };
+            };
+            /** @description Problem Details V1 fail-closed response. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetailsV1"];
+                };
+            };
+            /** @description Problem Details V1 fail-closed response. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetailsV1"];
+                };
+            };
+            /** @description Problem Details V1 fail-closed response. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetailsV1"];
+                };
+            };
+            /** @description Problem Details V1 fail-closed response. */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetailsV1"];
+                };
+            };
+            /** @description Problem Details V1 fail-closed response. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetailsV1"];
+                };
+            };
+            /** @description Problem Details V1 fail-closed response. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetailsV1"];
+                };
+            };
+            /** @description Problem Details V1 fail-closed response. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetailsV1"];
+                };
+            };
+        };
+    };
+    list_assistant_conversations_endpoint_api_v2_review_runs__review_run_id__assistant_conversations_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                review_run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AssistantConversationListResponse"];
+                };
+            };
+            /** @description Problem Details V1 fail-closed response. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetailsV1"];
+                };
+            };
+            /** @description Problem Details V1 fail-closed response. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetailsV1"];
+                };
+            };
+            /** @description Problem Details V1 fail-closed response. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetailsV1"];
+                };
+            };
+            /** @description Problem Details V1 fail-closed response. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetailsV1"];
+                };
+            };
+            /** @description Problem Details V1 fail-closed response. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetailsV1"];
+                };
+            };
+            /** @description Problem Details V1 fail-closed response. */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetailsV1"];
+                };
+            };
+            /** @description Problem Details V1 fail-closed response. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetailsV1"];
+                };
+            };
+            /** @description Problem Details V1 fail-closed response. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetailsV1"];
+                };
+            };
+            /** @description Problem Details V1 fail-closed response. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetailsV1"];
+                };
+            };
+        };
+    };
+    create_assistant_conversation_endpoint_api_v2_review_runs__review_run_id__assistant_conversations_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                review_run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ConversationCreateV2"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AssistantConversationRecord"];
+                };
+            };
+            /** @description Problem Details V1 fail-closed response. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetailsV1"];
+                };
+            };
+            /** @description Problem Details V1 fail-closed response. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetailsV1"];
+                };
+            };
+            /** @description Problem Details V1 fail-closed response. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetailsV1"];
+                };
+            };
+            /** @description Problem Details V1 fail-closed response. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetailsV1"];
+                };
+            };
+            /** @description Problem Details V1 fail-closed response. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetailsV1"];
+                };
+            };
+            /** @description Problem Details V1 fail-closed response. */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetailsV1"];
+                };
+            };
+            /** @description Problem Details V1 fail-closed response. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetailsV1"];
+                };
+            };
+            /** @description Problem Details V1 fail-closed response. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetailsV1"];
+                };
+            };
+            /** @description Problem Details V1 fail-closed response. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetailsV1"];
+                };
+            };
+        };
+    };
+    get_review_experience_endpoint_api_v2_review_runs__review_run_id__experience_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                review_run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReviewExperienceEnvelopeV1"];
+                };
+            };
+            /** @description Problem Details V1 fail-closed response. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetailsV1"];
+                };
+            };
+            /** @description Problem Details V1 fail-closed response. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetailsV1"];
+                };
+            };
+            /** @description Problem Details V1 fail-closed response. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetailsV1"];
+                };
+            };
+            /** @description Problem Details V1 fail-closed response. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetailsV1"];
+                };
+            };
+            /** @description Problem Details V1 fail-closed response. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetailsV1"];
+                };
+            };
+            /** @description Problem Details V1 fail-closed response. */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetailsV1"];
+                };
+            };
+            /** @description Problem Details V1 fail-closed response. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetailsV1"];
+                };
+            };
+            /** @description Problem Details V1 fail-closed response. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetailsV1"];
+                };
+            };
+            /** @description Problem Details V1 fail-closed response. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetailsV1"];
+                };
+            };
+        };
+    };
+    uat_metadata_v2_api_v2_uat_metadata_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UatMetadataV2Response"];
                 };
             };
             /** @description Problem Details V1 fail-closed response. */

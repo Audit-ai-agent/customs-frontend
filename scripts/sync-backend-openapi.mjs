@@ -20,7 +20,7 @@ if (document.openapi !== "3.1.0" || document.info?.title !== "Customs Review Wor
   throw new Error("Refusing to pin an unexpected Backend OpenAPI document");
 }
 const paths = Object.keys(document.paths ?? {});
-if (!paths.length || paths.some((path) => !path.startsWith("/api/v1/") && !path.startsWith("/health/"))) {
+if (!paths.length || paths.some((path) => !path.startsWith("/api/v1/") && !path.startsWith("/api/v2/") && !path.startsWith("/health/"))) {
   throw new Error("Backend OpenAPI contains an unexpected public path");
 }
 
