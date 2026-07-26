@@ -8,6 +8,7 @@
     "node": "22.23.1"
   },
   "scripts": {
+    "postinstall": "node scripts/patch-redocly-minimatch.mjs",
     "doctor": "node scripts/doctor.mjs",
     "dev": "vite --host 127.0.0.1",
     "build": "tsc --noEmit && vite build",
@@ -25,19 +26,22 @@
   },
   "devDependencies": {
     "@types/node": "^22.15.0",
-    "@vitest/coverage-v8": "^3.2.4",
+    "@vitest/coverage-v8": "4.1.10",
     "axe-core": "^4.10.3",
     "jsdom": "^26.1.0",
     "openapi-typescript": "7.13.0",
     "typescript": "^5.8.3",
     "vite": "^7.0.6",
-    "vitest": "^3.2.4"
+    "vitest": "4.1.10"
   },
   "dependencies": {
     "@noble/hashes": "2.2.0",
     "oidc-client-ts": "^3.3.0"
   },
   "overrides": {
+    "@redocly/openapi-core": {
+      "minimatch": "10.2.5"
+    },
     "js-yaml": "4.3.0"
   }
 }
