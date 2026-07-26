@@ -430,7 +430,7 @@ describe("review workbench", () => {
     expect(root.textContent).toContain("문서·규정 평가");
     expect(root.textContent).toContain("업무 처리");
     expect(root.textContent).toContain("보증 수준");
-    expect(root.textContent).toContain("Evidence-bound Case Chat");
+    expect(root.textContent).toContain("심사 결과에 대해 질문하세요");
     expect(root.textContent).toContain("DIAGNOSTIC EVIDENCE — NOT RELEASED");
     expect(root.textContent).toContain("법적 판단 또는 Production 자동완료 근거로 사용할 수 없습니다");
     expect(root.querySelector('[data-evidence-release-state="diagnostic"]')).not.toBeNull();
@@ -1150,8 +1150,10 @@ describe("review workbench", () => {
     [...root.querySelectorAll<HTMLButtonElement>("button")].find((item) => item.textContent?.includes("<img src=x"))?.click();
     await vi.waitFor(() => expect(root.textContent).toContain("새 심사 실행"));
     [...root.querySelectorAll<HTMLButtonElement>("button")].find((item) => item.textContent === "새 심사 실행")?.click();
-    await vi.waitFor(() => expect(root.textContent).toContain("Job job-degraded"));
-    expect(root.textContent).toContain("Job 처리: queued");
+    await vi.waitFor(() =>
+      expect(root.querySelector('[data-review-progress="queued"]')).not.toBeNull(),
+    );
+    expect(root.textContent).toContain("실행 대기 및 Worker 연결");
     expect(root.textContent).toContain("실행 단계 이벤트를 기다리는 중입니다.");
     expect(root.textContent).not.toContain("event stream unavailable");
     app.destroy();
@@ -2438,7 +2440,9 @@ describe("review workbench", () => {
     await app.start();
     [...root.querySelectorAll<HTMLButtonElement>("button")].find((item) => item.textContent?.includes("<img src=x"))?.click();
 
-    await vi.waitFor(() => expect(root.textContent).toContain("저장된 Job 상태를 확인하지 못했습니다"));
+    await vi.waitFor(() =>
+      expect(root.textContent).toContain("저장된 Job 상태를 안전하게 확인하지 못했습니다"),
+    );
     expect(window.sessionStorage.getItem(recoveryKey())).not.toBeNull();
     expect([...root.querySelectorAll<HTMLButtonElement>("button")].find((item) => item.textContent === "새 심사 실행")?.disabled).toBe(true);
     app.destroy();
@@ -2465,7 +2469,9 @@ describe("review workbench", () => {
       await app.start();
       [...root.querySelectorAll<HTMLButtonElement>("button")].find((item) => item.textContent?.includes("<img src=x"))?.click();
 
-      await vi.waitFor(() => expect(root.textContent).toContain("저장된 Job 상태를 확인하지 못했습니다"));
+      await vi.waitFor(() =>
+        expect(root.textContent).toContain("저장된 Job 상태를 안전하게 확인하지 못했습니다"),
+      );
       expect(window.sessionStorage.getItem(recoveryKey())).not.toBeNull();
       expect([...root.querySelectorAll<HTMLButtonElement>("button")].find((item) => item.textContent === "새 심사 실행")?.disabled).toBe(true);
       app.destroy();
@@ -2591,14 +2597,14 @@ describe("review workbench", () => {
     };
     tracked.jobTrackingStartedAtMs = 1_000_000 - 267_596;
     await tracked.pollJob("job-long-claude");
-    expect(root.textContent).not.toContain("12분 동안 심사가 완료되지 않았습니다");
+    expect(root.textContent).not.toContain("12분 동안 완료 상태를 확인하지 못했습니다");
     expect(timeout.mock.calls.some((call) => call[1] === 1_000)).toBe(true);
     expect(window.sessionStorage.getItem(recoveryKey())).not.toBeNull();
 
     tracked.jobTrackingStartedAtMs = 1_000_000 - (12 * 60_000);
     await tracked.pollJob("job-long-claude");
-    expect(root.textContent).toContain("12분 동안 심사가 완료되지 않았습니다");
-    expect(root.textContent).toContain("실행 결과를 실패로 단정하지 않고");
+    expect(root.textContent).toContain("12분 동안 완료 상태를 확인하지 못했습니다");
+    expect(root.textContent).toContain("실행 실패로 단정하지 않으며");
     expect(window.sessionStorage.getItem(recoveryKey())).not.toBeNull();
     expect([...root.querySelectorAll<HTMLButtonElement>("button")]
       .find((item) => item.textContent === "새 심사 실행")?.disabled).toBe(true);
