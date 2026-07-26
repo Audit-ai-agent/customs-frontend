@@ -4,6 +4,7 @@ dist/
 coverage/
 playwright-report/
 test-results/
+*.cdx.json
 .env
 .env.*
 !.env.example
@@ -11,4 +12,3 @@ test-results/
 Thumbs.db
 .idea/
 .vscode/
-

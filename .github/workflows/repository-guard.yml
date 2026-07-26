@@ -9,19 +9,106 @@ permissions:
   contents: read
 
 jobs:
-  boundary:
+  frontend:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
-      - name: Verify repository foundation
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22.23.1
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - run: npm run verify
+      - run: npm run security:audit
+      - name: Generate dependency SBOM
         shell: bash
         run: |
           set -euo pipefail
-          test -f README.md
-          test -f ARCHITECTURE.md
-          test -f SECURITY.md
+          npm sbom --sbom-format cyclonedx > frontend-dependencies.cdx.json
+          node -e "const fs=require('fs'); const value=JSON.parse(fs.readFileSync('frontend-dependencies.cdx.json','utf8')); if(value.bomFormat!=='CycloneDX'||!Array.isArray(value.components)) process.exit(1)"
+          sha256sum frontend-dependencies.cdx.json
+      - name: Secret scan current source
+        run: >-
+          docker run --rm
+          -v "$PWD:/repo" -w /repo
+          zricethezav/gitleaks@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f
+          dir --config .gitleaks.toml --no-banner --redact .
+      - name: Secret scan complete Git history
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! count="$(git rev-list --all --count 2>/dev/null)"; then
+            echo 'Unable to enumerate complete Git history.' >&2
+            exit 1
+          fi
+          case "$count" in
+            ''|*[!0-9]*) echo "Invalid Git history count: $count" >&2; exit 1 ;;
+          esac
+          if [ "$count" -le 0 ]; then
+            echo 'Secret history scan refuses a zero-commit repository.' >&2
+            exit 1
+          fi
+          echo "Gitleaks full-history commit count: $count"
+          if ! docker run --rm \
+              -v "$PWD:/repo" -w /repo \
+              zricethezav/gitleaks@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f \
+              git --config .gitleaks.toml --no-banner --redact --log-opts=--all .; then
+            echo 'Gitleaks complete-history scan failed or found a secret.' >&2
+            exit 1
+          fi
+      - name: Build immutable runtime image
+        shell: bash
+        run: docker build --pull --tag "customs-frontend:${GITHUB_SHA}" .
+      - name: Container SBOM and vulnerability gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          scanner='aquasec/trivy@sha256:086971aaf400beebd94e8300fd8ea623774419597169156cec56eec5b00dfb1e'
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v "$PWD:/workspace" \
+            "$scanner" image --format cyclonedx --output /workspace/frontend-image.cdx.json "customs-frontend:${GITHUB_SHA}"
+          node -e "const fs=require('fs'); const value=JSON.parse(fs.readFileSync('frontend-image.cdx.json','utf8')); if(value.bomFormat!=='CycloneDX'||!Array.isArray(value.components)) process.exit(1)"
+          sha256sum frontend-image.cdx.json
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
+            "$scanner" image --exit-code 1 --severity HIGH,CRITICAL "customs-frontend:${GITHUB_SHA}"
+      - name: Preserve generated SBOM evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: frontend-sbom-${{ github.sha }}
+          path: |
+            frontend-dependencies.cdx.json
+            frontend-image.cdx.json
+          if-no-files-found: error
+          retention-days: 30
+      - name: Read-only container health and cache policy
+        shell: bash
+        run: |
+          set -euo pipefail
+          name="customs-frontend-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          trap 'docker rm -f "$name" >/dev/null 2>&1 || true' EXIT
+          docker run -d --name "$name" --read-only --cap-drop ALL \
+            --security-opt no-new-privileges:true \
+            --tmpfs /tmp:rw,noexec,nosuid,size=16m \
+            --tmpfs /var/cache/nginx:rw,noexec,nosuid,size=16m \
+            --add-host backend:127.0.0.1 --add-host keycloak:127.0.0.1 \
+            -p 127.0.0.1::8080 "customs-frontend:${GITHUB_SHA}"
+          port="$(docker port "$name" 8080/tcp | sed 's/.*://')"
+          for _ in $(seq 1 30); do
+            test "$(docker inspect --format '{{.State.Health.Status}}' "$name")" = healthy && break
+            sleep 1
+          done
+          test "$(docker inspect --format '{{.State.Health.Status}}' "$name")" = healthy
+          curl --fail --silent --show-error "http://127.0.0.1:${port}/healthz" >/dev/null
+          headers="$(curl --fail --silent --show-error --head "http://127.0.0.1:${port}/")"
+          grep -qi '^Cache-Control: no-store, max-age=0' <<<"$headers"
+          grep -qi "^Content-Security-Policy: .*connect-src 'self'.*form-action 'self'" <<<"$headers"
+      - name: Repository boundary
+        shell: bash
+        run: |
+          set -euo pipefail
           if find . -type f \( -name 'agent_webui.html' -o -name '*.env' \) -print -quit | grep -q .; then
             echo 'Forbidden local-agent UI or environment file found.' >&2
             exit 1
           fi
-
