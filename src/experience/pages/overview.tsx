@@ -21,7 +21,14 @@ import { ReviewProgress } from "../components/review-progress";
 import { CaseCitationLink } from "../components/citation-link";
 
 export function OverviewPage(): React.ReactElement {
-  const { caseDetail, selectedRun, experience, experienceError, refresh } = useCaseWorkspace();
+  const {
+    caseDetail,
+    selectedRun,
+    experience,
+    experienceError,
+    loadingRun,
+    refresh,
+  } = useCaseWorkspace();
   return (
     <div className="page-stack" data-testid="case-overview">
       <ReviewProgress
@@ -39,7 +46,11 @@ export function OverviewPage(): React.ReactElement {
         </section>
       ) : (
         <>
-          <ResultHero run={selectedRun} experience={experience} />
+          <ResultHero
+            run={selectedRun}
+            experience={experience}
+            citationReady={!loadingRun}
+          />
           <WhatAgentChecked run={selectedRun} experience={experience} />
           {experienceError ? (
             <PresentationUnavailable detail={experienceError} />
@@ -65,9 +76,11 @@ export function OverviewPage(): React.ReactElement {
 function ResultHero({
   run,
   experience,
+  citationReady,
 }: {
   run: ReviewRun;
   experience: PublicReviewExperience | null;
+  citationReady: boolean;
 }): React.ReactElement {
   const tone = run.assessment === "issues_detected" ? "warning" : run.assessment === "indeterminate" ? "hold" : "positive";
   return (
@@ -75,7 +88,12 @@ function ResultHero({
       <div className="result-hero__icon"><Icon name={tone === "positive" ? "check" : "warning"} /></div>
       <div className="result-hero__main">
         <p className="overline">이번 심사의 결론</p>
-        <h2 id="result-heading" tabIndex={-1}>
+        <h2
+          id="result-heading"
+          tabIndex={-1}
+          data-citation-ready={citationReady ? "true" : undefined}
+          data-review-run-id={run.review_run_id}
+        >
           {experience?.user_presentation.headline
             ?? fallbackHeadline(run)}
         </h2>

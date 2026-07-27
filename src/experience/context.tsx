@@ -55,7 +55,11 @@ export function WorkbenchProvider({
   const [cases, setCases] = useState<CaseSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [capabilityError, setCapabilityError] = useState<string | null>(null);
   const flags = featureFlags ?? experienceFeatureFlags();
+  const capabilityRefreshEnabled = Boolean(
+    session && metadata && flags.enhancedExperience,
+  );
 
   const refreshCases = useCallback(async (): Promise<void> => {
     const response = await api.listCases();
@@ -92,31 +96,38 @@ export function WorkbenchProvider({
   }, [api, experienceApi, oidc]);
 
   useEffect(() => {
-    if (!session || !metadata || !flags.enhancedExperience) return;
+    if (!capabilityRefreshEnabled) return;
     let active = true;
-    const timer = window.setInterval(() => {
-      void experienceApi.getUatMetadata().then((nextMetadata) => {
+    let refreshInFlight = false;
+    const refreshCapability = async (): Promise<void> => {
+      if (refreshInFlight) return;
+      refreshInFlight = true;
+      try {
+        const nextMetadata = await experienceApi.getUatMetadata();
         if (!active) return;
         assertCommercialUatBootstrap(nextMetadata, flags);
         setMetadata(nextMetadata);
-      }).catch((reason: unknown) => {
+        setCapabilityError(null);
+      } catch (reason) {
         if (!active) return;
-        setError(userFacingErrorMessage(
+        setCapabilityError(userFacingErrorMessage(
           reason,
           "검증 환경의 실행 권한을 다시 확인하지 못했습니다.",
         ));
-      });
-    }, 60_000);
+      } finally {
+        refreshInFlight = false;
+      }
+    };
+    const timer = window.setInterval(refreshCapability, 60_000);
     return () => {
       active = false;
       window.clearInterval(timer);
     };
   }, [
     experienceApi,
+    capabilityRefreshEnabled,
     flags.adaptiveUat,
     flags.enhancedExperience,
-    metadata,
-    session,
   ]);
 
   const value = useMemo<WorkbenchContextValue>(() => ({
@@ -127,13 +138,14 @@ export function WorkbenchProvider({
     metadata,
     cases,
     loading,
-    error,
+    error: error ?? capabilityError,
     flags,
     refreshCases,
     login: () => oidc.login(),
     logout: () => oidc.logout(),
   }), [
     api, experienceApi, oidc, session, metadata, cases, loading, error,
+    capabilityError,
     flags.enhancedExperience, flags.adaptiveUat, refreshCases,
   ]);
 

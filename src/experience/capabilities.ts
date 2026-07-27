@@ -34,4 +34,3 @@ export function canMutate(
     && session.roles.some((role) => CAPABILITY_ROLES[capability].includes(role)),
   );
 }
-

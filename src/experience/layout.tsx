@@ -240,34 +240,47 @@ function HashTargetFocus(): null {
       return;
     }
     let stopped = false;
+    let focusedTarget: HTMLElement | null = null;
     let observer: MutationObserver | null = null;
-    let settleTimeout: number | null = null;
-    const focusTarget = (): boolean => {
-      if (stopped) return false;
-      const target = document.getElementById(targetId);
-      if (!target) return false;
-      if (settleTimeout !== null) window.clearTimeout(settleTimeout);
-      settleTimeout = window.setTimeout(() => {
-        if (stopped) return;
-        const stableTarget = document.getElementById(targetId);
-        if (!stableTarget) return;
-        stableTarget.scrollIntoView({ block: "center", behavior: "auto" });
-        stableTarget.focus({ preventScroll: true });
-        observer?.disconnect();
-      }, 50);
-      return true;
+    const stop = (): void => {
+      stopped = true;
+      observer?.disconnect();
+      document.removeEventListener("focusin", handleFocusIn);
     };
-    observer = new MutationObserver(() => { focusTarget(); });
-    observer.observe(document.getElementById("app") ?? document.body, {
+    const focusTarget = (): void => {
+      if (stopped) return;
+      const target = document.getElementById(targetId);
+      if (!(target instanceof HTMLElement) || target.dataset.citationReady !== "true") return;
+      if (focusedTarget?.isConnected && document.activeElement !== focusedTarget) return;
+      if (target === focusedTarget && document.activeElement === target) return;
+      target.scrollIntoView({ block: "center", behavior: "auto" });
+      target.focus({ preventScroll: true });
+      if (document.activeElement === target) focusedTarget = target;
+    };
+    const handleFocusIn = (event: FocusEvent): void => {
+      if (
+        focusedTarget
+        && focusedTarget.isConnected
+        && event.target instanceof HTMLElement
+        && event.target !== focusedTarget
+        && event.target !== document.body
+        && event.target.isConnected
+      ) {
+        stop();
+      }
+    };
+    observer = new MutationObserver(focusTarget);
+    observer.observe(document.body, {
+      attributes: true,
+      attributeFilter: ["data-citation-ready"],
       childList: true,
       subtree: true,
     });
+    document.addEventListener("focusin", handleFocusIn);
     focusTarget();
-    const timeout = window.setTimeout(() => observer?.disconnect(), 10_000);
+    const timeout = window.setTimeout(stop, 10_000);
     return () => {
-      stopped = true;
-      observer?.disconnect();
-      if (settleTimeout !== null) window.clearTimeout(settleTimeout);
+      stop();
       window.clearTimeout(timeout);
     };
   }, [location.hash, location.pathname]);

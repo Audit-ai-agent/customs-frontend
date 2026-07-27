@@ -20,7 +20,7 @@ import {
 } from "../labels";
 
 export function ReviewActionsPage(): React.ReactElement {
-  const { caseDetail, selectedRun, refresh } = useCaseWorkspace();
+  const { caseDetail, selectedRun, loadingRun, refresh } = useCaseWorkspace();
   const { api, session } = useWorkbench();
   const [proposals, setProposals] = useState<CorrectionProposal[]>([]);
   const [supportingDocuments, setSupportingDocuments] = useState<SupportingDocumentRecord[]>([]);
@@ -207,7 +207,13 @@ export function ReviewActionsPage(): React.ReactElement {
           <div className="section-heading"><div><h3>문서 확인 사항</h3><p>원문과 대조해야 할 값입니다.</p></div><span>{selectedRun.issues.length}</span></div>
           {selectedRun.issues.length === 0 ? <p className="nothing-found"><Icon name="check" />별도의 문서 확인 사항이 없습니다.</p> : (
             <ul className="business-finding-list">{selectedRun.issues.map((item) => (
-              <li key={item.issue_id} id={`reference-${item.issue_id}`} tabIndex={-1}><span className={`severity severity--${item.severity}`}>{severityLabels[item.severity]}</span><p><strong>{issueLabel(item.code)}</strong><small>문서 원문과 추출값을 함께 대조해 확인해야 합니다.</small></p></li>
+              <li
+                key={item.issue_id}
+                id={`reference-${item.issue_id}`}
+                tabIndex={-1}
+                data-citation-ready={loadingRun ? undefined : "true"}
+                data-review-run-id={selectedRun.review_run_id}
+              ><span className={`severity severity--${item.severity}`}>{severityLabels[item.severity]}</span><p><strong>{issueLabel(item.code)}</strong><small>문서 원문과 추출값을 함께 대조해 확인해야 합니다.</small></p></li>
             ))}</ul>
           )}
         </article>
@@ -215,7 +221,13 @@ export function ReviewActionsPage(): React.ReactElement {
           <div className="section-heading"><div><h3>규정 확인 사항</h3><p>법령 근거와 연결된 요건입니다.</p></div><span>{selectedRun.findings.length}</span></div>
           {selectedRun.findings.length === 0 ? <p className="nothing-found"><Icon name="check" />별도의 규정 확인 사항이 없습니다.</p> : (
             <ul className="business-finding-list">{selectedRun.findings.map((item) => (
-              <li key={item.finding_id} id={`reference-${item.finding_id}`} tabIndex={-1}><span className={`severity severity--${item.severity}`}>{severityLabels[item.severity]}</span><p><strong>{findingLabel(item.code)}</strong><small>법령 근거와 등록된 요건 증명서를 함께 확인해야 합니다.</small></p></li>
+              <li
+                key={item.finding_id}
+                id={`reference-${item.finding_id}`}
+                tabIndex={-1}
+                data-citation-ready={loadingRun ? undefined : "true"}
+                data-review-run-id={selectedRun.review_run_id}
+              ><span className={`severity severity--${item.severity}`}>{severityLabels[item.severity]}</span><p><strong>{findingLabel(item.code)}</strong><small>법령 근거와 등록된 요건 증명서를 함께 확인해야 합니다.</small></p></li>
             ))}</ul>
           )}
         </article>

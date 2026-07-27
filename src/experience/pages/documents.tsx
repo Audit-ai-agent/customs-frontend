@@ -654,6 +654,13 @@ export function DocumentsPage(): React.ReactElement {
                             tabIndex={-1}
                             data-field-id={field.field_id}
                             data-review-run-id={selectedRun.review_run_id}
+                            data-citation-ready={(
+                              highlighted
+                              && !loadingRun
+                              && !contentLoading
+                              && content !== null
+                              && selectedDocumentId === field.document_id
+                            ) ? "true" : undefined}
                           >
                             <dt>{fieldLabel(field.name, field.field_path)}</dt>
                             <dd>{displayFieldValue(field.value)}</dd>

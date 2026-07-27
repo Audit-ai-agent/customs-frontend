@@ -612,27 +612,54 @@ describe("commercial-grade local UAT workbench", () => {
   });
 
   it("maps a malformed capability refresh to a stable Korean user error", async () => {
-    let refresh: (() => void) | undefined;
-    const interval = vi.spyOn(window, "setInterval").mockImplementation((handler) => {
-      if (typeof handler === "function") refresh = handler as () => void;
-      return 91 as unknown as ReturnType<typeof window.setInterval>;
+    let refresh: (() => unknown) | undefined;
+    const nativeSetInterval = window.setInterval.bind(window);
+    const interval = vi.spyOn(window, "setInterval").mockImplementation((
+      handler,
+      timeout,
+    ) => {
+      if (timeout === 60_000 && typeof handler === "function") {
+        refresh = handler as () => unknown;
+        return 91 as unknown as ReturnType<typeof setInterval>;
+      }
+      return nativeSetInterval(handler, timeout) as unknown as ReturnType<typeof setInterval>;
     });
     const next = dependencies();
+    const validMetadata = await next.experienceApi.getUatMetadata();
     vi.mocked(next.experienceApi.getUatMetadata)
-      .mockResolvedValueOnce(await next.experienceApi.getUatMetadata())
-      .mockRejectedValueOnce(new Error("metadata_contract_internal_failure"));
+      .mockResolvedValueOnce(validMetadata)
+      .mockRejectedValueOnce(new Error("metadata_contract_internal_failure"))
+      .mockResolvedValue(validMetadata);
     window.history.replaceState({}, "", "/reviews");
     render(<CommercialWorkbench {...next} />);
     expect(await screen.findByTestId("reviews-inbox")).not.toBeNull();
     expect(refresh).toBeDefined();
     await act(async () => {
-      refresh?.();
-      await Promise.resolve();
-      await Promise.resolve();
+      await refresh?.();
     });
     expect(await screen.findByText("검증 환경의 실행 권한을 다시 확인하지 못했습니다.")).not.toBeNull();
     expect(document.body.textContent).not.toContain("metadata_contract_internal_failure");
+    await act(async () => {
+      await refresh?.();
+    });
+    expect(await screen.findByTestId("reviews-inbox")).not.toBeNull();
+    expect(screen.queryByText("검증 환경의 실행 권한을 다시 확인하지 못했습니다.")).toBeNull();
     interval.mockRestore();
+  });
+
+  it("never lets a capability refresh clear an unrelated bootstrap failure", async () => {
+    const next = dependencies();
+    vi.mocked(next.api.listCases).mockRejectedValue(
+      new Error("case_bootstrap_internal_failure"),
+    );
+    window.history.replaceState({}, "", "/reviews");
+    render(<CommercialWorkbench {...next} />);
+
+    expect(await screen.findByRole("heading", { name: "작업대를 시작할 수 없습니다." }))
+      .not.toBeNull();
+    expect(screen.getByText("작업대 정보를 불러오지 못했습니다.")).not.toBeNull();
+    expect(document.body.textContent).not.toContain("case_bootstrap_internal_failure");
+    expect(next.experienceApi.getUatMetadata).toHaveBeenCalledTimes(1);
   });
 
   it("makes all nine actual-RAG scenarios selectable from the isolated Test Lab", async () => {
@@ -1931,6 +1958,13 @@ describe("commercial-grade local UAT workbench", () => {
     await userEvent.click(await screen.findByTestId("citation-evidence-evidence-1"));
     expect(await screen.findByTestId("evidence-page")).not.toBeNull();
     await waitFor(() => expect(document.activeElement?.id).toBe("reference-evidence-1"));
+
+    await new Promise((resolve) => window.setTimeout(resolve, 175));
+    const originalTarget = document.getElementById("reference-evidence-1");
+    const replacementTarget = originalTarget?.cloneNode(true);
+    expect(replacementTarget).toBeInstanceOf(HTMLElement);
+    originalTarget?.replaceWith(replacementTarget!);
+    await waitFor(() => expect(document.activeElement).toBe(replacementTarget));
   });
 
   it("builds a run-bound source citation link and opens only its exact source span", async () => {

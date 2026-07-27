@@ -5,7 +5,7 @@ import { Icon } from "../icons";
 const REQUIRED_ACTUAL_RAG_METHODS = ["exact_hs", "dense", "bm25", "graph"] as const;
 
 export function EvidencePage(): React.ReactElement {
-  const { selectedRun, experience } = useCaseWorkspace();
+  const { selectedRun, experience, loadingRun } = useCaseWorkspace();
   const [technicalOpen, setTechnicalOpen] = useState(false);
   if (!selectedRun) return <NoRun />;
   const retrieval = selectedRun.evidence_retrieval;
@@ -83,6 +83,8 @@ export function EvidencePage(): React.ReactElement {
                 id={`reference-${item.evidence_id}`}
                 className="legal-evidence-card"
                 tabIndex={-1}
+                data-citation-ready={loadingRun ? undefined : "true"}
+                data-review-run-id={selectedRun.review_run_id}
               >
                 <header><span>{index + 1}</span><div><small>{item.article ? `관련 조문 · ${item.article}` : "관련 법령"}</small><h4>{item.title}</h4></div></header>
                 <blockquote>{item.excerpt}</blockquote>
