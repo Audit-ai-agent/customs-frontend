@@ -1525,19 +1525,30 @@ describe("commercial-grade local UAT workbench", () => {
         event_id: "event-1",
         job_id: "job-1",
         sequence: 1,
-        stage_code: "document_analysis",
-        state: "started",
+        stage_code: "report_composition",
+        state: "completed",
         occurred_at: "2026-07-27T00:00:01Z",
+        duration_ms: 1_000,
+        safe_counts: { statement_count: 8 },
+        message_key: "review.report_composition",
+      });
+      onEvent({
+        event_id: "event-2",
+        job_id: "job-1",
+        sequence: 2,
+        stage_code: "report_composition",
+        state: "started",
+        occurred_at: "2026-07-27T00:00:02Z",
         duration_ms: 0,
-        safe_counts: { document_count: 4 },
-        message_key: "review.document_analysis",
+        safe_counts: {},
+        message_key: "review.report_composition",
       });
     });
     window.history.replaceState({}, "", "/cases/case-1/overview");
     render(<CommercialWorkbench {...next} />);
     await userEvent.click(await screen.findByTestId("start-review"));
     expect(await screen.findByTestId("review-progress")).not.toBeNull();
-    expect(screen.getByTestId("current-stage").textContent).toContain("문서 읽기");
+    expect(screen.getByTestId("current-stage").textContent).toContain("심사 설명 작성");
     expect(screen.getByTestId("eta-range").textContent).toContain("4분");
     const stageItems = [...document.querySelectorAll(".live-review__stages > li")];
     expect(stageItems).toHaveLength(11);
@@ -1555,7 +1566,7 @@ describe("commercial-grade local UAT workbench", () => {
       "result_validation",
     ]);
     expect(
-      document.querySelector('[data-stage-code="document_analysis"]')
+      document.querySelector('[data-stage-code="report_composition"]')
         ?.getAttribute("data-stage-state"),
     ).toBe("started");
     expect(screen.getByTestId("handled-stage-count").textContent).toBe("0/11개");

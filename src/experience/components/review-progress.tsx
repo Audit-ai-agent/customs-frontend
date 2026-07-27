@@ -224,13 +224,6 @@ export function ReviewProgress({
   };
 
   const latest = events.at(-1);
-  const handledStages = useMemo(
-    () => REVIEW_STAGE_ORDER.filter((stageCode) => events.some(
-      (event) => event.stage_code === stageCode
-        && (event.state === "completed" || event.state === "skipped"),
-    )),
-    [events],
-  );
   const stageJournal = useMemo(() => REVIEW_STAGE_ORDER.map((stageCode) => {
     const matching = events.filter((event) => event.stage_code === stageCode);
     const latestForStage = matching.at(-1);
@@ -240,6 +233,12 @@ export function ReviewProgress({
       durationMs: latestForStage?.duration_ms ?? null,
     };
   }), [events]);
+  const handledStages = useMemo(
+    () => stageJournal.filter(
+      (stage) => stage.state === "completed" || stage.state === "skipped",
+    ),
+    [stageJournal],
+  );
   const active = job !== null
     && !SAFE_TERMINAL_JOB_STATES.has(job.job.status)
     && !UNCERTAIN_JOB_STATES.has(job.job.status)
