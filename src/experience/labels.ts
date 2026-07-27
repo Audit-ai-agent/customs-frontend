@@ -19,6 +19,15 @@ export const documentTypeLabels: Record<DocumentType, string> = {
   UNKNOWN: "확인되지 않은 문서",
 };
 
+export const documentTypeBadgeLabels: Record<DocumentType, string> = {
+  CI: "송장",
+  PL: "포장",
+  BL: "운송",
+  CO: "원산지",
+  SUPPORTING: "요건 증명",
+  UNKNOWN: "확인 필요",
+};
+
 export const executionStatusLabels: Record<ExecutionStatus, string> = {
   succeeded: "실행 완료",
   partial: "일부 확인 필요",
@@ -49,6 +58,25 @@ export const caseStatusLabels = {
   in_review: "심사 중",
   closed: "종료",
 } as const;
+
+const localUatReferencePattern = /^UAT2:[A-Za-z0-9_-]{1,128}:(?:SYN|DIA|EVAL):[a-f0-9]{64}$/u;
+
+export function isLocalUatReference(value: string | null | undefined): boolean {
+  return typeof value === "string" && localUatReferencePattern.test(value);
+}
+
+export function caseReferenceLabel(value: string | null | undefined): string {
+  if (isLocalUatReference(value)) return "검증 시나리오 · 업무 참조번호 없음";
+  return value || "업무 참조번호 없음";
+}
+
+export function actorRoleLabel(
+  actorSubject: string,
+  currentSubject: string | undefined,
+  role: "심사 담당자" | "승인 담당자",
+): string {
+  return actorSubject === currentSubject ? `현재 ${role}` : `다른 ${role}`;
+}
 
 export const assistantScopeLabels: Record<AssistantAnswerScope, string> = {
   case_grounded: "현재 심사 건 기준 답변",

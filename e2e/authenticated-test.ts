@@ -1,12 +1,15 @@
 import { expect, test as base, type Page } from "@playwright/test";
+import axe from "axe-core";
 import { readFile } from "node:fs/promises";
 import { dirname, isAbsolute, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-interface ReviewerCredentials {
+interface UatCredentials {
   username: string;
   password: string;
 }
+
+export type UatActorRole = "reviewer" | "approver" | "auditor";
 
 const SCRIPT_DIRECTORY = dirname(fileURLToPath(import.meta.url));
 const REPOSITORY_ROOT = resolve(SCRIPT_DIRECTORY, "..");
@@ -22,18 +25,23 @@ function requiredCredential(value: unknown, field: string): string {
     || value.length > 512
     || /[\r\n\0]/u.test(value)
   ) {
-    throw new Error(`Browser E2E reviewer ${field} is unavailable or invalid.`);
+    throw new Error(`Browser E2E ${field} is unavailable or invalid.`);
   }
   return value;
 }
 
-async function loadReviewerCredentials(): Promise<ReviewerCredentials> {
-  const usernameFromEnvironment = process.env.CUSTOMS_E2E_REVIEWER_USERNAME;
-  const passwordFromEnvironment = process.env.CUSTOMS_E2E_REVIEWER_PASSWORD;
+async function loadUatCredentials(role: UatActorRole): Promise<UatCredentials> {
+  const environmentPrefix = role === "reviewer"
+    ? "CUSTOMS_E2E_REVIEWER"
+    : role === "approver"
+      ? "CUSTOMS_E2E_APPROVER"
+      : "CUSTOMS_E2E_AUDITOR";
+  const usernameFromEnvironment = process.env[`${environmentPrefix}_USERNAME`];
+  const passwordFromEnvironment = process.env[`${environmentPrefix}_PASSWORD`];
   if (usernameFromEnvironment !== undefined || passwordFromEnvironment !== undefined) {
     if (usernameFromEnvironment === undefined || passwordFromEnvironment === undefined) {
       throw new Error(
-        "CUSTOMS_E2E_REVIEWER_USERNAME and CUSTOMS_E2E_REVIEWER_PASSWORD must be provided together.",
+        `${environmentPrefix}_USERNAME and ${environmentPrefix}_PASSWORD must be provided together.`,
       );
     }
     return {
@@ -62,29 +70,29 @@ async function loadReviewerCredentials(): Promise<ReviewerCredentials> {
   try {
     bytes = await readFile(credentialsPath);
     const parsed = JSON.parse(bytes.toString("utf8")) as {
-      users?: { reviewer?: { username?: unknown; password?: unknown } };
+      users?: Partial<Record<UatActorRole, { username?: unknown; password?: unknown }>>;
     };
     return {
-      username: requiredCredential(parsed.users?.reviewer?.username, "username"),
-      password: requiredCredential(parsed.users?.reviewer?.password, "password"),
+      username: requiredCredential(parsed.users?.[role]?.username, `${role} username`),
+      password: requiredCredential(parsed.users?.[role]?.password, `${role} password`),
     };
   } catch (error) {
     if (error instanceof SyntaxError) {
       throw new Error("Browser E2E credential file is not valid JSON.");
     }
-    if (error instanceof Error && error.message.startsWith("Browser E2E reviewer")) {
+    if (error instanceof Error && error.message.startsWith("Browser E2E")) {
       throw error;
     }
     throw new Error(
-      "Browser E2E reviewer credentials are unavailable. Set an external credential file or the paired environment variables.",
+      `Browser E2E ${role} credentials are unavailable. Set an external credential file or the paired environment variables.`,
     );
   } finally {
     bytes?.fill(0);
   }
 }
 
-async function loginReviewer(page: Page): Promise<void> {
-  const credentials = await loadReviewerCredentials();
+export async function loginUatUser(page: Page, role: UatActorRole): Promise<void> {
+  const credentials = await loadUatCredentials(role);
   try {
     await page.goto("/login");
     const loginButton = page.getByTestId("login-button");
@@ -115,7 +123,11 @@ async function loginReviewer(page: Page): Promise<void> {
  */
 export const test = base.extend<{ reviewerLogin: void }>({
   reviewerLogin: [async ({ page }, use) => {
-    await loginReviewer(page);
+    // Playwright's isolated init-script world is used for the test-only axe
+    // runtime. The product page receives no inline script tag, so the exact
+    // strict CSP remains active and is asserted separately in the E2E suite.
+    await page.addInitScript({ content: axe.source });
+    await loginUatUser(page, "reviewer");
     await use();
   }, { auto: true }],
 });

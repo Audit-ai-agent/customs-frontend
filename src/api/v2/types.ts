@@ -47,6 +47,38 @@ export interface GroundedPresentationSection {
   statements: GroundedPresentationStatement[];
 }
 
+export type GeneralCustomsGuidanceTopic =
+  | "invoice"
+  | "packing_list"
+  | "bill_of_lading"
+  | "certificate_of_origin"
+  | "hsk"
+  | "hs_hsk_comparison"
+  | "customs_review"
+  | "import_declaration"
+  | "customs_valuation"
+  | "duties_and_taxes"
+  | "free_trade_agreement"
+  | "import_requirements"
+  | "inspection_and_supplement"
+  | "document_correction"
+  | "customs_broker";
+
+export interface AnswerScopeClassificationAudit {
+  mode: "claude" | "deterministic_guard" | "fallback";
+  task_id: "customs_case_scope_classifier";
+  classified_scope: AssistantAnswerScope;
+  guidance_topics: GeneralCustomsGuidanceTopic[];
+  model_id: string | null;
+  prompt_sha256: string;
+  output_schema_sha256: string;
+  semantic_output_schema_sha256: string;
+  input_tokens: number;
+  output_tokens: number;
+  latency_ms: number;
+  reason_code: string;
+}
+
 export interface ExperienceGenerationAudit {
   mode: "claude" | "deterministic_fallback";
   task_id: string;
@@ -57,6 +89,7 @@ export interface ExperienceGenerationAudit {
   output_tokens: number;
   latency_ms: number;
   attempt_count: number;
+  scope_classification: AnswerScopeClassificationAudit | null;
 }
 
 export interface ExperienceVerificationAudit {
@@ -64,8 +97,10 @@ export interface ExperienceVerificationAudit {
   deterministic_checks_passed: boolean;
   entailment_verifier: "claude" | "not_run";
   verifier_model_id: string | null;
+  verifier_context_sha256: string | null;
   verifier_prompt_sha256: string;
   verifier_schema_sha256: string;
+  verified_content_sha256: string;
   checked_statement_count: number;
   reason_codes: string[];
 }
@@ -113,13 +148,16 @@ export interface UserActionEvent {
   source_reference_ids: string[];
 }
 
-export interface ReviewExperienceEnvelope {
+/** Browser-safe Backend projection. The canonical Agent result is never exposed. */
+export interface PublicReviewExperience {
   schema_version: "1.0";
-  canonical_result: Record<string, unknown>;
+  bound_provider_result_sha256: string;
+  bound_effective_result_digest: string;
   user_presentation: GroundedPresentation;
   capability_attestation: AgentUatCapabilityAttestation;
   user_action_events: UserActionEvent[];
-  envelope_sha256: string;
+  agent_envelope_sha256: string;
+  public_experience_sha256: string;
 }
 
 export type AssistantAnswerScope =
@@ -130,11 +168,21 @@ export type AssistantAnswerScope =
   | "insufficient_evidence"
   | "out_of_scope";
 
+export interface AnswerClaimSelections {
+  direct_answer: string[];
+  explanation: string[];
+  evidence_meaning: string[];
+  impact: string[];
+  next_steps: string[];
+}
+
 export interface AssistantAnswer {
   schema_version: "2.0";
+  request_sha256: string;
   answer_scope: AssistantAnswerScope;
   status: "answered" | "clarification_needed" | "insufficient_evidence" | "out_of_scope";
   direct_answer: string;
+  claim_selections: AnswerClaimSelections;
   explanation: string[];
   evidence_meaning: string[];
   impact: string[];
@@ -180,6 +228,7 @@ export interface AssistantJob {
   conversation_id: string;
   review_run_id: string;
   case_id: string;
+  request_binding_sha256: string;
   state:
     | "queued"
     | "running"
@@ -265,7 +314,7 @@ export interface ReviewJobExperience {
 
 export interface ReviewExperienceView {
   run: ReviewRun;
-  envelope: ReviewExperienceEnvelope;
+  envelope: PublicReviewExperience;
 }
 
 export interface AssistantMessageCreate {

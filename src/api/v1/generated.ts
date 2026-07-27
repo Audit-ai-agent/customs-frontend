@@ -429,6 +429,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v2/assistant/conversations/{conversation_id}/jobs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Assistant Jobs Endpoint */
+        get: operations["list_assistant_jobs_endpoint_api_v2_assistant_conversations__conversation_id__jobs_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v2/assistant/conversations/{conversation_id}/messages": {
         parameters: {
             query?: never;
@@ -593,141 +610,6 @@ export interface components {
          * @enum {string}
          */
         AgentCallState: "not_started" | "started" | "completed" | "delivery_uncertain" | "delivery_reconciled" | "response_received_rejected" | "response_persistence_uncertain";
-        /**
-         * AgentReviewResultV3
-         * @description Strict top-level consumer for the provider-owned V3 wire.
-         *
-         *     Complex V2-compatible details remain opaque JSON, but every provider top-level
-         *     member is enumerated and additional members are rejected.  The provider's
-         *     canonical result hash is independently recomputed before any field is used.
-         */
-        AgentReviewResultV3: {
-            /** Action Trace */
-            action_trace?: {
-                [key: string]: unknown;
-            }[];
-            assessment: components["schemas"]["Assessment"];
-            assurance_level: components["schemas"]["AssuranceLevel"];
-            /** Audit Trail */
-            audit_trail?: {
-                [key: string]: unknown;
-            }[];
-            /** Case Id */
-            case_id: string;
-            completion_eligibility: components["schemas"]["CompletionEligibility"];
-            /** Document Results */
-            document_results?: {
-                [key: string]: unknown;
-            }[];
-            execution_status: components["schemas"]["ExecutionStatus"];
-            /** Fact Ledger */
-            fact_ledger: {
-                [key: string]: unknown;
-            };
-            /** Input Manifest Sha256 */
-            input_manifest_sha256: string;
-            /**
-             * Jurisdiction
-             * @constant
-             */
-            jurisdiction: "KR";
-            /** Knowledge Snapshot Id */
-            knowledge_snapshot_id?: string | null;
-            /** Model Calls */
-            model_calls?: {
-                [key: string]: unknown;
-            }[];
-            /** Model Conflicts */
-            model_conflicts?: {
-                [key: string]: unknown;
-            }[];
-            /** Model Errors */
-            model_errors?: {
-                [key: string]: unknown;
-            }[];
-            /** Narrative Report */
-            narrative_report?: {
-                [key: string]: unknown;
-            };
-            /** Observations */
-            observations?: {
-                [key: string]: unknown;
-            }[];
-            /** Rag Evidence */
-            rag_evidence?: {
-                [key: string]: unknown;
-            }[];
-            /** Regulatory Findings */
-            regulatory_findings?: {
-                [key: string]: unknown;
-            }[];
-            /** Report */
-            report: {
-                [key: string]: unknown;
-            };
-            /** Required Actions */
-            required_actions?: components["schemas"]["RequiredAction"][];
-            /** Requires Human Review */
-            requires_human_review: boolean;
-            /** Result Sha256 */
-            result_sha256: string;
-            /**
-             * Retrieval Coverage
-             * @enum {string}
-             */
-            retrieval_coverage: "complete" | "partial" | "unknown";
-            /** Retrieval Errors */
-            retrieval_errors?: {
-                [key: string]: unknown;
-            }[];
-            /** Retrieval Request */
-            retrieval_request?: {
-                [key: string]: unknown;
-            } | null;
-            /** Retrieval Results */
-            retrieval_results?: {
-                [key: string]: unknown;
-            }[];
-            /**
-             * Retrieval Status
-             * @enum {string}
-             */
-            retrieval_status: "ok" | "partial" | "failed";
-            /**
-             * Review As Of
-             * Format: date
-             */
-            review_as_of: string;
-            review_disposition: components["schemas"]["ReviewDisposition"];
-            /** Review Gaps */
-            review_gaps?: components["schemas"]["ReviewGap"][];
-            /** Review Plan */
-            review_plan: {
-                [key: string]: unknown;
-            };
-            /** Review Run Id */
-            review_run_id: string;
-            runtime_release: components["schemas"]["ReleaseIdentityV3"];
-            /**
-             * Schema Version
-             * @constant
-             */
-            schema_version: "3.0";
-            /**
-             * Status
-             * @enum {string}
-             */
-            status: "completed" | "needs_review" | "blocked";
-            /**
-             * Trade Type
-             * @enum {string}
-             */
-            trade_type: "import" | "export";
-            /** Validation Issues */
-            validation_issues?: {
-                [key: string]: unknown;
-            }[];
-        };
         /** AgentUatCapabilityAttestationV1 */
         AgentUatCapabilityAttestationV1: {
             /** Adaptive Active */
@@ -804,6 +686,22 @@ export interface components {
             /** Tool Registry Sha256 */
             tool_registry_sha256: string;
         };
+        /**
+         * AnswerClaimSelectionsV1
+         * @description Canonical claim IDs selected for each user-visible answer area.
+         */
+        AnswerClaimSelectionsV1: {
+            /** Direct Answer */
+            direct_answer?: string[];
+            /** Evidence Meaning */
+            evidence_meaning?: string[];
+            /** Explanation */
+            explanation?: string[];
+            /** Impact */
+            impact?: string[];
+            /** Next Steps */
+            next_steps?: string[];
+        };
         /** AnswerScopeClassificationAuditV1 */
         AnswerScopeClassificationAuditV1: {
             /**
@@ -812,7 +710,7 @@ export interface components {
              */
             classified_scope: "case_grounded" | "evidence_grounded" | "general_customs_guidance" | "clarification_needed" | "insufficient_evidence" | "out_of_scope";
             /** Guidance Topics */
-            guidance_topics?: ("invoice" | "packing_list" | "bill_of_lading" | "certificate_of_origin" | "hsk" | "customs_review")[];
+            guidance_topics?: ("invoice" | "packing_list" | "bill_of_lading" | "certificate_of_origin" | "hsk" | "hs_hsk_comparison" | "customs_review" | "import_declaration" | "customs_valuation" | "duties_and_taxes" | "free_trade_agreement" | "import_requirements" | "inspection_and_supplement" | "document_correction" | "customs_broker")[];
             /**
              * Input Tokens
              * @default 0
@@ -865,6 +763,7 @@ export interface components {
             answer_sha256: string;
             /** Citations */
             citations?: components["schemas"]["CitationReferenceV1"][];
+            claim_selections?: components["schemas"]["AnswerClaimSelectionsV1"];
             /** Direct Answer */
             direct_answer: string;
             /** Evidence Meaning */
@@ -878,6 +777,8 @@ export interface components {
             limitations?: string[];
             /** Next Steps */
             next_steps?: string[];
+            /** Request Sha256 */
+            request_sha256: string;
             /**
              * Schema Version
              * @default 2.0
@@ -934,6 +835,11 @@ export interface components {
             job: components["schemas"]["AssistantJobView"];
             user_message: components["schemas"]["AssistantMessageRecord"];
         };
+        /** AssistantJobListResponse */
+        AssistantJobListResponse: {
+            /** Items */
+            items: components["schemas"]["AssistantJobView"][];
+        };
         /**
          * AssistantJobState
          * @enum {string}
@@ -958,6 +864,8 @@ export interface components {
             error_code?: string | null;
             /** Events */
             events: components["schemas"]["AssistantStageEvent"][];
+            /** Request Binding Sha256 */
+            request_binding_sha256: string;
             /** Review Run Id */
             review_run_id: string;
             state: components["schemas"]["AssistantJobState"];
@@ -1038,7 +946,7 @@ export interface components {
              * Stage Code
              * @enum {string}
              */
-            stage_code: "queued" | "request_validation" | "conversation_binding" | "answer_planning" | "answer_composition" | "grounding_verification" | "persistence" | "completed" | "failed";
+            stage_code: "queued" | "request_validation" | "conversation_binding" | "answer_planning" | "answer_composition" | "grounding_verification" | "result_validation" | "persistence" | "completed" | "failed";
             /**
              * State
              * @enum {string}
@@ -1445,6 +1353,10 @@ export interface components {
              * @enum {string}
              */
             status: "passed" | "fallback";
+            /** Verified Content Sha256 */
+            verified_content_sha256: string;
+            /** Verifier Context Sha256 */
+            verifier_context_sha256?: string | null;
             /** Verifier Model Id */
             verifier_model_id?: string | null;
             /** Verifier Prompt Sha256 */
@@ -1726,70 +1638,29 @@ export interface components {
             /** Media Type */
             media_type: string;
         };
-        /** ReleaseIdentityV3 */
-        ReleaseIdentityV3: {
-            /** Agent Code Snapshot Sha256 */
-            agent_code_snapshot_sha256: string;
-            /** Agent Git Sha */
-            agent_git_sha?: string | null;
-            /** Agent Package Version */
-            agent_package_version: string;
-            /** Agent Source Snapshot Sha256 */
-            agent_source_snapshot_sha256?: string | null;
-            /** Assertion Trust Store Sha256 */
-            assertion_trust_store_sha256: string;
+        /**
+         * PublicReviewExperienceV1
+         * @description Browser-safe projection; the full canonical Agent result remains private.
+         */
+        PublicReviewExperienceV1: {
+            /** Agent Envelope Sha256 */
+            agent_envelope_sha256: string;
+            /** Bound Effective Result Digest */
+            bound_effective_result_digest: string;
+            /** Bound Provider Result Sha256 */
+            bound_provider_result_sha256: string;
+            capability_attestation: components["schemas"]["AgentUatCapabilityAttestationV1"];
+            /** Public Experience Sha256 */
+            public_experience_sha256: string;
             /**
-             * Assertion Trust Store State
-             * @enum {string}
+             * Schema Version
+             * @default 1.0
+             * @constant
              */
-            assertion_trust_store_state: "unreleased" | "active";
-            /** Chat Prompt Sha256 */
-            chat_prompt_sha256: string;
-            /** Chat Schema Sha256 */
-            chat_schema_sha256: string;
-            /** Coordinator Prompt Sha256 */
-            coordinator_prompt_sha256: string;
-            /** Coordinator Schema Sha256 */
-            coordinator_schema_sha256: string;
-            /** Evidence Runtime V3 Sha256 */
-            evidence_runtime_v3_sha256?: string | null;
-            /** Evidence Snapshot Id */
-            evidence_snapshot_id?: string | null;
-            /** Extraction Prompt Sha256 */
-            extraction_prompt_sha256: string;
-            /** Extraction Schema Sha256 */
-            extraction_schema_sha256: string;
-            /** Kill Switch Active */
-            kill_switch_active: boolean;
-            /** Model Id */
-            model_id: string;
-            /** Model Revision */
-            model_revision?: string | null;
-            /** Narrative Prompt Sha256 */
-            narrative_prompt_sha256: string;
-            /** Narrative Schema Sha256 */
-            narrative_schema_sha256: string;
-            /** Policy Id */
-            policy_id: string;
-            /** Release Profile Evaluation Report Sha256 */
-            release_profile_evaluation_report_sha256?: string | null;
-            /** Release Profile Id */
-            release_profile_id: string;
-            /** Release Profile Sha256 */
-            release_profile_sha256?: string | null;
-            /**
-             * Release Profile State
-             * @enum {string}
-             */
-            release_profile_state: "unreleased" | "approved";
-            /** Release Profile Subject Sha256 */
-            release_profile_subject_sha256?: string | null;
-            /** Result Schema Sha256 */
-            result_schema_sha256: string;
-            /** Reviewer Trust Store Sha256 */
-            reviewer_trust_store_sha256?: string | null;
-            /** Tool Registry Id */
-            tool_registry_id: string;
+            schema_version: "1.0";
+            /** User Action Events */
+            user_action_events?: components["schemas"]["UserActionEventV1"][];
+            user_presentation: components["schemas"]["GroundedPresentationV1"];
         };
         /** RequiredAction */
         RequiredAction: {
@@ -1836,42 +1707,6 @@ export interface components {
              */
             source: "observed" | "validated_default";
         };
-        /** ReviewExperienceEnvelopeV1 */
-        ReviewExperienceEnvelopeV1: {
-            canonical_result: components["schemas"]["AgentReviewResultV3"];
-            capability_attestation: components["schemas"]["AgentUatCapabilityAttestationV1"];
-            /** Envelope Sha256 */
-            envelope_sha256: string;
-            /**
-             * Schema Version
-             * @default 1.0
-             * @constant
-             */
-            schema_version: "1.0";
-            /** User Action Events */
-            user_action_events?: components["schemas"]["UserActionEventV1"][];
-            user_presentation: components["schemas"]["GroundedPresentationV1"];
-        };
-        /** ReviewGap */
-        ReviewGap: {
-            /** Gap Id */
-            gap_id: string;
-            /**
-             * Gap Type
-             * @enum {string}
-             */
-            gap_type: "field_uncertainty" | "validation_issue" | "regulatory_finding" | "evidence_incomplete" | "human_approval_required" | "release_gate";
-            /** Reason Code */
-            reason_code: string;
-            /** Source Reference Ids */
-            source_reference_ids?: string[];
-            /**
-             * Status
-             * @default open
-             * @enum {string}
-             */
-            status: "open" | "resolved" | "deferred";
-        };
         /** ReviewRunListResponse */
         ReviewRunListResponse: {
             /** Items */
@@ -1887,6 +1722,8 @@ export interface components {
             agent_input_manifest_sha256: string;
             assessment: components["schemas"]["Assessment"];
             assurance_level: components["schemas"]["AssuranceLevel"];
+            /** Attempted Retrieval Methods */
+            attempted_retrieval_methods?: ("exact_hs" | "dense" | "bm25" | "graph")[];
             auto_completion_profile?: components["schemas"]["AutoCompletionProfileBinding"];
             /** Case Id */
             case_id: string;
@@ -1900,6 +1737,19 @@ export interface components {
             created_at: string;
             /** Created By */
             created_by: string;
+            /**
+             * Evidence Data Source
+             * @default UNATTESTED
+             * @enum {string}
+             */
+            evidence_data_source: "UNATTESTED" | "ACTUAL_POSTGRESQL_QDRANT_NEO4J_READ_ONLY";
+            /**
+             * Evidence Profile
+             * @default unknown
+             */
+            evidence_profile: string;
+            /** Evidence Request Id */
+            evidence_request_id?: string | null;
             execution_status: components["schemas"]["ExecutionStatus"];
             /** Input Document Manifest */
             input_document_manifest?: components["schemas"]["InputDocumentManifestEntry"][];
@@ -1911,6 +1761,8 @@ export interface components {
             narrative_report?: {
                 [key: string]: unknown;
             };
+            /** Observed Retrieval Methods */
+            observed_retrieval_methods?: ("exact_hs" | "dense" | "bm25" | "graph")[];
             /** Org Id */
             org_id: string;
             /** Parent Run Id */
@@ -1929,6 +1781,11 @@ export interface components {
             };
             /** Result Digest */
             result_digest: string;
+            /**
+             * Retrieval Execution Attested
+             * @default false
+             */
+            retrieval_execution_attested: boolean;
             /** Review As Of */
             review_as_of?: string | null;
             review_disposition: components["schemas"]["ReviewDisposition"];
@@ -1936,6 +1793,8 @@ export interface components {
             review_run_id: string;
             /** Review Stage Trace */
             review_stage_trace?: components["schemas"]["ReviewStageTraceEntry"][];
+            /** Successful Retrieval Methods */
+            successful_retrieval_methods?: ("exact_hs" | "dense" | "bm25" | "graph")[];
             /** Trade Type */
             trade_type?: ("import" | "export") | null;
         };
@@ -5660,6 +5519,109 @@ export interface operations {
             };
         };
     };
+    list_assistant_jobs_endpoint_api_v2_assistant_conversations__conversation_id__jobs_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                conversation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AssistantJobListResponse"];
+                };
+            };
+            /** @description Problem Details V1 fail-closed response. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetailsV1"];
+                };
+            };
+            /** @description Problem Details V1 fail-closed response. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetailsV1"];
+                };
+            };
+            /** @description Problem Details V1 fail-closed response. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetailsV1"];
+                };
+            };
+            /** @description Problem Details V1 fail-closed response. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetailsV1"];
+                };
+            };
+            /** @description Problem Details V1 fail-closed response. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetailsV1"];
+                };
+            };
+            /** @description Problem Details V1 fail-closed response. */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetailsV1"];
+                };
+            };
+            /** @description Problem Details V1 fail-closed response. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetailsV1"];
+                };
+            };
+            /** @description Problem Details V1 fail-closed response. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetailsV1"];
+                };
+            };
+            /** @description Problem Details V1 fail-closed response. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetailsV1"];
+                };
+            };
+        };
+    };
     list_assistant_messages_endpoint_api_v2_assistant_conversations__conversation_id__messages_get: {
         parameters: {
             query?: never;
@@ -6624,7 +6586,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ReviewExperienceEnvelopeV1"];
+                    "application/json": components["schemas"]["PublicReviewExperienceV1"];
                 };
             };
             /** @description Problem Details V1 fail-closed response. */

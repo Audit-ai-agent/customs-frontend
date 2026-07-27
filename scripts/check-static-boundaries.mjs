@@ -61,6 +61,12 @@ const workflow = await readFile(new URL("../.github/workflows/repository-guard.y
 const packageJson = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
 if (packageJson.engines?.node !== "22.23.1") violations.push("Node runtime must be pinned to exact 22.23.1");
 if (packageJson.packageManager !== "npm@10.9.8") violations.push("npm runtime must be pinned to exact 10.9.8");
+if (packageJson.dependencies?.["react-router"] !== "8.3.0") {
+  violations.push("commercial workbench must pin patched React Router 8.3.0; see DL-0008");
+}
+if (packageJson.dependencies?.["react-router-dom"] !== undefined) {
+  violations.push("React Router DOM 7.18.1 is prohibited by the High-severity dependency gate");
+}
 if (!String(packageJson.scripts?.verify ?? "").startsWith("npm run doctor &&")) violations.push("verify must fail fast through the runtime doctor");
 const npmrc = await readFile(new URL("../.npmrc", import.meta.url), "utf8");
 if (!/^engine-strict=true$/m.test(npmrc)) violations.push("npm must reject an unsupported Node runtime");

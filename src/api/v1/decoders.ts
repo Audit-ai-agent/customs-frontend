@@ -730,7 +730,7 @@ export function decodeReviewRun(value: unknown): ReviewRun {
   const rawIssues = pickArray("issues", "issues", "validation_issues");
   const issues = rawIssues.map((value) => normalizeIssue(value, ledgerEntries));
   const rawEvidence = pickArray("evidence", "evidence", "evidence_items", "rag_evidence");
-  const evidence = rawEvidence.map(normalizeEvidence);
+  const providerEvidence = rawEvidence.map(normalizeEvidence);
   const retrievalStatus = result.retrieval_status;
   const retrievalCoverage = result.retrieval_coverage;
   const rawRetrievalResults = result.retrieval_results;
@@ -745,29 +745,128 @@ export function decodeReviewRun(value: unknown): ReviewRun {
     if (retrievalCoverage !== "complete" && retrievalCoverage !== "partial" && retrievalCoverage !== "unknown") {
       throw new ContractError("reviewRun.result_detail.retrieval_coverage: unsupported coverage");
     }
-    if (!Array.isArray(rawRetrievalResults)) {
-      throw new ContractError("reviewRun.result_detail.retrieval_results: array expected");
+    if (Array.isArray(rawRetrievalResults)) {
+      const requirements = rawRetrievalResults.map((value, index) => {
+        const item = object(value, `reviewRun.result_detail.retrieval_results[${index}]`);
+        if (typeof item.requirements_found !== "boolean") {
+          throw new ContractError(`reviewRun.result_detail.retrieval_results[${index}].requirements_found: boolean expected`);
+        }
+        return item.requirements_found;
+      });
+      evidenceRetrieval = {
+        status: retrievalStatus,
+        coverage: retrievalCoverage,
+        requirements_found: requirements.length === 0 ? null : requirements.some(Boolean),
+        result_count: requirements.length,
+      };
     }
-    const requirements = rawRetrievalResults.map((value, index) => {
-      const item = object(value, `reviewRun.result_detail.retrieval_results[${index}]`);
-      if (typeof item.requirements_found !== "boolean") {
-        throw new ContractError(`reviewRun.result_detail.retrieval_results[${index}].requirements_found: boolean expected`);
-      }
-      return item.requirements_found;
-    });
-    evidenceRetrieval = {
-      status: retrievalStatus,
-      coverage: retrievalCoverage,
-      requirements_found: requirements.length === 0 ? null : requirements.some(Boolean),
-      result_count: requirements.length,
-    };
   }
+  const ledgerEvidenceIds = new Set(
+    ledgerEntries.flatMap((value) => {
+      const entry = asObject(value);
+      return entry.kind === "evidence" && typeof entry.reference_id === "string"
+        ? [entry.reference_id]
+        : [];
+    }),
+  );
+  const publicEvidenceIds = providerEvidence.length > 0
+    ? new Set(providerEvidence.map((item) => item.evidence_id))
+    : ledgerEvidenceIds;
   const evidenceProvenance = result.evidence_provenance === undefined
     ? undefined
     : decodeEvidenceProvenance(
         result.evidence_provenance,
-        new Set(evidence.map((item) => item.evidence_id)),
+        publicEvidenceIds,
       );
+  if (hasRetrievalAttestation && !Array.isArray(rawRetrievalResults)) {
+    if (!evidenceProvenance) {
+      throw new ContractError(
+        "reviewRun.result_detail: safe Evidence provenance is required when raw retrieval results are absent",
+      );
+    }
+    evidenceRetrieval = {
+      status: retrievalStatus as NonNullable<ReviewRun["evidence_retrieval"]>["status"],
+      coverage: retrievalCoverage as NonNullable<ReviewRun["evidence_retrieval"]>["coverage"],
+      requirements_found: evidenceProvenance.items.length === 0
+        ? null
+        : evidenceProvenance.items.some((item) => item.requirements_found),
+      result_count: evidenceProvenance.ranked_evidence.length,
+    };
+  }
+  const evidence = providerEvidence.length > 0
+    ? providerEvidence
+    : (evidenceProvenance?.ranked_evidence.map((item) => ({
+        evidence_id: item.evidence_id,
+        title: item.title,
+        law_id: item.law_id ?? item.source_type,
+        ...(item.article_no === null ? {} : { article: item.article_no }),
+        excerpt: item.excerpt,
+        source_uri: item.source_uri,
+        source_hash: item.version_hash,
+      })) ?? []);
+  const evidenceProfile = string(raw.evidence_profile, "reviewRun.evidence_profile");
+  if (evidenceProfile.length > 128) {
+    throw new ContractError("reviewRun.evidence_profile: too long");
+  }
+  const evidenceDataSource = string(
+    raw.evidence_data_source,
+    "reviewRun.evidence_data_source",
+  );
+  if (
+    evidenceDataSource !== "UNATTESTED"
+    && evidenceDataSource !== "ACTUAL_POSTGRESQL_QDRANT_NEO4J_READ_ONLY"
+  ) {
+    throw new ContractError("reviewRun.evidence_data_source: unsupported");
+  }
+  const evidenceRequestId = raw.evidence_request_id === null
+    || raw.evidence_request_id === undefined
+    ? null
+    : string(raw.evidence_request_id, "reviewRun.evidence_request_id");
+  if (
+    evidenceRequestId !== null
+    && !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u.test(evidenceRequestId)
+  ) {
+    throw new ContractError("reviewRun.evidence_request_id: invalid");
+  }
+  if (typeof raw.retrieval_execution_attested !== "boolean") {
+    throw new ContractError("reviewRun.retrieval_execution_attested: boolean expected");
+  }
+  const observedRetrievalMethods = decodeAttestedRetrievalMethods(
+    raw.observed_retrieval_methods,
+    "reviewRun.observed_retrieval_methods",
+  );
+  const attemptedRetrievalMethods = decodeAttestedRetrievalMethods(
+    raw.attempted_retrieval_methods,
+    "reviewRun.attempted_retrieval_methods",
+  );
+  const successfulRetrievalMethods = decodeAttestedRetrievalMethods(
+    raw.successful_retrieval_methods,
+    "reviewRun.successful_retrieval_methods",
+  );
+  if (
+    successfulRetrievalMethods.some(
+      (method) => !attemptedRetrievalMethods.includes(method),
+    )
+  ) {
+    throw new ContractError(
+      "reviewRun.successful_retrieval_methods: method was not attempted",
+    );
+  }
+  if (raw.retrieval_execution_attested) {
+    if (
+      evidenceDataSource !== "ACTUAL_POSTGRESQL_QDRANT_NEO4J_READ_ONLY"
+      || evidenceRequestId === null
+      || attemptedRetrievalMethods.length === 0
+    ) {
+      throw new ContractError("reviewRun: retrieval execution attestation is incomplete");
+    }
+  } else if (
+    evidenceDataSource !== "UNATTESTED"
+    || attemptedRetrievalMethods.length > 0
+    || successfulRetrievalMethods.length > 0
+  ) {
+    throw new ContractError("reviewRun: unattested retrieval advertises Store execution");
+  }
   const rawFindings = pickArray("findings", "findings", "compliance_findings", "regulatory_findings");
   const findings = rawFindings.map((value) => normalizeFinding(value, ledgerEntries));
   const sources = deduplicateSources([
@@ -845,6 +944,11 @@ export function decodeReviewRun(value: unknown): ReviewRun {
       || narrativeExecutionSummary?.audit_complete !== true
       || narrative === undefined
       || narrative.summary.length === 0
+      || raw.retrieval_execution_attested !== true
+      || evidenceDataSource !== "ACTUAL_POSTGRESQL_QDRANT_NEO4J_READ_ONLY"
+      || evidenceRequestId === null
+      || attemptedRetrievalMethods.length === 0
+      || successfulRetrievalMethods.length === 0
       || result.retrieval_status !== "ok"
       || result.retrieval_coverage !== "complete"
       || !snapshotMatches
@@ -890,7 +994,39 @@ export function decodeReviewRun(value: unknown): ReviewRun {
     ...(completion === undefined ? {} : { completion_eligibility: completion }),
     ...(narrative === undefined ? {} : { narrative_report: narrative }),
     ...(releaseIdentity === undefined ? {} : { release_identity: releaseIdentity }),
+    evidence_profile: evidenceProfile,
+    evidence_data_source: evidenceDataSource,
+    evidence_request_id: evidenceRequestId,
+    observed_retrieval_methods: observedRetrievalMethods,
+    attempted_retrieval_methods: attemptedRetrievalMethods,
+    successful_retrieval_methods: successfulRetrievalMethods,
+    retrieval_execution_attested: raw.retrieval_execution_attested,
   };
+}
+
+function decodeAttestedRetrievalMethods(
+  value: unknown,
+  context: string,
+): NonNullable<ReviewRun["observed_retrieval_methods"]> {
+  if (!Array.isArray(value) || value.length > 4) {
+    throw new ContractError(`${context}: bounded array expected`);
+  }
+  const order = ["exact_hs", "dense", "bm25", "graph"] as const;
+  const methods = value.map((item, index) => {
+    if (!order.includes(item as (typeof order)[number])) {
+      throw new ContractError(`${context}[${index}]: unsupported`);
+    }
+    return item as (typeof order)[number];
+  });
+  if (
+    new Set(methods).size !== methods.length
+    || methods.some((method, index) => (
+      index > 0 && order.indexOf(method) <= order.indexOf(methods[index - 1]!)
+    ))
+  ) {
+    throw new ContractError(`${context}: unique canonical ordering required`);
+  }
+  return methods;
 }
 
 export function decodeRunSummary(value: unknown): RunSummary {
@@ -1555,6 +1691,7 @@ function decodeEvidenceProvenance(
     const expectedKeys = [
       "article_no",
       "evidence_id",
+      "excerpt",
       "item_id",
       "law_id",
       "law_name",
@@ -1564,6 +1701,7 @@ function decodeEvidenceProvenance(
       "score",
       "source_type",
       "source_uri",
+      "title",
       "version_hash",
     ].sort().join(",");
     if (Object.keys(row).sort().join(",") !== expectedKeys) {
@@ -1653,6 +1791,8 @@ function decodeEvidenceProvenance(
       evidence_id: evidenceId,
       item_id: itemId,
       rank: Number(row.rank),
+      title: boundedString(row.title, `${context}.title`, 512),
+      excerpt: boundedString(row.excerpt, `${context}.excerpt`, 20_000),
       source_type: sourceType as NonNullable<
         ReviewRun["evidence_provenance"]
       >["ranked_evidence"][number]["source_type"],
@@ -2014,6 +2154,13 @@ function validateBackendEffectiveResultDigest(
         reason_ids: stage.reason_ids ?? [],
       };
     }),
+    evidence_profile: raw.evidence_profile,
+    evidence_data_source: raw.evidence_data_source,
+    evidence_request_id: raw.evidence_request_id ?? null,
+    observed_retrieval_methods: raw.observed_retrieval_methods ?? [],
+    attempted_retrieval_methods: raw.attempted_retrieval_methods ?? [],
+    successful_retrieval_methods: raw.successful_retrieval_methods ?? [],
+    retrieval_execution_attested: raw.retrieval_execution_attested,
     auto_completion_profile: {
       profile_id: profile.profile_id ?? null,
       approved_document_types: profile.approved_document_types ?? [],

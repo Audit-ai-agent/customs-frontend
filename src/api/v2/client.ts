@@ -1,6 +1,11 @@
 import { ContractError, decodeJob, decodeLocalUatMetadata } from "../v1/decoders";
+import { sha256 as nobleSha256 } from "@noble/hashes/sha2.js";
+import { stableApiErrorMessage, technicalApiErrorDetail } from "../user-facing-errors";
 import type {
+  AnswerClaimSelections,
+  AnswerScopeClassificationAudit,
   AssistantAnswer,
+  AssistantAnswerScope,
   AssistantConversation,
   AssistantJob,
   AssistantStageEvent,
@@ -12,7 +17,7 @@ import type {
   GroundedPresentationSection,
   GroundedPresentationStatement,
   PublicStageEvent,
-  ReviewExperienceEnvelope,
+  PublicReviewExperience,
   ReviewJobExperience,
 } from "./types";
 
@@ -22,6 +27,34 @@ const ASSISTANT_TIMEOUT_MS = 3 * 60_000;
 const MAX_RESPONSE_BYTES = 4 * 1024 * 1024;
 
 type AccessTokenProvider = () => string | undefined | Promise<string | undefined>;
+
+export interface ReviewResultResourceBinding {
+  reviewRunId: string;
+  caseId: string;
+  orgId: string;
+  resultSha256: string;
+  effectiveResultDigest: string;
+}
+
+export class ExperienceApiError extends Error {
+  readonly technicalDetail: string;
+
+  constructor(
+    detail: string,
+    readonly status: number,
+    readonly code?: string,
+    readonly requestId?: string,
+  ) {
+    super(stableApiErrorMessage(status, code));
+    this.name = "ExperienceApiError";
+    this.technicalDetail = technicalApiErrorDetail({
+      detail,
+      status,
+      ...(code ? { code } : {}),
+      ...(requestId ? { requestId } : {}),
+    });
+  }
+}
 
 export class ExperienceApiClient {
   private readonly fetcher: typeof fetch;
@@ -41,11 +74,24 @@ export class ExperienceApiClient {
     );
   }
 
-  getReviewExperience(reviewRunId: string): Promise<ReviewExperienceEnvelope> {
+  getReviewExperience(binding: ReviewResultResourceBinding): Promise<PublicReviewExperience> {
     return this.request(
-      `${API_BASE}/review-runs/${resourceId(reviewRunId)}/experience`,
+      `${API_BASE}/review-runs/${resourceId(binding.reviewRunId)}/experience`,
       { method: "GET" },
-      decodeExperienceEnvelope,
+      (value) => {
+        const envelope = decodePublicReviewExperience(value);
+        assertBound(
+          envelope.bound_provider_result_sha256,
+          binding.resultSha256,
+          "Review experience is not bound to the requested result",
+        );
+        assertBound(
+          envelope.bound_effective_result_digest,
+          binding.effectiveResultDigest,
+          "Review experience is not bound to the current effective result",
+        );
+        return envelope;
+      },
     );
   }
 
@@ -57,64 +103,159 @@ export class ExperienceApiClient {
     return this.request(
       `${API_BASE}/cases/${resourceId(caseId)}/reviews`,
       jsonRequest("POST", payload, idempotencyKey),
-      decodeReviewJobExperience,
+      (value) => {
+        const decoded = decodeReviewJobExperience(value);
+        assertBound(decoded.job.case_id, caseId, "Review Job is not bound to the requested Case");
+        return decoded;
+      },
     );
   }
 
-  getReviewJob(jobId: string): Promise<ReviewJobExperience> {
+  getReviewJob(jobId: string, expectedCaseId: string): Promise<ReviewJobExperience> {
     return this.request(
       `${API_BASE}/jobs/${resourceId(jobId)}`,
       { method: "GET" },
-      decodeReviewJobExperience,
+      (value) => {
+        const decoded = decodeReviewJobExperience(value);
+        assertBound(decoded.job.job_id, jobId, "Review Job is not bound to the requested Job");
+        assertBound(
+          decoded.job.case_id,
+          expectedCaseId,
+          "Review Job is not bound to the current Case",
+        );
+        return decoded;
+      },
     );
   }
 
-  listConversations(reviewRunId: string): Promise<AssistantConversation[]> {
+  listConversations(binding: ReviewResultResourceBinding): Promise<AssistantConversation[]> {
     return this.request(
-      `${API_BASE}/review-runs/${resourceId(reviewRunId)}/assistant/conversations`,
+      `${API_BASE}/review-runs/${resourceId(binding.reviewRunId)}/assistant/conversations`,
       { method: "GET" },
-      (value) => decodeArrayPayload(value, decodeConversation, "assistant conversations"),
+      (value) => {
+        const conversations = decodeArrayPayload(
+          value,
+          decodeConversation,
+          "assistant conversations",
+        );
+        for (const conversation of conversations) {
+          assertBound(
+            conversation.review_run_id,
+            binding.reviewRunId,
+            "Assistant conversation is not bound to the requested Run",
+          );
+          assertConversationBinding(conversation, binding);
+        }
+        return conversations;
+      },
     );
   }
 
   createConversation(
-    reviewRunId: string,
-    boundResultSha256: string,
+    binding: ReviewResultResourceBinding,
     idempotencyKey: string,
   ): Promise<AssistantConversation> {
     return this.request(
-      `${API_BASE}/review-runs/${resourceId(reviewRunId)}/assistant/conversations`,
-      jsonRequest("POST", { bound_result_sha256: boundResultSha256 }, idempotencyKey),
-      decodeConversation,
+      `${API_BASE}/review-runs/${resourceId(binding.reviewRunId)}/assistant/conversations`,
+      jsonRequest("POST", { bound_result_sha256: binding.resultSha256 }, idempotencyKey),
+      (value) => {
+        const conversation = decodeConversation(value);
+        assertBound(
+          conversation.review_run_id,
+          binding.reviewRunId,
+          "Assistant conversation is not bound to the requested Run",
+        );
+        assertBound(
+          conversation.bound_result_sha256,
+          binding.resultSha256,
+          "Assistant conversation is not bound to the requested result",
+        );
+        assertConversationBinding(conversation, binding);
+        return conversation;
+      },
     );
   }
 
-  listMessages(conversationId: string): Promise<AssistantMessage[]> {
+  listMessages(conversation: AssistantConversation): Promise<AssistantMessage[]> {
     return this.request(
-      `${API_BASE}/assistant/conversations/${resourceId(conversationId)}/messages`,
+      `${API_BASE}/assistant/conversations/${resourceId(conversation.conversation_id)}/messages`,
       { method: "GET" },
-      (value) => decodeArrayPayload(value, decodeAssistantMessage, "assistant messages"),
+      (value) => {
+        const messages = decodeArrayPayload(
+          value,
+          decodeAssistantMessage,
+          "assistant messages",
+        );
+        for (const message of messages) {
+          assertBound(
+            message.conversation_id,
+            conversation.conversation_id,
+            "Assistant message is not bound to the requested conversation",
+          );
+          assertMessageBinding(message, conversation);
+        }
+        return messages;
+      },
     );
   }
 
   sendMessage(
-    conversationId: string,
+    conversation: AssistantConversation,
     payload: AssistantMessageCreate,
     idempotencyKey: string,
   ): Promise<AssistantMessageEnqueueResponse> {
     return this.request(
-      `${API_BASE}/assistant/conversations/${resourceId(conversationId)}/messages`,
+      `${API_BASE}/assistant/conversations/${resourceId(conversation.conversation_id)}/messages`,
       jsonRequest("POST", payload, idempotencyKey),
-      decodeAssistantMessageEnqueueResponse,
+      (value) => {
+        const decoded = decodeAssistantMessageEnqueueResponse(value);
+        assertAssistantEnqueueBinding(decoded, conversation, payload);
+        return decoded;
+      },
       ASSISTANT_TIMEOUT_MS,
     );
   }
 
-  getAssistantJob(jobId: string): Promise<AssistantJob> {
+  getAssistantJob(jobId: string, conversation: AssistantConversation): Promise<AssistantJob> {
     return this.request(
       `${API_BASE}/assistant/jobs/${resourceId(jobId)}`,
       { method: "GET" },
-      decodeAssistantJob,
+      (value) => {
+        const job = decodeAssistantJob(value);
+        assertBound(
+          job.assistant_job_id,
+          jobId,
+          "Assistant Job is not bound to the requested Job",
+        );
+        assertBound(
+          job.conversation_id,
+          conversation.conversation_id,
+          "Assistant Job is not bound to the requested conversation",
+        );
+        assertBound(job.review_run_id, conversation.review_run_id, "Assistant Job Run differs");
+        assertBound(job.case_id, conversation.case_id, "Assistant Job Case differs");
+        return job;
+      },
+    );
+  }
+
+  listAssistantJobs(conversation: AssistantConversation): Promise<AssistantJob[]> {
+    return this.request(
+      `${API_BASE}/assistant/conversations/${resourceId(conversation.conversation_id)}/jobs`,
+      { method: "GET" },
+      (value) => {
+        const jobs = decodeArrayPayload(value, decodeAssistantJob, "assistant jobs");
+        for (const job of jobs) {
+          assertBound(
+            job.conversation_id,
+            conversation.conversation_id,
+            "Assistant Job is not bound to the requested conversation",
+          );
+          assertBound(job.review_run_id, conversation.review_run_id, "Assistant Job Run differs");
+          assertBound(job.case_id, conversation.case_id, "Assistant Job Case differs");
+        }
+        return jobs;
+      },
     );
   }
 
@@ -170,7 +311,12 @@ export class ExperienceApiClient {
       redirect: "error",
       signal,
     });
-    if (!response.ok || !response.body) throw new Error(`실행 단계 연결에 실패했습니다 (${response.status}).`);
+    if (!response.ok || !response.body) {
+      throw new ExperienceApiError(
+        "event stream connection failed",
+        response.status || 503,
+      );
+    }
     const contentType = response.headers.get("content-type") ?? "";
     if (!contentType.toLowerCase().includes("text/event-stream")) {
       throw new ContractError("Review event stream must be text/event-stream");
@@ -225,8 +371,14 @@ export class ExperienceApiClient {
       if (!response.ok) {
         const detail = isRecord(value) && typeof value.detail === "string"
           ? value.detail
-          : `요청을 처리하지 못했습니다 (${response.status}).`;
-        throw new Error(detail);
+          : "request failed without a safe problem detail";
+        const code = isRecord(value) && typeof value.code === "string"
+          ? value.code
+          : undefined;
+        const requestId = isRecord(value) && typeof value.request_id === "string"
+          ? value.request_id
+          : undefined;
+        throw new ExperienceApiError(detail, response.status, code, requestId);
       }
       return decoder(value);
     } finally {
@@ -292,6 +444,85 @@ function jsonRequest(method: "POST", payload: unknown, idempotencyKey: string): 
   };
 }
 
+function assertBound(actual: string, expected: string, message: string): void {
+  if (actual !== expected) throw new ContractError(message);
+}
+
+function assertAssistantEnqueueBinding(
+  decoded: AssistantMessageEnqueueResponse,
+  conversation: AssistantConversation,
+  payload: AssistantMessageCreate,
+): void {
+  const { job, user_message: message } = decoded;
+  assertBound(
+    job.conversation_id,
+    conversation.conversation_id,
+    "Assistant Job is not bound to the requested conversation",
+  );
+  assertBound(
+    message.conversation_id,
+    conversation.conversation_id,
+    "Assistant message is not bound to the requested conversation",
+  );
+  assertBound(job.review_run_id, message.review_run_id, "Assistant Job and message Run differ");
+  assertBound(job.case_id, message.case_id, "Assistant Job and message Case differ");
+  assertMessageBinding(message, conversation);
+  assertBound(
+    message.bound_result_sha256,
+    payload.bound_result_sha256,
+    "Assistant message is not bound to the requested result",
+  );
+  assertBound(message.content, payload.question, "Assistant message does not match the submitted question");
+  if (message.role !== "user") {
+    throw new ContractError("Assistant enqueue response did not return the submitted user message");
+  }
+  if ((message.parent_message_id ?? undefined) !== payload.parent_message_id) {
+    throw new ContractError("Assistant message is not bound to the submitted parent message");
+  }
+}
+
+function assertConversationBinding(
+  conversation: AssistantConversation,
+  binding: ReviewResultResourceBinding,
+): void {
+  assertBound(conversation.case_id, binding.caseId, "Assistant conversation Case differs");
+  assertBound(conversation.org_id, binding.orgId, "Assistant conversation organization differs");
+  assertBound(
+    conversation.review_run_id,
+    binding.reviewRunId,
+    "Assistant conversation Run differs",
+  );
+  assertBound(
+    conversation.bound_result_sha256,
+    binding.resultSha256,
+    "Assistant conversation result differs",
+  );
+  assertBound(
+    conversation.bound_effective_result_digest,
+    binding.effectiveResultDigest,
+    "Assistant conversation effective result differs",
+  );
+}
+
+function assertMessageBinding(
+  message: AssistantMessage,
+  conversation: AssistantConversation,
+): void {
+  assertBound(
+    message.conversation_id,
+    conversation.conversation_id,
+    "Assistant message conversation differs",
+  );
+  assertBound(message.review_run_id, conversation.review_run_id, "Assistant message Run differs");
+  assertBound(message.case_id, conversation.case_id, "Assistant message Case differs");
+  assertBound(message.org_id, conversation.org_id, "Assistant message organization differs");
+  assertBound(
+    message.bound_result_sha256,
+    conversation.bound_result_sha256,
+    "Assistant message result differs",
+  );
+}
+
 async function limitedText(response: Response): Promise<string> {
   const declared = Number(response.headers.get("content-length") ?? 0);
   if (declared > MAX_RESPONSE_BYTES) throw new ContractError("Backend response exceeded the safe size");
@@ -328,10 +559,23 @@ function decodeReviewJobExperience(value: unknown): ReviewJobExperience {
   };
 }
 
-function decodeExperienceEnvelope(value: unknown): ReviewExperienceEnvelope {
+function decodePublicReviewExperience(value: unknown): PublicReviewExperience {
   const raw = record(value, "review experience");
+  assertExactKeys(
+    raw,
+    [
+      "schema_version",
+      "bound_provider_result_sha256",
+      "bound_effective_result_digest",
+      "user_presentation",
+      "capability_attestation",
+      "user_action_events",
+      "agent_envelope_sha256",
+      "public_experience_sha256",
+    ],
+    "review experience",
+  );
   const schemaVersion = exactString(raw.schema_version, "1.0", "review experience.schema_version");
-  const canonical = record(raw.canonical_result, "review experience.canonical_result");
   const presentation = decodePresentation(raw.user_presentation);
   const capability = record(raw.capability_attestation, "review experience.capability_attestation");
   const actionEvents = array(raw.user_action_events, "review experience.user_action_events").map((item, index) => {
@@ -353,9 +597,16 @@ function decodeExperienceEnvelope(value: unknown): ReviewExperienceEnvelope {
       ),
     };
   });
-  return {
+  const publicProjection = {
     schema_version: schemaVersion,
-    canonical_result: canonical,
+    bound_provider_result_sha256: digest(
+      raw.bound_provider_result_sha256,
+      "review experience.bound_provider_result_sha256",
+    ),
+    bound_effective_result_digest: digest(
+      raw.bound_effective_result_digest,
+      "review experience.bound_effective_result_digest",
+    ),
     user_presentation: presentation,
     capability_attestation: {
       schema_version: exactString(capability.schema_version, "1.0", "capability.schema_version"),
@@ -399,7 +650,21 @@ function decodeExperienceEnvelope(value: unknown): ReviewExperienceEnvelope {
       capability_sha256: digest(capability.capability_sha256, "capability.capability_sha256"),
     },
     user_action_events: actionEvents,
-    envelope_sha256: digest(raw.envelope_sha256, "review experience.envelope_sha256"),
+    agent_envelope_sha256: digest(
+      raw.agent_envelope_sha256,
+      "review experience.agent_envelope_sha256",
+    ),
+  };
+  const publicExperienceSha256 = digest(
+    raw.public_experience_sha256,
+    "review experience.public_experience_sha256",
+  );
+  if (canonicalJsonSha256(publicProjection) !== publicExperienceSha256) {
+    throw new ContractError("Review experience content digest is invalid");
+  }
+  return {
+    ...publicProjection,
+    public_experience_sha256: publicExperienceSha256,
   };
 }
 
@@ -495,28 +760,90 @@ function decodeAssistantAnswer(value: unknown): AssistantAnswer {
   const raw = record(value, "assistant answer");
   const generation = record(raw.generation_audit, "assistant answer.generation_audit");
   const verification = record(raw.verification_audit, "assistant answer.verification_audit");
+  const answerScope = enumValue(raw.answer_scope, [
+    "case_grounded", "evidence_grounded", "general_customs_guidance",
+    "clarification_needed", "insufficient_evidence", "out_of_scope",
+  ], "assistant answer.answer_scope");
+  const status = enumValue(raw.status, [
+    "answered", "clarification_needed", "insufficient_evidence", "out_of_scope",
+  ], "assistant answer.status");
+  const expectedStatus = {
+    case_grounded: "answered",
+    evidence_grounded: "answered",
+    general_customs_guidance: "answered",
+    clarification_needed: "clarification_needed",
+    insufficient_evidence: "insufficient_evidence",
+    out_of_scope: "out_of_scope",
+  } satisfies Record<AssistantAnswerScope, AssistantAnswer["status"]>;
+  if (status !== expectedStatus[answerScope]) {
+    throw new ContractError("assistant answer: status does not match its classified scope");
+  }
+  const generationAudit = decodeGenerationAudit(generation, "assistant generation");
+  if (
+    generationAudit.scope_classification === null
+    || generationAudit.scope_classification.classified_scope !== answerScope
+  ) {
+    throw new ContractError(
+      "assistant answer: exact scope-classification audit is missing or inconsistent",
+    );
+  }
+  const citations = array(raw.citations, "assistant answer.citations")
+    .map((item) => decodeCitationReference(item, "assistant answer.citation"));
+  if (
+    (answerScope === "case_grounded" || answerScope === "evidence_grounded")
+    && citations.length === 0
+  ) {
+    throw new ContractError("assistant answer: grounded answers require citations");
+  }
+  if (
+    (answerScope === "clarification_needed" || answerScope === "out_of_scope")
+    && citations.length > 0
+  ) {
+    throw new ContractError("assistant answer: this answer scope cannot claim citations");
+  }
+  const usedContextMessageIds = uniqueStringArray(
+    raw.used_context_message_ids,
+    "assistant answer.used_context_message_ids",
+    8,
+  );
   return {
     schema_version: exactString(raw.schema_version, "2.0", "assistant answer.schema_version"),
-    answer_scope: enumValue(raw.answer_scope, [
-      "case_grounded", "evidence_grounded", "general_customs_guidance",
-      "clarification_needed", "insufficient_evidence", "out_of_scope",
-    ], "assistant answer.answer_scope"),
-    status: enumValue(raw.status, [
-      "answered", "clarification_needed", "insufficient_evidence", "out_of_scope",
-    ], "assistant answer.status"),
+    request_sha256: digest(raw.request_sha256, "assistant answer.request_sha256"),
+    answer_scope: answerScope,
+    status,
     direct_answer: boundedText(raw.direct_answer, "assistant answer.direct_answer", 5_000),
+    claim_selections: decodeAnswerClaimSelections(raw.claim_selections),
     explanation: textArray(raw.explanation, "assistant answer.explanation"),
     evidence_meaning: textArray(raw.evidence_meaning, "assistant answer.evidence_meaning"),
     impact: textArray(raw.impact, "assistant answer.impact"),
     next_steps: textArray(raw.next_steps, "assistant answer.next_steps"),
     limitations: textArray(raw.limitations, "assistant answer.limitations"),
-    citations: array(raw.citations, "assistant answer.citations")
-      .map((item) => decodeCitationReference(item, "assistant answer.citation")),
+    citations,
     suggested_questions: textArray(raw.suggested_questions, "assistant answer.suggested_questions", 3),
-    used_context_message_ids: stringArray(raw.used_context_message_ids, "assistant answer.used_context_message_ids"),
-    generation_audit: decodeGenerationAudit(generation, "assistant generation"),
+    used_context_message_ids: usedContextMessageIds,
+    generation_audit: generationAudit,
     verification_audit: decodeVerificationAudit(verification, "assistant verification"),
     answer_sha256: digest(raw.answer_sha256, "assistant answer.answer_sha256"),
+  };
+}
+
+function decodeAnswerClaimSelections(value: unknown): AnswerClaimSelections {
+  const raw = record(value, "assistant answer.claim_selections");
+  assertExactKeys(
+    raw,
+    ["direct_answer", "explanation", "evidence_meaning", "impact", "next_steps"],
+    "assistant answer.claim_selections",
+  );
+  return {
+    direct_answer: claimIdArray(raw.direct_answer, "assistant answer.claim_selections.direct_answer", 1),
+    explanation: claimIdArray(raw.explanation, "assistant answer.claim_selections.explanation", 40),
+    evidence_meaning: claimIdArray(
+      raw.evidence_meaning,
+      "assistant answer.claim_selections.evidence_meaning",
+      40,
+    ),
+    impact: claimIdArray(raw.impact, "assistant answer.claim_selections.impact", 40),
+    next_steps: claimIdArray(raw.next_steps, "assistant answer.claim_selections.next_steps", 40),
   };
 }
 
@@ -527,6 +854,10 @@ function decodeAssistantJob(value: unknown): AssistantJob {
     conversation_id: string(raw.conversation_id, "assistant job.conversation_id"),
     review_run_id: string(raw.review_run_id, "assistant job.review_run_id"),
     case_id: string(raw.case_id, "assistant job.case_id"),
+    request_binding_sha256: digest(
+      raw.request_binding_sha256,
+      "assistant job.request_binding_sha256",
+    ),
     state: enumValue(raw.state, [
       "queued", "running", "succeeded", "failed", "delivery_uncertain",
       "response_received_rejected", "response_persistence_uncertain",
@@ -636,6 +967,7 @@ function decodeGenerationAudit(value: unknown, context: string): {
   output_tokens: number;
   latency_ms: number;
   attempt_count: number;
+  scope_classification: AnswerScopeClassificationAudit | null;
 } {
   const raw = record(value, context);
   const mode = enumValue(raw.mode, ["claude", "deterministic_fallback"], `${context}.mode`);
@@ -658,6 +990,89 @@ function decodeGenerationAudit(value: unknown, context: string): {
     output_tokens: outputTokens,
     latency_ms: nonNegativeNumber(raw.latency_ms, `${context}.latency_ms`),
     attempt_count: boundedInteger(raw.attempt_count, 1, 2, `${context}.attempt_count`),
+    scope_classification: raw.scope_classification === null
+      || raw.scope_classification === undefined
+      ? null
+      : decodeScopeClassificationAudit(
+        raw.scope_classification,
+        `${context}.scope_classification`,
+      ),
+  };
+}
+
+function decodeScopeClassificationAudit(
+  value: unknown,
+  context: string,
+): AnswerScopeClassificationAudit {
+  const raw = record(value, context);
+  const mode = enumValue(
+    raw.mode,
+    ["claude", "deterministic_guard", "fallback"],
+    `${context}.mode`,
+  );
+  const classifiedScope = enumValue(raw.classified_scope, [
+    "case_grounded", "evidence_grounded", "general_customs_guidance",
+    "clarification_needed", "insufficient_evidence", "out_of_scope",
+  ], `${context}.classified_scope`);
+  const modelId = nullableString(raw.model_id, `${context}.model_id`);
+  const inputTokens = integer(raw.input_tokens, `${context}.input_tokens`);
+  const outputTokens = integer(raw.output_tokens, `${context}.output_tokens`);
+  if (mode === "claude" && (modelId === null || inputTokens === 0 || outputTokens === 0)) {
+    throw new ContractError(`${context}: Claude classification audit is incomplete`);
+  }
+  if (mode !== "claude" && (modelId !== null || inputTokens !== 0 || outputTokens !== 0)) {
+    throw new ContractError(`${context}: non-model classification cannot claim model usage`);
+  }
+  if (mode === "deterministic_guard" && classifiedScope !== "out_of_scope") {
+    throw new ContractError(`${context}: deterministic guard is reserved for out-of-scope input`);
+  }
+  if (mode === "fallback" && classifiedScope !== "clarification_needed") {
+    throw new ContractError(`${context}: classifier fallback must request clarification`);
+  }
+  const allowedGuidanceTopics = [
+    "invoice", "packing_list", "bill_of_lading", "certificate_of_origin", "hsk",
+    "hs_hsk_comparison", "customs_review", "import_declaration", "customs_valuation",
+    "duties_and_taxes", "free_trade_agreement", "import_requirements",
+    "inspection_and_supplement", "document_correction", "customs_broker",
+  ] as const;
+  const guidanceTopics = array(raw.guidance_topics, `${context}.guidance_topics`).map(
+    (topic, index) => enumValue(
+      topic,
+      allowedGuidanceTopics,
+      `${context}.guidance_topics[${index}]`,
+    ),
+  );
+  if (guidanceTopics.length > 3 || guidanceTopics.length !== new Set(guidanceTopics).size) {
+    throw new ContractError(`${context}: guidance topics are duplicated or exceed the limit`);
+  }
+  if (
+    (classifiedScope === "general_customs_guidance") !== (guidanceTopics.length > 0)
+  ) {
+    throw new ContractError(`${context}: guidance topics do not match the classified scope`);
+  }
+  return {
+    mode,
+    task_id: exactString(
+      raw.task_id,
+      "customs_case_scope_classifier",
+      `${context}.task_id`,
+    ),
+    classified_scope: classifiedScope,
+    guidance_topics: guidanceTopics,
+    model_id: modelId,
+    prompt_sha256: digest(raw.prompt_sha256, `${context}.prompt_sha256`),
+    output_schema_sha256: digest(
+      raw.output_schema_sha256,
+      `${context}.output_schema_sha256`,
+    ),
+    semantic_output_schema_sha256: digest(
+      raw.semantic_output_schema_sha256,
+      `${context}.semantic_output_schema_sha256`,
+    ),
+    input_tokens: inputTokens,
+    output_tokens: outputTokens,
+    latency_ms: boundedInteger(raw.latency_ms, 0, 300_000, `${context}.latency_ms`),
+    reason_code: boundedText(raw.reason_code, `${context}.reason_code`, 128),
   };
 }
 
@@ -666,8 +1081,10 @@ function decodeVerificationAudit(value: unknown, context: string): {
   deterministic_checks_passed: boolean;
   entailment_verifier: "claude" | "not_run";
   verifier_model_id: string | null;
+  verifier_context_sha256: string | null;
   verifier_prompt_sha256: string;
   verifier_schema_sha256: string;
+  verified_content_sha256: string;
   checked_statement_count: number;
   reason_codes: string[];
 } {
@@ -679,9 +1096,19 @@ function decodeVerificationAudit(value: unknown, context: string): {
   );
   const verifier = enumValue(raw.entailment_verifier, ["claude", "not_run"], `${context}.entailment_verifier`);
   const verifierModel = nullableString(raw.verifier_model_id, `${context}.verifier_model_id`);
+  const verifierContext = nullableDigest(
+    raw.verifier_context_sha256,
+    `${context}.verifier_context_sha256`,
+  );
   const reasons = stringArray(raw.reason_codes, `${context}.reason_codes`);
-  if ((verifier === "claude") !== (verifierModel !== null)) {
+  if (
+    (verifier === "claude")
+    !== (verifierModel !== null && verifierContext !== null)
+  ) {
     throw new ContractError(`${context}: entailment verifier identity is incomplete`);
+  }
+  if (verifier !== "claude" && verifierContext !== null) {
+    throw new ContractError(`${context}: non-model verifier cannot claim a context identity`);
   }
   if (status === "passed" && (!deterministic || reasons.length > 0)) {
     throw new ContractError(`${context}: passed verification contains blockers`);
@@ -694,8 +1121,13 @@ function decodeVerificationAudit(value: unknown, context: string): {
     deterministic_checks_passed: deterministic,
     entailment_verifier: verifier,
     verifier_model_id: verifierModel,
+    verifier_context_sha256: verifierContext,
     verifier_prompt_sha256: digest(raw.verifier_prompt_sha256, `${context}.verifier_prompt_sha256`),
     verifier_schema_sha256: digest(raw.verifier_schema_sha256, `${context}.verifier_schema_sha256`),
+    verified_content_sha256: digest(
+      raw.verified_content_sha256,
+      `${context}.verified_content_sha256`,
+    ),
     checked_statement_count: boundedInteger(
       raw.checked_statement_count,
       0,
@@ -723,6 +1155,50 @@ function resourceId(value: string): string {
 function record(value: unknown, context: string): Record<string, unknown> {
   if (!isRecord(value)) throw new ContractError(`${context}: object expected`);
   return value;
+}
+
+function assertExactKeys(
+  value: Record<string, unknown>,
+  expected: string[],
+  context: string,
+): void {
+  const actual = Object.keys(value).sort();
+  const required = [...expected].sort();
+  if (
+    actual.length !== required.length
+    || actual.some((key, index) => key !== required[index])
+  ) {
+    throw new ContractError(`${context}: unexpected or missing fields`);
+  }
+}
+
+function canonicalJsonSha256(value: unknown): string {
+  return [...nobleSha256(new TextEncoder().encode(canonicalJson(value)))]
+    .map((item) => item.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+function canonicalJson(value: unknown): string {
+  if (
+    value === null
+    || typeof value === "string"
+    || typeof value === "boolean"
+  ) {
+    return JSON.stringify(value);
+  }
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return JSON.stringify(value);
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map(canonicalJson).join(",")}]`;
+  }
+  if (isRecord(value)) {
+    return `{${Object.keys(value)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`)
+      .join(",")}}`;
+  }
+  throw new ContractError("review experience contains a non-canonical value");
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -793,6 +1269,11 @@ function digest(value: unknown, context: string): string {
   return result;
 }
 
+function nullableDigest(value: unknown, context: string): string | null {
+  if (value === null || value === undefined) return null;
+  return digest(value, context);
+}
+
 function commitDigest(value: unknown, context: string): string {
   const result = string(value, context);
   if (!/^[a-f0-9]{40}$/.test(result)) throw new ContractError(`${context}: Git commit SHA expected`);
@@ -801,6 +1282,22 @@ function commitDigest(value: unknown, context: string): string {
 
 function stringArray(value: unknown, context: string): string[] {
   return array(value, context).map((item, index) => string(item, `${context}[${index}]`));
+}
+
+function uniqueStringArray(value: unknown, context: string, maximum: number): string[] {
+  const result = stringArray(value, context);
+  if (result.length > maximum || result.length !== new Set(result).size) {
+    throw new ContractError(`${context}: values are duplicated or exceed the limit`);
+  }
+  return result;
+}
+
+function claimIdArray(value: unknown, context: string, maximum: number): string[] {
+  const result = uniqueStringArray(value, context, maximum);
+  if (result.some((item) => !/^experience_claim_[a-f0-9]{64}$/.test(item))) {
+    throw new ContractError(`${context}: canonical experience claim ID expected`);
+  }
+  return result;
 }
 
 function textArray(value: unknown, context: string, maximum = 20): string[] {

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { userFacingErrorMessage } from "../../api/user-facing-errors";
 import type {
   AssistantConversation,
   AssistantStageEvent,
@@ -9,13 +10,14 @@ import { useWorkbench } from "../context";
 import { Icon } from "../icons";
 import { assistantScopeLabels, formatDuration } from "../labels";
 import { CaseCitationLink } from "../components/citation-link";
+import { canMutate } from "../capabilities";
 import { derivedIdempotencyKey } from "../idempotency";
 
 const PENDING_KEY = "customs.enhanced.pending-assistant";
 const INITIAL_QUESTIONS = [
   "이번 심사에서 가장 먼저 확인해야 할 사항은 무엇입니까?",
   "검색된 법령 근거가 이 심사 건에서 어떤 의미입니까?",
-  "담당자가 다음으로 해야 할 일을 순서대로 알려 주십시오.",
+  "HSK와 HS Code의 차이를 설명해 주십시오.",
 ];
 
 const assistantStageLabels: Record<AssistantStageEvent["stage_code"], string> = {
@@ -36,21 +38,25 @@ interface PendingAssistant {
   runId: string;
   conversationId: string;
   jobId: string | null;
+  requestBindingSha256: string | null;
   idempotencyKey: string;
   startedAt: string;
 }
 
-const TERMINAL_ASSISTANT_STATES = new Set([
+const SAFE_TERMINAL_ASSISTANT_STATES = new Set([
   "succeeded",
   "failed",
-  "delivery_uncertain",
   "response_received_rejected",
+]);
+const UNCERTAIN_ASSISTANT_STATES = new Set([
+  "delivery_uncertain",
   "response_persistence_uncertain",
 ]);
 
 export function AssistantPage(): React.ReactElement {
   const { caseDetail, selectedRun } = useCaseWorkspace();
   const { experienceApi, session } = useWorkbench();
+  const canAskAssistant = canMutate(session, "ask_assistant");
   const [conversation, setConversation] = useState<AssistantConversation | null>(null);
   const [messages, setMessages] = useState<AssistantMessage[]>([]);
   const [pending, setPending] = useState<PendingAssistant | null>(null);
@@ -61,10 +67,13 @@ export function AssistantPage(): React.ReactElement {
   const [draft, setDraft] = useState("");
   const [error, setError] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const activeRunRef = useRef<string | null>(selectedRun?.review_run_id ?? null);
+
+  activeRunRef.current = selectedRun?.review_run_id ?? null;
 
   const loadMessages = async (target: AssistantConversation): Promise<AssistantMessage[]> => {
-    const next = await experienceApi.listMessages(target.conversation_id);
-    setMessages(next);
+    const next = await experienceApi.listMessages(target);
+    if (target.review_run_id === activeRunRef.current) setMessages(next);
     return next;
   };
 
@@ -73,23 +82,73 @@ export function AssistantPage(): React.ReactElement {
     targetConversation: AssistantConversation | null = conversation,
   ): Promise<void> => {
     const jobId = target.jobId;
-    if (!jobId) return;
+    if (
+      !jobId
+      || target.runId !== activeRunRef.current
+      || !targetConversation
+      || targetConversation.review_run_id !== target.runId
+    ) return;
     abortRef.current?.abort();
     const controller = new AbortController();
     abortRef.current = controller;
     setPending(target);
     try {
+      const beforeStream = await experienceApi.getAssistantJob(jobId, targetConversation);
+      if (
+        beforeStream.review_run_id !== target.runId
+        || beforeStream.conversation_id !== target.conversationId
+        || beforeStream.request_binding_sha256 !== target.requestBindingSha256
+      ) {
+        clearPendingAssistant();
+        setPending(null);
+        setError("저장된 질문과 서버 답변 작업의 결박이 일치하지 않아 자동 복구를 중단했습니다.");
+        return;
+      }
+      if (beforeStream.state === "succeeded") {
+        await loadMessages(targetConversation);
+        clearPendingAssistant();
+        setPending(null);
+        return;
+      }
+      if (UNCERTAIN_ASSISTANT_STATES.has(beforeStream.state)) {
+        setError(
+          "답변 요청의 전달 또는 저장 완료 여부를 확정할 수 없습니다. 같은 질문을 다시 보내지 않고 서버 조정 결과를 기다립니다.",
+        );
+        return;
+      }
+      if (SAFE_TERMINAL_ASSISTANT_STATES.has(beforeStream.state)) {
+        clearPendingAssistant();
+        setPending(null);
+        setError("답변 검증을 안전하게 완료하지 못했습니다. 기존 심사 결과는 변경되지 않았습니다.");
+        return;
+      }
       await experienceApi.streamAssistantEvents(jobId, (event) => {
+        if (target.runId !== activeRunRef.current) return;
         setEvents((previous) => previous.some((item) => item.sequence === event.sequence)
           ? previous
           : [...previous, event].sort((left, right) => left.sequence - right.sequence));
       }, controller.signal);
-      const current = await experienceApi.getAssistantJob(jobId);
+      const current = await experienceApi.getAssistantJob(jobId, targetConversation);
+      if (target.runId !== activeRunRef.current) return;
+      if (
+        current.review_run_id !== target.runId
+        || current.conversation_id !== target.conversationId
+        || current.request_binding_sha256 !== target.requestBindingSha256
+      ) {
+        clearPendingAssistant();
+        setPending(null);
+        setError("저장된 질문과 서버 답변 작업의 결박이 일치하지 않아 자동 복구를 중단했습니다.");
+        return;
+      }
       if (current.state === "succeeded") {
         if (targetConversation) await loadMessages(targetConversation);
         clearPendingAssistant();
         setPending(null);
-      } else if (TERMINAL_ASSISTANT_STATES.has(current.state)) {
+      } else if (UNCERTAIN_ASSISTANT_STATES.has(current.state)) {
+        setError(
+          "답변 요청의 전달 또는 저장 완료 여부를 확정할 수 없습니다. 같은 질문을 다시 보내지 않고 서버 조정 결과를 기다립니다.",
+        );
+      } else if (SAFE_TERMINAL_ASSISTANT_STATES.has(current.state)) {
         clearPendingAssistant();
         setPending(null);
         setError("답변 검증을 안전하게 완료하지 못했습니다. 기존 심사 결과는 변경되지 않았습니다.");
@@ -98,60 +157,118 @@ export function AssistantPage(): React.ReactElement {
       }
     } catch (reason) {
       if (!controller.signal.aborted) {
-        setError(reason instanceof Error ? reason.message : "AI 심사 도우미 연결이 끊겼습니다.");
+        setError(userFacingErrorMessage(reason, "AI 심사 도우미 연결이 끊겼습니다."));
       }
     }
   };
 
   useEffect(() => {
-    if (!selectedRun?.provider_result_sha256) {
+    abortRef.current?.abort();
+    setConversation(null);
+    setMessages([]);
+    setPending(null);
+    setEvents([]);
+    setElapsed(0);
+    setSubmitting(false);
+    setLoading(true);
+    setError(null);
+    if (!selectedRun?.provider_result_sha256 || !selectedRun.result_digest) {
       setLoading(false);
       return;
     }
+    const targetRun = selectedRun;
+    const targetResultSha256 = selectedRun.provider_result_sha256;
+    const targetEffectiveResultDigest = selectedRun.result_digest;
     let active = true;
     const load = async (): Promise<void> => {
       try {
-        const existing = await experienceApi.listConversations(selectedRun.review_run_id);
-        let target = existing.find(
-          (item) => item.bound_result_sha256 === selectedRun.provider_result_sha256,
+        if (!session) throw new Error("인증된 담당자 정보를 확인할 수 없습니다.");
+        const binding = {
+          reviewRunId: targetRun.review_run_id,
+          caseId: targetRun.case_id,
+          orgId: session.org_id,
+          resultSha256: targetResultSha256,
+          effectiveResultDigest: targetEffectiveResultDigest,
+        };
+        const existing = await experienceApi.listConversations(binding);
+        const restored = readPendingAssistant(session.org_id, session.subject);
+        if (restored !== null) setPending(restored);
+        const restoredForRun = restored?.runId === targetRun.review_run_id ? restored : null;
+        if (restored !== null && restoredForRun === null) {
+          setPending(restored);
+          setError(
+            "다른 심사 회차에서 확인 중인 답변 작업이 있습니다. 저장된 요청을 덮어쓰지 않고 해당 심사 회차에서 상태를 확인해야 합니다.",
+          );
+        }
+        let rejectedRestoredConversation = false;
+        let target = restoredForRun === null
+          ? undefined
+          : existing.find((item) => (
+              item.conversation_id === restoredForRun.conversationId
+              && item.review_run_id === targetRun.review_run_id
+              && item.case_id === targetRun.case_id
+              && item.org_id === session.org_id
+              && item.bound_result_sha256 === targetResultSha256
+              && item.bound_effective_result_digest === targetEffectiveResultDigest
+            ));
+        if (restoredForRun !== null && target === undefined) {
+          clearPendingAssistant();
+          rejectedRestoredConversation = true;
+        }
+        target ??= existing.find(
+          (item) => item.bound_result_sha256 === targetResultSha256,
         );
         if (!target) {
+          if (!canAskAssistant) {
+            if (active) {
+              setConversation(null);
+              setMessages([]);
+            }
+            return;
+          }
           target = await experienceApi.createConversation(
-            selectedRun.review_run_id,
-            selectedRun.provider_result_sha256!,
+            binding,
             derivedIdempotencyKey("conversation", [
-              selectedRun.review_run_id,
-              selectedRun.provider_result_sha256!,
+              targetRun.review_run_id,
+              targetResultSha256,
             ]),
           );
         }
         if (!active) return;
         setConversation(target);
         const loadedMessages = await loadMessages(target);
-        const restored = readPendingAssistant(session?.org_id, session?.subject);
-        if (active && restored?.runId === selectedRun.review_run_id && restored.conversationId === target.conversation_id) {
-          if (restored.jobId) {
-            void connectJob(restored, target);
+        if (rejectedRestoredConversation) {
+          setError("저장된 질문이 현재 심사 회차의 서버 대화에 속하지 않아 자동 복구를 중단했습니다.");
+        } else if (
+          active
+          && restoredForRun?.conversationId === target.conversation_id
+        ) {
+          if (restoredForRun.jobId) {
+            void connectJob(restoredForRun, target);
           } else {
             const trailingUserMessage = loadedMessages.at(-1);
             if (
               trailingUserMessage?.role === "user"
-              && trailingUserMessage.bound_result_sha256 === selectedRun.provider_result_sha256
+              && trailingUserMessage.bound_result_sha256 === targetResultSha256
               && derivedIdempotencyKey("assistant", [
                 target.conversation_id,
-                selectedRun.provider_result_sha256!,
+                targetResultSha256,
                 trailingUserMessage.parent_message_id ?? "",
                 trailingUserMessage.content,
-              ]) === restored.idempotencyKey
+              ]) === restoredForRun.idempotencyKey
             ) {
-              const response = await experienceApi.sendMessage(target.conversation_id, {
+              const response = await experienceApi.sendMessage(target, {
                 question: trailingUserMessage.content,
-                bound_result_sha256: selectedRun.provider_result_sha256!,
+                bound_result_sha256: targetResultSha256,
                 ...(trailingUserMessage.parent_message_id
                   ? { parent_message_id: trailingUserMessage.parent_message_id }
                   : {}),
-              }, restored.idempotencyKey);
-              const confirmed = { ...restored, jobId: response.job.assistant_job_id };
+              }, restoredForRun.idempotencyKey);
+              const confirmed = {
+                ...restoredForRun,
+                jobId: response.job.assistant_job_id,
+                requestBindingSha256: response.job.request_binding_sha256,
+              };
               writePendingAssistant(confirmed);
               if (active) void connectJob(confirmed, target);
             } else {
@@ -162,7 +279,7 @@ export function AssistantPage(): React.ReactElement {
           }
         }
       } catch (reason) {
-        if (active) setError(reason instanceof Error ? reason.message : "대화를 불러오지 못했습니다.");
+        if (active) setError(userFacingErrorMessage(reason, "대화를 불러오지 못했습니다."));
       } finally {
         if (active) setLoading(false);
       }
@@ -177,6 +294,7 @@ export function AssistantPage(): React.ReactElement {
     selectedRun?.provider_result_sha256,
     session?.org_id,
     session?.subject,
+    canAskAssistant,
   ]);
 
   useEffect(() => {
@@ -190,12 +308,35 @@ export function AssistantPage(): React.ReactElement {
   const ask = async (question: string): Promise<void> => {
     const clean = question.trim();
     if (!clean || !conversation || !selectedRun?.provider_result_sha256 || !session) return;
+    if (!canAskAssistant) {
+      setError("현재 계정은 조회 전용이므로 새 질문을 보낼 수 없습니다.");
+      return;
+    }
+    if (
+      conversation.review_run_id !== selectedRun.review_run_id
+      || conversation.bound_result_sha256 !== selectedRun.provider_result_sha256
+    ) {
+      setError("선택한 심사 회차와 대화가 일치하지 않아 질문을 보내지 않았습니다.");
+      return;
+    }
+    const globallyPending = readPendingAssistant(session.org_id, session.subject);
+    if (
+      globallyPending !== null
+      && (
+        globallyPending.runId !== selectedRun.review_run_id
+        || globallyPending.conversationId !== conversation.conversation_id
+      )
+    ) {
+      setPending(globallyPending);
+      setError("다른 심사 회차의 답변 확인이 끝나지 않아 새 질문을 보내지 않았습니다.");
+      return;
+    }
     setSubmitting(true);
     setError(null);
     setEvents([]);
     try {
       let currentMessages = messages;
-      const restored = readPendingAssistant(session.org_id, session.subject);
+      const restored = globallyPending;
       if (
         restored?.runId === selectedRun.review_run_id
         && restored.conversationId === conversation.conversation_id
@@ -215,19 +356,52 @@ export function AssistantPage(): React.ReactElement {
             trailingUserMessage.content,
           ]) === restored.idempotencyKey
         ) {
-          const recovered = await experienceApi.sendMessage(conversation.conversation_id, {
+          const recovered = await experienceApi.sendMessage(conversation, {
             question: trailingUserMessage.content,
             bound_result_sha256: selectedRun.provider_result_sha256,
             ...(trailingUserMessage.parent_message_id
               ? { parent_message_id: trailingUserMessage.parent_message_id }
               : {}),
           }, restored.idempotencyKey);
-          const confirmed = { ...restored, jobId: recovered.job.assistant_job_id };
+          const confirmed = {
+            ...restored,
+            jobId: recovered.job.assistant_job_id,
+            requestBindingSha256: recovered.job.request_binding_sha256,
+          };
           writePendingAssistant(confirmed);
           await connectJob(confirmed, conversation);
           return;
         }
-        clearPendingAssistant();
+        const parentMessage = currentMessages.at(-1);
+        const sameRequestKey = derivedIdempotencyKey("assistant", [
+          conversation.conversation_id,
+          selectedRun.provider_result_sha256,
+          parentMessage?.message_id ?? "",
+          clean,
+        ]);
+        if (sameRequestKey !== restored.idempotencyKey) {
+          setPending(restored);
+          setError(
+            "이전 질문의 전송 결과가 확인되지 않았습니다. 새 질문은 보내지 않고 이전과 같은 질문을 다시 입력해야 동일 요청 번호로 확인할 수 있습니다.",
+          );
+          return;
+        }
+        const recovered = await experienceApi.sendMessage(conversation, {
+          question: clean,
+          bound_result_sha256: selectedRun.provider_result_sha256,
+          ...(parentMessage ? { parent_message_id: parentMessage.message_id } : {}),
+        }, restored.idempotencyKey);
+        const confirmed = {
+          ...restored,
+          jobId: recovered.job.assistant_job_id,
+          requestBindingSha256: recovered.job.request_binding_sha256,
+        };
+        writePendingAssistant(confirmed);
+        setMessages((previous) => previous.some(
+          (item) => item.message_id === recovered.user_message.message_id,
+        ) ? previous : [...previous, recovered.user_message]);
+        await connectJob(confirmed, conversation);
+        return;
       }
       const parentMessage = currentMessages.at(-1);
       const idempotencyKey = derivedIdempotencyKey("assistant", [
@@ -242,12 +416,13 @@ export function AssistantPage(): React.ReactElement {
         runId: selectedRun.review_run_id,
         conversationId: conversation.conversation_id,
         jobId: null,
+        requestBindingSha256: null,
         idempotencyKey,
         startedAt: new Date().toISOString(),
       };
       writePendingAssistant(intent);
       setPending(intent);
-      const response = await experienceApi.sendMessage(conversation.conversation_id, {
+      const response = await experienceApi.sendMessage(conversation, {
         question: clean,
         bound_result_sha256: selectedRun.provider_result_sha256,
         ...(parentMessage ? { parent_message_id: parentMessage.message_id } : {}),
@@ -258,12 +433,13 @@ export function AssistantPage(): React.ReactElement {
       const target: PendingAssistant = {
         ...intent,
         jobId: response.job.assistant_job_id,
+        requestBindingSha256: response.job.request_binding_sha256,
       };
       writePendingAssistant(target);
       await connectJob(target, conversation);
     } catch (reason) {
-      setPending(null);
-      setError(reason instanceof Error ? reason.message : "질문을 전달하지 못했습니다.");
+      setPending(readPendingAssistant(session.org_id, session.subject));
+      setError(userFacingErrorMessage(reason, "질문을 전달하지 못했습니다."));
     } finally {
       setSubmitting(false);
     }
@@ -276,10 +452,31 @@ export function AssistantPage(): React.ReactElement {
     void ask(question);
   };
 
+  const conversationMatchesRun = Boolean(
+    conversation
+    && selectedRun
+    && conversation.review_run_id === selectedRun.review_run_id
+    && conversation.bound_result_sha256 === selectedRun.provider_result_sha256,
+  );
+  const visibleMessages = conversationMatchesRun ? messages : [];
+  const pendingMatchesConversation = Boolean(
+    pending
+    && conversation
+    && selectedRun
+    && pending.runId === selectedRun.review_run_id
+    && pending.conversationId === conversation.conversation_id,
+  );
+  const visiblePending = pendingMatchesConversation ? pending : null;
+  const pendingInAnotherRun = pending !== null && !pendingMatchesConversation;
+  const canRetryUnconfirmedQuestion = Boolean(
+    visiblePending
+    && visiblePending.jobId === null
+    && canAskAssistant,
+  );
   const suggestions = useMemo(() => {
-    const latestAnswer = [...messages].reverse().find((item) => item.answer)?.answer;
+    const latestAnswer = [...visibleMessages].reverse().find((item) => item.answer)?.answer;
     return latestAnswer?.suggested_questions.length ? latestAnswer.suggested_questions : INITIAL_QUESTIONS;
-  }, [messages]);
+  }, [visibleMessages]);
 
   if (!selectedRun?.provider_result_sha256) {
     return <div className="empty-business-state content-panel"><Icon name="assistant" /><h2>먼저 심사를 실행해 주십시오.</h2><p>AI 심사 도우미는 확정된 심사 결과와 법령 근거에 묶여 답변합니다.</p></div>;
@@ -299,24 +496,33 @@ export function AssistantPage(): React.ReactElement {
           </div>
           <div className="assistant-messages" aria-live="polite">
             {loading ? <p className="inline-loading">이전 대화를 불러오는 중입니다.</p> : null}
-            {!loading && messages.length === 0 ? <p className="assistant-empty">아래 추천 질문을 선택하거나 직접 질문하십시오.</p> : null}
-            {messages.map((message) => (
+            {!loading && !conversationMatchesRun && !canAskAssistant ? (
+              <p className="assistant-empty">이 심사 회차에 저장된 대화가 없습니다.</p>
+            ) : null}
+            {!loading && conversationMatchesRun && visibleMessages.length === 0 ? <p className="assistant-empty">아래 추천 질문을 선택하거나 직접 질문하십시오.</p> : null}
+            {visibleMessages.map((message) => (
               <MessageBubble
                 key={message.message_id}
                 caseId={caseDetail.case_id}
+                reviewRunId={selectedRun.review_run_id}
                 message={message}
               />
             ))}
-            {pending ? (
+            {visiblePending ? (
               <div className="assistant-thinking" data-testid="assistant-progress">
                 <span className="assistant-thinking__pulse" aria-hidden="true" />
                 <div><strong>{events.at(-1) ? assistantStageLabels[events.at(-1)!.stage_code] : "질문과 심사 근거를 연결하고 있습니다."}</strong><small>경과 {formatDuration(elapsed)} · 답변은 근거 검증이 끝난 뒤 표시합니다.</small></div>
               </div>
             ) : null}
+            {pendingInAnotherRun ? (
+              <p className="form-alert" role="alert">
+                다른 심사 회차의 답변 작업을 확인 중이므로 이 화면에서 새 질문을 보낼 수 없습니다.
+              </p>
+            ) : null}
           </div>
           <div className="suggested-questions" aria-label="추천 질문">
             {suggestions.slice(0, 3).map((question) => (
-              <button key={question} type="button" onClick={() => void ask(question)} disabled={submitting || pending !== null}>
+              <button key={question} type="button" onClick={() => void ask(question)} disabled={submitting || pending !== null || !conversationMatchesRun || !canAskAssistant}>
                 {question}<Icon name="arrow" />
               </button>
             ))}
@@ -330,14 +536,24 @@ export function AssistantPage(): React.ReactElement {
               maxLength={2_000}
               required
               placeholder="예: 왜 요건 증명서를 추가로 확인해야 합니까?"
-              disabled={submitting || pending !== null}
+              disabled={submitting || (pending !== null && !canRetryUnconfirmedQuestion) || !conversationMatchesRun || !canAskAssistant}
               value={draft}
               onChange={(event) => setDraft(event.currentTarget.value)}
             />
-            <button className="commercial-button commercial-button--primary" type="submit" disabled={submitting || pending !== null}>
-              질문하기
+            <button className="commercial-button commercial-button--primary" type="submit" disabled={submitting || (pending !== null && !canRetryUnconfirmedQuestion) || !conversationMatchesRun || !canAskAssistant}>
+              {canRetryUnconfirmedQuestion ? "같은 질문 다시 확인" : "질문하기"}
             </button>
           </form>
+          {canRetryUnconfirmedQuestion ? (
+            <p className="read-only-notice" role="note">
+              최초 전송 응답을 받지 못했습니다. 이전과 같은 질문만 다시 입력하면 저장된 동일 요청 번호로 처리 여부를 확인합니다.
+            </p>
+          ) : null}
+          {!canAskAssistant ? (
+            <p className="read-only-notice" role="note">
+              현재 계정은 조회 전용입니다. 저장된 대화와 검증된 답변만 확인할 수 있습니다.
+            </p>
+          ) : null}
           {error ? <p className="form-alert" role="alert">{error}</p> : null}
         </section>
         <aside className="assistant-guide content-panel">
@@ -357,9 +573,11 @@ export function AssistantPage(): React.ReactElement {
 
 function MessageBubble({
   caseId,
+  reviewRunId,
   message,
 }: {
   caseId: string;
+  reviewRunId: string;
   message: AssistantMessage;
 }): React.ReactElement {
   if (message.role === "user") {
@@ -381,6 +599,7 @@ function MessageBubble({
             <CaseCitationLink
               key={citation.reference_id}
               caseId={caseId}
+              reviewRunId={reviewRunId}
               citation={citation}
             />
           ))}
@@ -421,6 +640,16 @@ function readPendingAssistant(
       || typeof value.actorId !== "string"
       || typeof value.conversationId !== "string"
       || (value.jobId !== null && typeof value.jobId !== "string")
+      || (
+        value.requestBindingSha256 !== null
+        && (
+          typeof value.requestBindingSha256 !== "string"
+          || !/^[a-f0-9]{64}$/u.test(value.requestBindingSha256)
+        )
+      )
+      || (
+        (value.jobId === null) !== (value.requestBindingSha256 === null)
+      )
       || typeof value.idempotencyKey !== "string"
       || !/^assistant-[a-f0-9]{64}$/u.test(value.idempotencyKey)
       || typeof value.startedAt !== "string"
@@ -437,6 +666,7 @@ function readPendingAssistant(
       runId: value.runId,
       conversationId: value.conversationId,
       jobId: value.jobId ?? null,
+      requestBindingSha256: value.requestBindingSha256 ?? null,
       idempotencyKey: value.idempotencyKey,
       startedAt: value.startedAt,
     };

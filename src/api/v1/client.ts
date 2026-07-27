@@ -54,6 +54,7 @@ import type {
   UatEvidenceTrace,
   VerificationAssertionCreate,
 } from "./types";
+import { stableApiErrorMessage, technicalApiErrorDetail } from "../user-facing-errors";
 
 const API_BASE = "/api/v1" as const;
 const MAX_JSON_BODY_BYTES = 4 * 1024 * 1024;
@@ -65,14 +66,22 @@ const MAX_TOTAL_DOCUMENT_RECORDS = MAX_PRIMARY_DOCUMENTS + MAX_SUPPORTING_DOCUME
 const MAX_PRIMARY_TEXT_CHARACTERS = 500_000;
 
 export class ApiError extends Error {
+  readonly technicalDetail: string;
+
   constructor(
-    message: string,
+    detail: string,
     readonly status: number,
     readonly code?: string,
     readonly requestId?: string,
   ) {
-    super(message);
+    super(stableApiErrorMessage(status, code));
     this.name = "ApiError";
+    this.technicalDetail = technicalApiErrorDetail({
+      detail,
+      status,
+      ...(code ? { code } : {}),
+      ...(requestId ? { requestId } : {}),
+    });
   }
 }
 
@@ -194,6 +203,20 @@ export class ApiClient {
       this.assertIdentity(item.case_id, caseId, "Supporting document Case");
       this.assertIdentity(item.document_id, payload.document_id, "Supporting document");
       this.assertOrg(item.org_id, "Supporting document");
+      if (
+        item.document_code !== payload.document_code
+        || item.issuer !== payload.issuer
+        || item.document_number !== payload.document_number
+        || item.issued_on !== payload.issued_on
+        || item.valid_until !== (payload.valid_until ?? null)
+        || item.source_sha256 !== payload.source_sha256
+        || !sameStringSet(item.subject_item_ids, payload.subject_item_ids)
+        || !sameStringSet(item.hs_codes, payload.hs_codes ?? [])
+      ) {
+        throw new ContractError(
+          "Supporting document response does not match the submitted verification metadata",
+        );
+      }
       return item;
     });
   }
@@ -735,6 +758,15 @@ function decodeJobResponse(value: unknown): JobRecord {
 
 function assertSameValue(values: string[], message: string): void {
   if (new Set(values).size > 1) throw new ContractError(message);
+}
+
+function sameStringSet(left: string[], right: string[]): boolean {
+  const sortedLeft = [...left].sort();
+  const sortedRight = [...right].sort();
+  return (
+    sortedLeft.length === sortedRight.length
+    && sortedLeft.every((value, index) => value === sortedRight[index])
+  );
 }
 
 function validateEventSequence(events: ReviewStageEvent[], jobId: string): void {

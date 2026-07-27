@@ -1,7 +1,7 @@
 {
   "contract": "customs-backend-public-api",
   "version": "1.0",
-  "openapi_sha256": "e5a87ba6c96c7e0f89fd735e5398c72bc7bcec93c9af97f0dabfde7b020d2993",
-  "generated_types_sha256": "c96b2429066f91311c9af9d40b53343b76c376d9074c33c796825d45dd42a2ee",
-  "operation_count": 41
+  "openapi_sha256": "022f9fe221a3673e20593f55b61e90d7872d2fa2ff1d168055dc0daed95eb4c3",
+  "generated_types_sha256": "aa2323c0dc89576325f18afca7c9668e7240452e09316d307c73df59190f34e1",
+  "operation_count": 42
 }

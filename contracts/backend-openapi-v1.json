@@ -14,286 +14,6 @@
         "title": "AgentCallState",
         "type": "string"
       },
-      "AgentReviewResultV3": {
-        "additionalProperties": false,
-        "description": "Strict top-level consumer for the provider-owned V3 wire.\n\nComplex V2-compatible details remain opaque JSON, but every provider top-level\nmember is enumerated and additional members are rejected.  The provider's\ncanonical result hash is independently recomputed before any field is used.",
-        "properties": {
-          "action_trace": {
-            "items": {
-              "additionalProperties": true,
-              "type": "object"
-            },
-            "title": "Action Trace",
-            "type": "array"
-          },
-          "assessment": {
-            "$ref": "#/components/schemas/Assessment"
-          },
-          "assurance_level": {
-            "$ref": "#/components/schemas/AssuranceLevel"
-          },
-          "audit_trail": {
-            "items": {
-              "additionalProperties": true,
-              "type": "object"
-            },
-            "title": "Audit Trail",
-            "type": "array"
-          },
-          "case_id": {
-            "maxLength": 128,
-            "minLength": 1,
-            "title": "Case Id",
-            "type": "string"
-          },
-          "completion_eligibility": {
-            "$ref": "#/components/schemas/CompletionEligibility"
-          },
-          "document_results": {
-            "items": {
-              "additionalProperties": true,
-              "type": "object"
-            },
-            "title": "Document Results",
-            "type": "array"
-          },
-          "execution_status": {
-            "$ref": "#/components/schemas/ExecutionStatus"
-          },
-          "fact_ledger": {
-            "additionalProperties": true,
-            "title": "Fact Ledger",
-            "type": "object"
-          },
-          "input_manifest_sha256": {
-            "pattern": "^[a-f0-9]{64}$",
-            "title": "Input Manifest Sha256",
-            "type": "string"
-          },
-          "jurisdiction": {
-            "const": "KR",
-            "title": "Jurisdiction",
-            "type": "string"
-          },
-          "knowledge_snapshot_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Knowledge Snapshot Id"
-          },
-          "model_calls": {
-            "items": {
-              "additionalProperties": true,
-              "type": "object"
-            },
-            "title": "Model Calls",
-            "type": "array"
-          },
-          "model_conflicts": {
-            "items": {
-              "additionalProperties": true,
-              "type": "object"
-            },
-            "title": "Model Conflicts",
-            "type": "array"
-          },
-          "model_errors": {
-            "items": {
-              "additionalProperties": true,
-              "type": "object"
-            },
-            "title": "Model Errors",
-            "type": "array"
-          },
-          "narrative_report": {
-            "additionalProperties": true,
-            "title": "Narrative Report",
-            "type": "object"
-          },
-          "observations": {
-            "items": {
-              "additionalProperties": true,
-              "type": "object"
-            },
-            "title": "Observations",
-            "type": "array"
-          },
-          "rag_evidence": {
-            "items": {
-              "additionalProperties": true,
-              "type": "object"
-            },
-            "title": "Rag Evidence",
-            "type": "array"
-          },
-          "regulatory_findings": {
-            "items": {
-              "additionalProperties": true,
-              "type": "object"
-            },
-            "title": "Regulatory Findings",
-            "type": "array"
-          },
-          "report": {
-            "additionalProperties": true,
-            "title": "Report",
-            "type": "object"
-          },
-          "required_actions": {
-            "items": {
-              "$ref": "#/components/schemas/RequiredAction"
-            },
-            "maxItems": 100,
-            "title": "Required Actions",
-            "type": "array"
-          },
-          "requires_human_review": {
-            "title": "Requires Human Review",
-            "type": "boolean"
-          },
-          "result_sha256": {
-            "pattern": "^[a-f0-9]{64}$",
-            "title": "Result Sha256",
-            "type": "string"
-          },
-          "retrieval_coverage": {
-            "enum": [
-              "complete",
-              "partial",
-              "unknown"
-            ],
-            "title": "Retrieval Coverage",
-            "type": "string"
-          },
-          "retrieval_errors": {
-            "items": {
-              "additionalProperties": true,
-              "type": "object"
-            },
-            "title": "Retrieval Errors",
-            "type": "array"
-          },
-          "retrieval_request": {
-            "anyOf": [
-              {
-                "additionalProperties": true,
-                "type": "object"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Retrieval Request"
-          },
-          "retrieval_results": {
-            "items": {
-              "additionalProperties": true,
-              "type": "object"
-            },
-            "title": "Retrieval Results",
-            "type": "array"
-          },
-          "retrieval_status": {
-            "enum": [
-              "ok",
-              "partial",
-              "failed"
-            ],
-            "title": "Retrieval Status",
-            "type": "string"
-          },
-          "review_as_of": {
-            "format": "date",
-            "title": "Review As Of",
-            "type": "string"
-          },
-          "review_disposition": {
-            "$ref": "#/components/schemas/ReviewDisposition"
-          },
-          "review_gaps": {
-            "items": {
-              "$ref": "#/components/schemas/ReviewGap"
-            },
-            "maxItems": 1000,
-            "title": "Review Gaps",
-            "type": "array"
-          },
-          "review_plan": {
-            "additionalProperties": true,
-            "title": "Review Plan",
-            "type": "object"
-          },
-          "review_run_id": {
-            "maxLength": 128,
-            "minLength": 1,
-            "title": "Review Run Id",
-            "type": "string"
-          },
-          "runtime_release": {
-            "$ref": "#/components/schemas/ReleaseIdentityV3"
-          },
-          "schema_version": {
-            "const": "3.0",
-            "title": "Schema Version",
-            "type": "string"
-          },
-          "status": {
-            "enum": [
-              "completed",
-              "needs_review",
-              "blocked"
-            ],
-            "title": "Status",
-            "type": "string"
-          },
-          "trade_type": {
-            "enum": [
-              "import",
-              "export"
-            ],
-            "title": "Trade Type",
-            "type": "string"
-          },
-          "validation_issues": {
-            "items": {
-              "additionalProperties": true,
-              "type": "object"
-            },
-            "title": "Validation Issues",
-            "type": "array"
-          }
-        },
-        "required": [
-          "schema_version",
-          "case_id",
-          "review_run_id",
-          "review_as_of",
-          "trade_type",
-          "jurisdiction",
-          "status",
-          "requires_human_review",
-          "retrieval_status",
-          "retrieval_coverage",
-          "report",
-          "execution_status",
-          "assessment",
-          "review_disposition",
-          "assurance_level",
-          "completion_eligibility",
-          "fact_ledger",
-          "review_plan",
-          "runtime_release",
-          "input_manifest_sha256",
-          "result_sha256"
-        ],
-        "title": "AgentReviewResultV3",
-        "type": "object"
-      },
       "AgentUatCapabilityAttestationV1": {
         "additionalProperties": false,
         "properties": {
@@ -431,6 +151,54 @@
         "title": "AgentUatCapabilityAttestationV1",
         "type": "object"
       },
+      "AnswerClaimSelectionsV1": {
+        "additionalProperties": false,
+        "description": "Canonical claim IDs selected for each user-visible answer area.",
+        "properties": {
+          "direct_answer": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 1,
+            "title": "Direct Answer",
+            "type": "array"
+          },
+          "evidence_meaning": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 40,
+            "title": "Evidence Meaning",
+            "type": "array"
+          },
+          "explanation": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 40,
+            "title": "Explanation",
+            "type": "array"
+          },
+          "impact": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 40,
+            "title": "Impact",
+            "type": "array"
+          },
+          "next_steps": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 40,
+            "title": "Next Steps",
+            "type": "array"
+          }
+        },
+        "title": "AnswerClaimSelectionsV1",
+        "type": "object"
+      },
       "AnswerScopeClassificationAuditV1": {
         "additionalProperties": false,
         "properties": {
@@ -454,7 +222,16 @@
                 "bill_of_lading",
                 "certificate_of_origin",
                 "hsk",
-                "customs_review"
+                "hs_hsk_comparison",
+                "customs_review",
+                "import_declaration",
+                "customs_valuation",
+                "duties_and_taxes",
+                "free_trade_agreement",
+                "import_requirements",
+                "inspection_and_supplement",
+                "document_correction",
+                "customs_broker"
               ],
               "type": "string"
             },
@@ -579,6 +356,9 @@
             "title": "Citations",
             "type": "array"
           },
+          "claim_selections": {
+            "$ref": "#/components/schemas/AnswerClaimSelectionsV1"
+          },
           "direct_answer": {
             "maxLength": 4000,
             "minLength": 1,
@@ -628,6 +408,11 @@
             "title": "Next Steps",
             "type": "array"
           },
+          "request_sha256": {
+            "pattern": "^[a-f0-9]{64}$",
+            "title": "Request Sha256",
+            "type": "string"
+          },
           "schema_version": {
             "const": "2.0",
             "default": "2.0",
@@ -670,6 +455,7 @@
           "direct_answer",
           "generation_audit",
           "verification_audit",
+          "request_sha256",
           "answer_sha256"
         ],
         "title": "AssistantAnswerV2",
@@ -773,6 +559,23 @@
         "title": "AssistantJobEnqueueResponse",
         "type": "object"
       },
+      "AssistantJobListResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/AssistantJobView"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "AssistantJobListResponse",
+        "type": "object"
+      },
       "AssistantJobState": {
         "enum": [
           "queued",
@@ -835,6 +638,11 @@
             "title": "Events",
             "type": "array"
           },
+          "request_binding_sha256": {
+            "pattern": "^[a-f0-9]{64}$",
+            "title": "Request Binding Sha256",
+            "type": "string"
+          },
           "review_run_id": {
             "title": "Review Run Id",
             "type": "string"
@@ -850,6 +658,7 @@
         },
         "required": [
           "assistant_job_id",
+          "request_binding_sha256",
           "conversation_id",
           "review_run_id",
           "case_id",
@@ -1053,6 +862,7 @@
               "answer_planning",
               "answer_composition",
               "grounding_verification",
+              "result_validation",
               "persistence",
               "completed",
               "failed"
@@ -2145,6 +1955,23 @@
             "title": "Status",
             "type": "string"
           },
+          "verified_content_sha256": {
+            "pattern": "^[a-f0-9]{64}$",
+            "title": "Verified Content Sha256",
+            "type": "string"
+          },
+          "verifier_context_sha256": {
+            "anyOf": [
+              {
+                "pattern": "^[a-f0-9]{64}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Verifier Context Sha256"
+          },
           "verifier_model_id": {
             "anyOf": [
               {
@@ -2175,7 +2002,8 @@
           "entailment_verifier",
           "verifier_prompt_sha256",
           "verifier_schema_sha256",
-          "checked_statement_count"
+          "checked_statement_count",
+          "verified_content_sha256"
         ],
         "title": "ExperienceVerificationAuditV1",
         "type": "object"
@@ -2928,247 +2756,60 @@
         "title": "PublicDocumentRecord",
         "type": "object"
       },
-      "ReleaseIdentityV3": {
+      "PublicReviewExperienceV1": {
         "additionalProperties": false,
+        "description": "Browser-safe projection; the full canonical Agent result remains private.",
         "properties": {
-          "agent_code_snapshot_sha256": {
+          "agent_envelope_sha256": {
             "pattern": "^[a-f0-9]{64}$",
-            "title": "Agent Code Snapshot Sha256",
+            "title": "Agent Envelope Sha256",
             "type": "string"
           },
-          "agent_git_sha": {
-            "anyOf": [
-              {
-                "pattern": "^[a-f0-9]{40}$",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Agent Git Sha"
-          },
-          "agent_package_version": {
-            "maxLength": 64,
-            "minLength": 1,
-            "title": "Agent Package Version",
-            "type": "string"
-          },
-          "agent_source_snapshot_sha256": {
-            "anyOf": [
-              {
-                "pattern": "^[a-f0-9]{64}$",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Agent Source Snapshot Sha256"
-          },
-          "assertion_trust_store_sha256": {
+          "bound_effective_result_digest": {
             "pattern": "^[a-f0-9]{64}$",
-            "title": "Assertion Trust Store Sha256",
+            "title": "Bound Effective Result Digest",
             "type": "string"
           },
-          "assertion_trust_store_state": {
-            "enum": [
-              "unreleased",
-              "active"
-            ],
-            "title": "Assertion Trust Store State",
-            "type": "string"
-          },
-          "chat_prompt_sha256": {
+          "bound_provider_result_sha256": {
             "pattern": "^[a-f0-9]{64}$",
-            "title": "Chat Prompt Sha256",
+            "title": "Bound Provider Result Sha256",
             "type": "string"
           },
-          "chat_schema_sha256": {
+          "capability_attestation": {
+            "$ref": "#/components/schemas/AgentUatCapabilityAttestationV1"
+          },
+          "public_experience_sha256": {
             "pattern": "^[a-f0-9]{64}$",
-            "title": "Chat Schema Sha256",
+            "title": "Public Experience Sha256",
             "type": "string"
           },
-          "coordinator_prompt_sha256": {
-            "pattern": "^[a-f0-9]{64}$",
-            "title": "Coordinator Prompt Sha256",
+          "schema_version": {
+            "const": "1.0",
+            "default": "1.0",
+            "title": "Schema Version",
             "type": "string"
           },
-          "coordinator_schema_sha256": {
-            "pattern": "^[a-f0-9]{64}$",
-            "title": "Coordinator Schema Sha256",
-            "type": "string"
+          "user_action_events": {
+            "items": {
+              "$ref": "#/components/schemas/UserActionEventV1"
+            },
+            "maxItems": 100,
+            "title": "User Action Events",
+            "type": "array"
           },
-          "evidence_runtime_v3_sha256": {
-            "anyOf": [
-              {
-                "pattern": "^[a-f0-9]{64}$",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Evidence Runtime V3 Sha256"
-          },
-          "evidence_snapshot_id": {
-            "anyOf": [
-              {
-                "maxLength": 256,
-                "minLength": 1,
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Evidence Snapshot Id"
-          },
-          "extraction_prompt_sha256": {
-            "pattern": "^[a-f0-9]{64}$",
-            "title": "Extraction Prompt Sha256",
-            "type": "string"
-          },
-          "extraction_schema_sha256": {
-            "pattern": "^[a-f0-9]{64}$",
-            "title": "Extraction Schema Sha256",
-            "type": "string"
-          },
-          "kill_switch_active": {
-            "title": "Kill Switch Active",
-            "type": "boolean"
-          },
-          "model_id": {
-            "maxLength": 128,
-            "minLength": 1,
-            "title": "Model Id",
-            "type": "string"
-          },
-          "model_revision": {
-            "anyOf": [
-              {
-                "maxLength": 128,
-                "minLength": 1,
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Model Revision"
-          },
-          "narrative_prompt_sha256": {
-            "pattern": "^[a-f0-9]{64}$",
-            "title": "Narrative Prompt Sha256",
-            "type": "string"
-          },
-          "narrative_schema_sha256": {
-            "pattern": "^[a-f0-9]{64}$",
-            "title": "Narrative Schema Sha256",
-            "type": "string"
-          },
-          "policy_id": {
-            "maxLength": 128,
-            "minLength": 1,
-            "title": "Policy Id",
-            "type": "string"
-          },
-          "release_profile_evaluation_report_sha256": {
-            "anyOf": [
-              {
-                "pattern": "^[a-f0-9]{64}$",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Release Profile Evaluation Report Sha256"
-          },
-          "release_profile_id": {
-            "maxLength": 256,
-            "minLength": 1,
-            "title": "Release Profile Id",
-            "type": "string"
-          },
-          "release_profile_sha256": {
-            "anyOf": [
-              {
-                "pattern": "^[a-f0-9]{64}$",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Release Profile Sha256"
-          },
-          "release_profile_state": {
-            "enum": [
-              "unreleased",
-              "approved"
-            ],
-            "title": "Release Profile State",
-            "type": "string"
-          },
-          "release_profile_subject_sha256": {
-            "anyOf": [
-              {
-                "pattern": "^[a-f0-9]{64}$",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Release Profile Subject Sha256"
-          },
-          "result_schema_sha256": {
-            "pattern": "^[a-f0-9]{64}$",
-            "title": "Result Schema Sha256",
-            "type": "string"
-          },
-          "reviewer_trust_store_sha256": {
-            "anyOf": [
-              {
-                "pattern": "^[a-f0-9]{64}$",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Reviewer Trust Store Sha256"
-          },
-          "tool_registry_id": {
-            "maxLength": 128,
-            "minLength": 1,
-            "title": "Tool Registry Id",
-            "type": "string"
+          "user_presentation": {
+            "$ref": "#/components/schemas/GroundedPresentationV1"
           }
         },
         "required": [
-          "agent_package_version",
-          "agent_code_snapshot_sha256",
-          "model_id",
-          "extraction_prompt_sha256",
-          "extraction_schema_sha256",
-          "coordinator_prompt_sha256",
-          "narrative_prompt_sha256",
-          "chat_prompt_sha256",
-          "coordinator_schema_sha256",
-          "narrative_schema_sha256",
-          "chat_schema_sha256",
-          "result_schema_sha256",
-          "policy_id",
-          "tool_registry_id",
-          "assertion_trust_store_sha256",
-          "assertion_trust_store_state",
-          "release_profile_id",
-          "release_profile_state",
-          "kill_switch_active"
+          "bound_provider_result_sha256",
+          "bound_effective_result_digest",
+          "user_presentation",
+          "capability_attestation",
+          "agent_envelope_sha256",
+          "public_experience_sha256"
         ],
-        "title": "ReleaseIdentityV3",
+        "title": "PublicReviewExperienceV1",
         "type": "object"
       },
       "RequiredAction": {
@@ -3308,100 +2949,6 @@
         "title": "ReviewEta",
         "type": "object"
       },
-      "ReviewExperienceEnvelopeV1": {
-        "additionalProperties": false,
-        "properties": {
-          "canonical_result": {
-            "$ref": "#/components/schemas/AgentReviewResultV3"
-          },
-          "capability_attestation": {
-            "$ref": "#/components/schemas/AgentUatCapabilityAttestationV1"
-          },
-          "envelope_sha256": {
-            "pattern": "^[a-f0-9]{64}$",
-            "title": "Envelope Sha256",
-            "type": "string"
-          },
-          "schema_version": {
-            "const": "1.0",
-            "default": "1.0",
-            "title": "Schema Version",
-            "type": "string"
-          },
-          "user_action_events": {
-            "items": {
-              "$ref": "#/components/schemas/UserActionEventV1"
-            },
-            "maxItems": 100,
-            "title": "User Action Events",
-            "type": "array"
-          },
-          "user_presentation": {
-            "$ref": "#/components/schemas/GroundedPresentationV1"
-          }
-        },
-        "required": [
-          "canonical_result",
-          "user_presentation",
-          "capability_attestation",
-          "envelope_sha256"
-        ],
-        "title": "ReviewExperienceEnvelopeV1",
-        "type": "object"
-      },
-      "ReviewGap": {
-        "additionalProperties": false,
-        "properties": {
-          "gap_id": {
-            "pattern": "^gap_[a-f0-9]{64}$",
-            "title": "Gap Id",
-            "type": "string"
-          },
-          "gap_type": {
-            "enum": [
-              "field_uncertainty",
-              "validation_issue",
-              "regulatory_finding",
-              "evidence_incomplete",
-              "human_approval_required",
-              "release_gate"
-            ],
-            "title": "Gap Type",
-            "type": "string"
-          },
-          "reason_code": {
-            "maxLength": 128,
-            "minLength": 1,
-            "title": "Reason Code",
-            "type": "string"
-          },
-          "source_reference_ids": {
-            "items": {
-              "type": "string"
-            },
-            "maxItems": 100,
-            "title": "Source Reference Ids",
-            "type": "array"
-          },
-          "status": {
-            "default": "open",
-            "enum": [
-              "open",
-              "resolved",
-              "deferred"
-            ],
-            "title": "Status",
-            "type": "string"
-          }
-        },
-        "required": [
-          "gap_id",
-          "gap_type",
-          "reason_code"
-        ],
-        "title": "ReviewGap",
-        "type": "object"
-      },
       "ReviewRunListResponse": {
         "properties": {
           "items": {
@@ -3440,6 +2987,20 @@
           "assurance_level": {
             "$ref": "#/components/schemas/AssuranceLevel"
           },
+          "attempted_retrieval_methods": {
+            "items": {
+              "enum": [
+                "exact_hs",
+                "dense",
+                "bm25",
+                "graph"
+              ],
+              "type": "string"
+            },
+            "maxItems": 4,
+            "title": "Attempted Retrieval Methods",
+            "type": "array"
+          },
           "auto_completion_profile": {
             "$ref": "#/components/schemas/AutoCompletionProfileBinding"
           },
@@ -3463,6 +3024,34 @@
           "created_by": {
             "title": "Created By",
             "type": "string"
+          },
+          "evidence_data_source": {
+            "default": "UNATTESTED",
+            "enum": [
+              "UNATTESTED",
+              "ACTUAL_POSTGRESQL_QDRANT_NEO4J_READ_ONLY"
+            ],
+            "title": "Evidence Data Source",
+            "type": "string"
+          },
+          "evidence_profile": {
+            "default": "unknown",
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Evidence Profile",
+            "type": "string"
+          },
+          "evidence_request_id": {
+            "anyOf": [
+              {
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Evidence Request Id"
           },
           "execution_status": {
             "$ref": "#/components/schemas/ExecutionStatus"
@@ -3495,6 +3084,20 @@
             "additionalProperties": true,
             "title": "Narrative Report",
             "type": "object"
+          },
+          "observed_retrieval_methods": {
+            "items": {
+              "enum": [
+                "exact_hs",
+                "dense",
+                "bm25",
+                "graph"
+              ],
+              "type": "string"
+            },
+            "maxItems": 4,
+            "title": "Observed Retrieval Methods",
+            "type": "array"
           },
           "org_id": {
             "title": "Org Id",
@@ -3538,6 +3141,11 @@
             "title": "Result Digest",
             "type": "string"
           },
+          "retrieval_execution_attested": {
+            "default": false,
+            "title": "Retrieval Execution Attested",
+            "type": "boolean"
+          },
           "review_as_of": {
             "anyOf": [
               {
@@ -3563,6 +3171,20 @@
             },
             "maxItems": 64,
             "title": "Review Stage Trace",
+            "type": "array"
+          },
+          "successful_retrieval_methods": {
+            "items": {
+              "enum": [
+                "exact_hs",
+                "dense",
+                "bm25",
+                "graph"
+              ],
+              "type": "string"
+            },
+            "maxItems": 4,
+            "title": "Successful Retrieval Methods",
             "type": "array"
           },
           "trade_type": {
@@ -8799,6 +8421,130 @@
         "summary": "Get Uat Evidence Trace Endpoint"
       }
     },
+    "/api/v2/assistant/conversations/{conversation_id}/jobs": {
+      "get": {
+        "operationId": "list_assistant_jobs_endpoint_api_v2_assistant_conversations__conversation_id__jobs_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "conversation_id",
+            "required": true,
+            "schema": {
+              "title": "Conversation Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AssistantJobListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetailsV1"
+                }
+              }
+            },
+            "description": "Problem Details V1 fail-closed response."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetailsV1"
+                }
+              }
+            },
+            "description": "Problem Details V1 fail-closed response."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetailsV1"
+                }
+              }
+            },
+            "description": "Problem Details V1 fail-closed response."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetailsV1"
+                }
+              }
+            },
+            "description": "Problem Details V1 fail-closed response."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetailsV1"
+                }
+              }
+            },
+            "description": "Problem Details V1 fail-closed response."
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetailsV1"
+                }
+              }
+            },
+            "description": "Problem Details V1 fail-closed response."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetailsV1"
+                }
+              }
+            },
+            "description": "Problem Details V1 fail-closed response."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetailsV1"
+                }
+              }
+            },
+            "description": "Problem Details V1 fail-closed response."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetailsV1"
+                }
+              }
+            },
+            "description": "Problem Details V1 fail-closed response."
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Assistant Jobs Endpoint"
+      }
+    },
     "/api/v2/assistant/conversations/{conversation_id}/messages": {
       "get": {
         "operationId": "list_assistant_messages_endpoint_api_v2_assistant_conversations__conversation_id__messages_get",
@@ -10012,7 +9758,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ReviewExperienceEnvelopeV1"
+                  "$ref": "#/components/schemas/PublicReviewExperienceV1"
                 }
               }
             },

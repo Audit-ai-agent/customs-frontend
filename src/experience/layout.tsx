@@ -1,16 +1,79 @@
-import { useEffect, useState, type PropsWithChildren } from "react";
-import { Link, NavLink, useLocation, useNavigate, useParams } from "react-router";
+import { useEffect, useRef, useState, type PropsWithChildren } from "react";
+import { Link, NavLink, useLocation, useNavigate } from "react-router";
 import { useWorkbench } from "./context";
 import { Icon } from "./icons";
-import { caseStatusLabels, formatKoreanDate } from "./labels";
+import {
+  caseStatusLabels,
+  formatKoreanDate,
+  isLocalUatReference,
+} from "./labels";
+
+const roleLabels = {
+  reviewer: "심사 담당자",
+  approver: "승인 담당자",
+  auditor: "감사 조회 담당자",
+  admin: "관리자",
+} as const;
 
 export function ApplicationFrame({ children }: PropsWithChildren): React.ReactElement {
   const { cases, session, metadata, logout } = useWorkbench();
   const [navigationOpen, setNavigationOpen] = useState(false);
   const [technicalOpen, setTechnicalOpen] = useState(false);
+  const technicalTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const technicalDrawerRef = useRef<HTMLElement | null>(null);
   const location = useLocation();
   const navigate = useNavigate();
-  const selectedCaseId = useParams().caseId;
+  const selectedCaseId = caseIdFromPath(location.pathname);
+  const selectedCase = cases.find((item) => item.case_id === selectedCaseId);
+
+  useEffect(() => {
+    if (!technicalOpen) return;
+    const drawer = technicalDrawerRef.current;
+    if (!drawer) return;
+    const previouslyFocused = document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : technicalTriggerRef.current;
+    const focusableSelector = [
+      "button:not([disabled])",
+      "a[href]",
+      "input:not([disabled])",
+      "select:not([disabled])",
+      "textarea:not([disabled])",
+      "[tabindex]:not([tabindex='-1'])",
+    ].join(",");
+    const focusable = (): HTMLElement[] => (
+      [...drawer.querySelectorAll<HTMLElement>(focusableSelector)]
+    );
+    focusable()[0]?.focus();
+    const handleKeyDown = (event: KeyboardEvent): void => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setTechnicalOpen(false);
+        return;
+      }
+      if (event.key !== "Tab") return;
+      const targets = focusable();
+      if (targets.length === 0) {
+        event.preventDefault();
+        drawer.focus();
+        return;
+      }
+      const first = targets[0]!;
+      const last = targets.at(-1)!;
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("keydown", handleKeyDown);
+      previouslyFocused?.focus();
+    };
+  }, [technicalOpen]);
 
   if (!session) return <>{children}</>;
   return (
@@ -31,8 +94,8 @@ export function ApplicationFrame({ children }: PropsWithChildren): React.ReactEl
         </div>
         <div className="commercial-user">
           <span>
-            <strong>{session.subject}</strong>
-            <small>{session.roles.includes("approver") ? "승인 담당자" : "심사 담당자"}</small>
+            <strong>로그인 사용자</strong>
+            <small>{session.roles.map((role) => roleLabels[role]).join(" · ")}</small>
           </span>
           <button className="icon-button" type="button" onClick={() => void logout()} aria-label="로그아웃">
             <Icon name="logout" />
@@ -53,6 +116,7 @@ export function ApplicationFrame({ children }: PropsWithChildren): React.ReactEl
         <strong>내부 사용자 검증용</strong>
         <span>텍스트 문서만 지원하며, 법적 통관 승인 결과가 아닙니다.</span>
         <button
+          ref={technicalTriggerRef}
           type="button"
           className="uat-boundary__details"
           aria-expanded={technicalOpen}
@@ -62,11 +126,19 @@ export function ApplicationFrame({ children }: PropsWithChildren): React.ReactEl
         </button>
       </aside>
       {technicalOpen ? (
-        <aside className="technical-drawer" role="dialog" aria-label="검증 정보" data-testid="technical-drawer">
+        <aside
+          ref={technicalDrawerRef}
+          className="technical-drawer"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="technical-drawer-title"
+          data-testid="technical-drawer"
+          tabIndex={-1}
+        >
           <div className="technical-drawer__heading">
             <div>
               <p className="overline">검증 환경 상세</p>
-              <h2>이 실행 환경이 확인하는 범위</h2>
+              <h2 id="technical-drawer-title">이 실행 환경이 확인하는 범위</h2>
             </div>
             <button className="icon-button" type="button" aria-label="검증 정보 닫기" onClick={() => setTechnicalOpen(false)}>
               <Icon name="close" />
@@ -82,6 +154,12 @@ export function ApplicationFrame({ children }: PropsWithChildren): React.ReactEl
             <div><dt>상세 AI 설명</dt><dd>{metadata?.enhanced_agent_experience ? "활성" : "비활성"}</dd></div>
             <div><dt>제한형 추가 조사</dt><dd>{metadata?.uat_adaptive_active ? "활성" : "비활성"}</dd></div>
             <div><dt>실행 단계 확인</dt><dd>{metadata?.actual_stage_streaming ? "활성" : "비활성"}</dd></div>
+            {selectedCase && isLocalUatReference(selectedCase.external_reference) ? (
+              <div>
+                <dt>선택한 검증 시나리오 결박값</dt>
+                <dd>{selectedCase.external_reference}</dd>
+              </div>
+            ) : null}
           </dl>
           <p className="technical-drawer__notice">
             이 정보는 구현·재현성 확인을 위한 기술 정보입니다. 현재 3종 법령 범위 밖의 법적 판단과 운영 자동 처리는 지원하지 않습니다.
@@ -141,6 +219,16 @@ export function ApplicationFrame({ children }: PropsWithChildren): React.ReactEl
   );
 }
 
+function caseIdFromPath(pathname: string): string | undefined {
+  const encoded = /^\/cases\/([^/]+)(?:\/|$)/u.exec(pathname)?.[1];
+  if (!encoded) return undefined;
+  try {
+    return decodeURIComponent(encoded);
+  } catch {
+    return undefined;
+  }
+}
+
 function HashTargetFocus(): null {
   const location = useLocation();
   useEffect(() => {
@@ -153,26 +241,33 @@ function HashTargetFocus(): null {
     }
     let stopped = false;
     let observer: MutationObserver | null = null;
+    let settleTimeout: number | null = null;
     const focusTarget = (): boolean => {
       if (stopped) return false;
       const target = document.getElementById(targetId);
       if (!target) return false;
-      target.scrollIntoView({ block: "center", behavior: "auto" });
-      target.focus({ preventScroll: true });
-      observer?.disconnect();
+      if (settleTimeout !== null) window.clearTimeout(settleTimeout);
+      settleTimeout = window.setTimeout(() => {
+        if (stopped) return;
+        const stableTarget = document.getElementById(targetId);
+        if (!stableTarget) return;
+        stableTarget.scrollIntoView({ block: "center", behavior: "auto" });
+        stableTarget.focus({ preventScroll: true });
+        observer?.disconnect();
+      }, 50);
       return true;
     };
-    if (!focusTarget()) {
-      observer = new MutationObserver(() => { focusTarget(); });
-      observer.observe(document.getElementById("app") ?? document.body, {
-        childList: true,
-        subtree: true,
-      });
-    }
+    observer = new MutationObserver(() => { focusTarget(); });
+    observer.observe(document.getElementById("app") ?? document.body, {
+      childList: true,
+      subtree: true,
+    });
+    focusTarget();
     const timeout = window.setTimeout(() => observer?.disconnect(), 10_000);
     return () => {
       stopped = true;
       observer?.disconnect();
+      if (settleTimeout !== null) window.clearTimeout(settleTimeout);
       window.clearTimeout(timeout);
     };
   }, [location.hash, location.pathname]);

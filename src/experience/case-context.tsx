@@ -7,22 +7,23 @@ import {
   useState,
 } from "react";
 import { Outlet, useParams, useSearchParams } from "react-router";
+import { userFacingErrorMessage } from "../api/user-facing-errors";
 import type {
   AuditEvent,
   CaseDetail,
   ReviewRun,
   RunSummary,
 } from "../api/v1/types";
-import type { ReviewExperienceEnvelope } from "../api/v2/types";
+import type { PublicReviewExperience } from "../api/v2/types";
 import { useWorkbench } from "./context";
 import { CaseNavigation } from "./layout";
-import { caseStatusLabels, formatKoreanDate } from "./labels";
+import { caseReferenceLabel, caseStatusLabels, formatKoreanDate } from "./labels";
 
 interface CaseContextValue {
   caseDetail: CaseDetail;
   runs: RunSummary[];
   selectedRun: ReviewRun | null;
-  experience: ReviewExperienceEnvelope | null;
+  experience: PublicReviewExperience | null;
   audits: AuditEvent[];
   loadingRun: boolean;
   experienceError: string | null;
@@ -39,7 +40,7 @@ export function CaseWorkspace(): React.ReactElement {
   const [caseDetail, setCaseDetail] = useState<CaseDetail | null>(null);
   const [runs, setRuns] = useState<RunSummary[]>([]);
   const [selectedRun, setSelectedRun] = useState<ReviewRun | null>(null);
-  const [experience, setExperience] = useState<ReviewExperienceEnvelope | null>(null);
+  const [experience, setExperience] = useState<PublicReviewExperience | null>(null);
   const [audits, setAudits] = useState<AuditEvent[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadingRun, setLoadingRun] = useState(false);
@@ -61,7 +62,7 @@ export function CaseWorkspace(): React.ReactElement {
       setRuns(nextRuns);
       setAudits(nextAudits);
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "심사 건을 불러오지 못했습니다.");
+      setError(userFacingErrorMessage(reason, "심사 건을 불러오지 못했습니다."));
     } finally {
       setLoading(false);
     }
@@ -70,34 +71,62 @@ export function CaseWorkspace(): React.ReactElement {
   useEffect(() => { void loadCase(); }, [loadCase]);
 
   useEffect(() => {
+    if (loading || !caseDetail) return;
     const runId = requestedRunId ?? runs[0]?.review_run_id;
+    setSelectedRun(null);
+    setExperience(null);
     if (!runId) {
-      setSelectedRun(null);
-      setExperience(null);
+      setLoadingRun(false);
+      return;
+    }
+    if (!runs.some((item) => item.review_run_id === runId)) {
+      setLoadingRun(false);
+      setError("선택한 심사 회차가 현재 심사 건에 속하지 않아 화면을 차단했습니다.");
       return;
     }
     let active = true;
     setLoadingRun(true);
+    setError(null);
     setExperienceError(null);
-    Promise.all([
-      api.getReviewRun(runId),
-      experienceApi.getReviewExperience(runId).catch((reason: unknown) => {
-        if (active) {
-          setExperienceError(reason instanceof Error ? reason.message : "사용자용 설명을 불러오지 못했습니다.");
+    void (async () => {
+      try {
+        const run = await api.getReviewRun(runId);
+        if (
+          run.case_id !== caseDetail.case_id
+          || run.org_id !== caseDetail.org_id
+          || !runs.some((item) => item.review_run_id === run.review_run_id)
+        ) {
+          throw new Error("선택한 심사 회차의 심사 건 결박이 일치하지 않아 화면을 차단했습니다.");
         }
-        return null;
-      }),
-    ]).then(([run, envelope]) => {
-      if (!active) return;
-      setSelectedRun(run);
-      setExperience(envelope);
-    }).catch((reason: unknown) => {
-      if (active) setError(reason instanceof Error ? reason.message : "심사 결과를 불러오지 못했습니다.");
-    }).finally(() => {
-      if (active) setLoadingRun(false);
-    });
+        let envelope: PublicReviewExperience | null = null;
+        if (!run.provider_result_sha256 || !run.result_digest) {
+          if (active) setExperienceError("심사 결과 결박 정보를 확인할 수 없습니다.");
+        } else {
+          try {
+            envelope = await experienceApi.getReviewExperience({
+              reviewRunId: run.review_run_id,
+              caseId: caseDetail.case_id,
+              orgId: caseDetail.org_id,
+              resultSha256: run.provider_result_sha256,
+              effectiveResultDigest: run.result_digest,
+            });
+          } catch (reason) {
+            if (active) {
+              setExperienceError(userFacingErrorMessage(reason, "사용자용 설명을 불러오지 못했습니다."));
+            }
+          }
+        }
+        if (!active) return;
+        setSelectedRun(run);
+        setExperience(envelope);
+      } catch (reason) {
+        if (active) setError(userFacingErrorMessage(reason, "심사 결과를 불러오지 못했습니다."));
+      } finally {
+        if (active) setLoadingRun(false);
+      }
+    })();
     return () => { active = false; };
-  }, [api, experienceApi, requestedRunId, runs]);
+  }, [api, caseDetail, experienceApi, loading, requestedRunId, runs]);
 
   const value = useMemo<CaseContextValue | null>(() => caseDetail ? ({
     caseDetail,
@@ -133,7 +162,7 @@ export function CaseWorkspace(): React.ReactElement {
         <div>
           <p className="overline">심사 건</p>
           <h1>{detail.title}</h1>
-          <p>{detail.external_reference || "별도 업무 참조번호 없음"} · 최근 변경 {formatKoreanDate(detail.updated_at)}</p>
+          <p>{caseReferenceLabel(detail.external_reference)} · 최근 변경 {formatKoreanDate(detail.updated_at)}</p>
         </div>
         <div className="case-page-header__actions">
           <span className={`business-status business-status--${detail.status}`}>{caseStatusLabels[detail.status]}</span>

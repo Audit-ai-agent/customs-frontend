@@ -2,9 +2,8 @@ import { useState } from "react";
 import { Link } from "react-router";
 import type { ReviewRun } from "../../api/v1/types";
 import type {
-  GroundedPresentationSection,
   GroundedPresentationStatement,
-  ReviewExperienceEnvelope,
+  PublicReviewExperience,
   UserActionEvent,
 } from "../../api/v2/types";
 import { useCaseWorkspace } from "../case-context";
@@ -25,7 +24,13 @@ export function OverviewPage(): React.ReactElement {
   const { caseDetail, selectedRun, experience, experienceError, refresh } = useCaseWorkspace();
   return (
     <div className="page-stack" data-testid="case-overview">
-      <ReviewProgress caseId={caseDetail.case_id} onCompleted={refresh} />
+      <ReviewProgress
+        caseId={caseDetail.case_id}
+        hasReviewableDocuments={caseDetail.documents.some(
+          (document) => document.document_type !== "SUPPORTING",
+        )}
+        onCompleted={refresh}
+      />
       {!selectedRun ? (
         <section className="empty-business-state content-panel">
           <Icon name="documents" />
@@ -35,13 +40,17 @@ export function OverviewPage(): React.ReactElement {
       ) : (
         <>
           <ResultHero run={selectedRun} experience={experience} />
-          <WhatAgentChecked run={selectedRun} />
+          <WhatAgentChecked run={selectedRun} experience={experience} />
           {experienceError ? (
-            <p className="experience-warning" role="status">
-              사용자용 장문 설명을 불러오지 못해 안전한 기본 설명을 표시합니다. {experienceError}
-            </p>
+            <PresentationUnavailable detail={experienceError} />
           ) : null}
-          <PresentationReport caseId={caseDetail.case_id} run={selectedRun} experience={experience} />
+          {experience ? (
+            <PresentationReport
+              caseId={caseDetail.case_id}
+              reviewRunId={selectedRun.review_run_id}
+              experience={experience}
+            />
+          ) : null}
           <UserActionSummary
             caseId={caseDetail.case_id}
             events={experience?.user_action_events ?? []}
@@ -58,7 +67,7 @@ function ResultHero({
   experience,
 }: {
   run: ReviewRun;
-  experience: ReviewExperienceEnvelope | null;
+  experience: PublicReviewExperience | null;
 }): React.ReactElement {
   const tone = run.assessment === "issues_detected" ? "warning" : run.assessment === "indeterminate" ? "hold" : "positive";
   return (
@@ -87,25 +96,74 @@ function ResultHero({
   );
 }
 
-function WhatAgentChecked({ run }: { run: ReviewRun }): React.ReactElement {
-  const completed = run.review_stage_trace?.filter((item) => item.status === "completed") ?? [];
+function WhatAgentChecked({
+  run,
+  experience,
+}: {
+  run: ReviewRun;
+  experience: PublicReviewExperience | null;
+}): React.ReactElement {
+  const adaptiveInvestigations = run.action_trace.filter((action) => (
+    action.tool === "document.reread_span/v1" || action.tool === "evidence.retrieve/v3"
+  ));
+  const stepDefinitions = [
+    {
+      title: "문서 분석",
+      stages: ["classify_documents", "extract_documents"],
+      completedDetail: `${run.fields.length}개 핵심 값을 읽었습니다.`,
+    },
+    {
+      title: "문서 대조",
+      stages: ["pair_documents", "validate_cross_documents"],
+      completedDetail: `${run.issues.length}개의 문서 확인 사항을 판별했습니다.`,
+    },
+    {
+      title: "법령 검색",
+      stages: ["retrieve_regulations"],
+      completedDetail: `${run.evidence.length}개의 관련 근거를 확인했습니다.`,
+    },
+    {
+      title: "규정 검토",
+      stages: ["compliance_review"],
+      completedDetail: `${run.findings.length}개의 규정 확인 사항을 정리했습니다.`,
+    },
+  ].map((definition) => ({
+    ...definition,
+    state: coreStageState(run, definition.stages),
+  }));
+  const explanationState: DisplayStageState = experience ? "completed" : "not_completed";
+  const steps = [
+    ...stepDefinitions,
+    {
+      title: "설명 검증",
+      state: explanationState,
+      completedDetail: experience
+        ? experience.user_presentation.verification_audit.status === "passed"
+          ? "Claude 설명과 근거 연결을 별도로 검증했습니다."
+          : "Claude 설명 대신 검증된 결정론적 보고서를 사용했습니다."
+        : "검증된 사용자용 보고서를 확인하지 못했습니다.",
+    },
+  ];
+  const completedCount = steps.filter((step) => step.state === "completed").length;
   return (
     <section className="agent-checked content-panel" aria-labelledby="agent-checked-title">
       <div className="section-heading">
         <div><p className="overline">Agent 수행 과정</p><h2 id="agent-checked-title">Agent가 다음 순서로 확인했습니다.</h2></div>
-        <span>{completed.length}개 필수 단계 확인</span>
+        <span>{completedCount}/{steps.length}개 사용자 확인 단계 완료</span>
       </div>
       <ol className="agent-process" data-testid="agent-process">
-        {[
-          ["문서 분석", `${run.fields.length}개 핵심 값을 읽었습니다.`],
-          ["문서 대조", `${run.issues.length}개의 문서 확인 사항을 판별했습니다.`],
-          ["법령 검색", `${run.evidence.length}개의 관련 근거를 확인했습니다.`],
-          ["규정 검토", `${run.findings.length}개의 규정 확인 사항을 정리했습니다.`],
-          ["설명 검증", "결과 설명이 원문과 법령 근거에 연결되는지 확인했습니다."],
-        ].map(([title, detail], index) => (
-          <li key={title}>
+        {steps.map((step, index) => (
+          <li key={step.title} data-stage-state={step.state}>
             <span>{index + 1}</span>
-            <p><strong>{title}</strong><small>{detail}</small></p>
+            <p>
+              <strong>{step.title}</strong>
+              <small>
+                {step.state === "completed"
+                  ? step.completedDetail
+                  : stageStateDescription(step.state)}
+              </small>
+            </p>
+            <em>{stageStateLabel(step.state)}</em>
           </li>
         ))}
       </ol>
@@ -113,8 +171,8 @@ function WhatAgentChecked({ run }: { run: ReviewRun }): React.ReactElement {
         <div>
           <p className="overline">제한형 추가 조사</p>
           <h3>
-            {run.action_trace.length > 0
-              ? `Agent가 필요한 부분을 ${run.action_trace.length}회 추가 확인했습니다.`
+            {adaptiveInvestigations.length > 0
+              ? `Agent가 필요한 부분을 ${adaptiveInvestigations.length}회 추가 확인했습니다.`
               : "이번 심사에서는 별도 추가 조사가 필요하지 않았습니다."}
           </h3>
           <p>
@@ -122,9 +180,9 @@ function WhatAgentChecked({ run }: { run: ReviewRun }): React.ReactElement {
             판정이나 담당자 승인을 임의로 바꾸지 않습니다.
           </p>
         </div>
-        {run.action_trace.length > 0 ? (
+        {adaptiveInvestigations.length > 0 ? (
           <ol>
-            {run.action_trace.map((action, index) => (
+            {adaptiveInvestigations.map((action, index) => (
               <li key={action.action_id}>
                 <span>{index + 1}</span>
                 <div>
@@ -141,16 +199,48 @@ function WhatAgentChecked({ run }: { run: ReviewRun }): React.ReactElement {
   );
 }
 
+type DisplayStageState = "completed" | "needs_review" | "failed" | "not_completed";
+
+function coreStageState(run: ReviewRun, stages: string[]): DisplayStageState {
+  const entries = stages.map((stage) => (
+    run.review_stage_trace?.find((entry) => entry.stage === stage)
+  ));
+  if (entries.some((entry) => entry?.status === "failed")) return "failed";
+  if (entries.some((entry) => entry?.status === "partial" || entry?.status === "needs_review")) {
+    return "needs_review";
+  }
+  if (entries.every((entry) => entry?.status === "completed")) return "completed";
+  return "not_completed";
+}
+
+function stageStateLabel(state: DisplayStageState): string {
+  return {
+    completed: "완료",
+    needs_review: "추가 확인",
+    failed: "완료하지 못함",
+    not_completed: "미확인",
+  }[state];
+}
+
+function stageStateDescription(state: DisplayStageState): string {
+  return {
+    completed: "",
+    needs_review: "이 단계에 추가 확인이 필요한 항목이 있습니다.",
+    failed: "이 단계를 안전하게 완료하지 못했습니다.",
+    not_completed: "이 단계의 완료 기록을 확인하지 못했습니다.",
+  }[state];
+}
+
 function PresentationReport({
   caseId,
-  run,
+  reviewRunId,
   experience,
 }: {
   caseId: string;
-  run: ReviewRun;
-  experience: ReviewExperienceEnvelope | null;
+  reviewRunId: string;
+  experience: PublicReviewExperience;
 }): React.ReactElement {
-  const sections = experience?.user_presentation.sections ?? fallbackSections(run);
+  const sections = experience.user_presentation.sections;
   return (
     <section className="presentation-report" aria-labelledby="presentation-heading">
       <div className="presentation-report__heading">
@@ -158,7 +248,7 @@ function PresentationReport({
           <p className="overline">AI 심사 보고서</p>
           <h2 id="presentation-heading">이번 심사 결과를 이해하기 쉽게 설명합니다.</h2>
         </div>
-        <span><Icon name="shield" />근거 연결 확인됨</span>
+        <span><Icon name="shield" />검증된 근거 연결</span>
       </div>
       <div className="presentation-sections">
         {sections.map((section, index) => (
@@ -174,6 +264,7 @@ function PresentationReport({
                 <PresentationStatementView
                   key={statement.statement_id}
                   caseId={caseId}
+                  reviewRunId={reviewRunId}
                   statement={statement}
                 />
               ))}
@@ -185,11 +276,37 @@ function PresentationReport({
   );
 }
 
+function PresentationUnavailable({ detail }: { detail: string }): React.ReactElement {
+  return (
+    <section
+      className="experience-warning content-panel"
+      role="alert"
+      data-testid="presentation-unavailable"
+    >
+      <div>
+        <p className="overline">상세 설명 확인 필요</p>
+        <h2>검증된 AI 심사 보고서를 불러오지 못했습니다.</h2>
+        <p>
+          아래의 기본 심사 상태는 확인할 수 있지만, 원인·근거·영향·다음 조치를
+          설명하는 장문 보고서는 표시하지 않습니다. 잠시 후 다시 시도하거나
+          담당 관리자에게 문의하십시오.
+        </p>
+      </div>
+      <details>
+        <summary>오류 정보 확인</summary>
+        <p>{detail}</p>
+      </details>
+    </section>
+  );
+}
+
 function PresentationStatementView({
   caseId,
+  reviewRunId,
   statement,
 }: {
   caseId: string;
+  reviewRunId: string;
   statement: GroundedPresentationStatement;
 }): React.ReactElement {
   return (
@@ -201,6 +318,7 @@ function PresentationStatementView({
             <CaseCitationLink
               key={`${statement.statement_id}-${citation.reference_id}`}
               caseId={caseId}
+              reviewRunId={reviewRunId}
               citation={citation}
             />
           ))}
@@ -301,29 +419,4 @@ function resultMeaning(run: ReviewRun): string {
     return "발견된 사항의 원인과 근거를 아래 보고서에서 확인한 뒤 필요한 조치를 진행해야 합니다.";
   }
   return "문서나 근거가 충분하지 않아 Agent가 임의로 결론 내리지 않고 사람 검토로 안전하게 넘겼습니다.";
-}
-
-function fallbackSections(run: ReviewRun): GroundedPresentationSection[] {
-  const statement = (
-    section: GroundedPresentationSection["section_code"],
-    role: GroundedPresentationStatement["role"],
-    text: string,
-  ): GroundedPresentationStatement => ({
-    statement_id: `fallback-${section}`,
-    role,
-    text,
-    source_claim_ids: [],
-    citation_references: [],
-    material: role !== "limitation",
-  });
-  return [
-    { section_code: "conclusion", title: presentationSectionLabels.conclusion, statements: [statement("conclusion", "conclusion", fallbackHeadline(run))] },
-    { section_code: "process", title: presentationSectionLabels.process, statements: [statement("process", "observation", `Agent는 ${run.fields.length}개 추출값을 정리한 뒤 문서 대조와 법령 검색, 규정 확인을 순서대로 수행했습니다.`)] },
-    { section_code: "document_comparison", title: presentationSectionLabels.document_comparison, statements: [statement("document_comparison", "observation", run.issues.length === 0 ? "문서 사이에서 별도의 불일치를 발견하지 않았습니다." : `문서 사이에서 담당자가 확인해야 할 사항 ${run.issues.length}건을 발견했습니다.`)] },
-    { section_code: "issues_and_causes", title: presentationSectionLabels.issues_and_causes, statements: [statement("issues_and_causes", "reason", run.issues.length === 0 && run.findings.length === 0 ? "현재 확인 범위에서는 결과에 영향을 줄 문제가 발견되지 않았습니다." : "문서 원문, 추출값, 법령 근거를 함께 대조해 원인을 확인해야 합니다.")] },
-    { section_code: "regulatory_meaning", title: presentationSectionLabels.regulatory_meaning, statements: [statement("regulatory_meaning", "evidence", `제한된 3종 법령 검색에서 관련 근거 ${run.evidence.length}건을 확인했습니다.`)] },
-    { section_code: "business_impact", title: presentationSectionLabels.business_impact, statements: [statement("business_impact", "impact", run.review_disposition === "blocked" ? "현재 상태에서는 다음 처리 단계로 진행할 수 없습니다." : "담당자 검토가 끝나기 전에는 이 결과를 최종 판단으로 사용할 수 없습니다.")] },
-    { section_code: "next_actions", title: presentationSectionLabels.next_actions, statements: [statement("next_actions", "action", run.required_actions.length > 0 ? `표시된 필수 조치 ${run.required_actions.length}건을 확인하고 처리하십시오.` : "원문과 근거를 확인한 뒤 담당자 검토를 완료하십시오.")] },
-    { section_code: "scope_and_limits", title: presentationSectionLabels.scope_and_limits, statements: [statement("scope_and_limits", "limitation", "현재 결과는 텍스트 입력과 실제 3종 법령 범위의 내부 사용자 검증 결과입니다. OCR, 58종 전체 법령, 법적 승인, 운영 자동 처리는 포함하지 않습니다.")] },
-  ];
 }

@@ -173,6 +173,8 @@ export interface RankedEvidenceProvenance {
   evidence_id: string;
   item_id: string;
   rank: number;
+  title: string;
+  excerpt: string;
   source_type: "law_article" | "customs_requirement" | "hsk_entry" | "notice";
   retrieval_methods: EvidenceRetrievalMethod[];
   score: number | null;
@@ -321,6 +323,14 @@ export interface ReviewRun extends RunSummary {
   input_manifest_digest?: string;
   agent_input_manifest_sha256?: string;
   provider_result_sha256?: string;
+  /** Backend-owned, result-digest-bound proof of the Evidence execution boundary. */
+  evidence_profile?: string;
+  evidence_data_source?: "UNATTESTED" | "ACTUAL_POSTGRESQL_QDRANT_NEO4J_READ_ONLY";
+  evidence_request_id?: string | null;
+  observed_retrieval_methods?: EvidenceRetrievalMethod[];
+  attempted_retrieval_methods?: EvidenceRetrievalMethod[];
+  successful_retrieval_methods?: EvidenceRetrievalMethod[];
+  retrieval_execution_attested?: boolean;
   stages: ReviewStageEvent[];
   fields: ExtractedField[];
   issues: ReviewIssue[];

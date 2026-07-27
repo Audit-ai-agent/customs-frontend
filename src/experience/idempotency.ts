@@ -6,7 +6,7 @@ import { bytesToHex } from "@noble/hashes/utils.js";
  * Callers must pass an ordered string tuple so JSON serialization is stable.
  */
 export function derivedIdempotencyKey(
-  prefix: "assistant" | "conversation",
+  prefix: "assistant" | "conversation" | "proposal" | "decision",
   values: readonly string[],
 ): string {
   const bytes = new TextEncoder().encode(JSON.stringify(values));

@@ -2,31 +2,71 @@ import { useState } from "react";
 import { useCaseWorkspace } from "../case-context";
 import { Icon } from "../icons";
 
+const REQUIRED_ACTUAL_RAG_METHODS = ["exact_hs", "dense", "bm25", "graph"] as const;
+
 export function EvidencePage(): React.ReactElement {
-  const { selectedRun } = useCaseWorkspace();
+  const { selectedRun, experience } = useCaseWorkspace();
   const [technicalOpen, setTechnicalOpen] = useState(false);
   if (!selectedRun) return <NoRun />;
   const retrieval = selectedRun.evidence_retrieval;
   const provenance = selectedRun.evidence_provenance;
+  const observedMethods = selectedRun.observed_retrieval_methods ?? [];
+  const attemptedMethods = selectedRun.attempted_retrieval_methods ?? [];
+  const successfulMethods = selectedRun.successful_retrieval_methods ?? [];
+  const runEvidenceIdentity = selectedRun.release_identity?.evidence_runtime_v3_sha256;
+  const actualThreeLawProfile = Boolean(
+    experience
+    && selectedRun.retrieval_execution_attested === true
+    && selectedRun.evidence_profile === "preserved-3law-v3-scenario-eval"
+    && selectedRun.evidence_data_source === "ACTUAL_POSTGRESQL_QDRANT_NEO4J_READ_ONLY"
+    && typeof selectedRun.evidence_request_id === "string"
+    && provenance?.request_id === selectedRun.evidence_request_id
+    && experience.capability_attestation.evidence_profile === "preserved-3law-v3-scenario-eval"
+    && typeof runEvidenceIdentity === "string"
+    && runEvidenceIdentity === experience.capability_attestation.evidence_runtime_v3_sha256,
+  );
+  const mandatoryMethodsAttempted = REQUIRED_ACTUAL_RAG_METHODS.every(
+    (method) => attemptedMethods.includes(method),
+  );
+  const mandatoryMethodsSucceeded = REQUIRED_ACTUAL_RAG_METHODS.every(
+    (method) => successfulMethods.includes(method),
+  );
+  const retrievalCompleted = actualThreeLawProfile
+    && retrieval?.status === "ok"
+    && retrieval.coverage === "complete"
+    && mandatoryMethodsAttempted
+    && mandatoryMethodsSucceeded;
+  const partialActualRetrieval = actualThreeLawProfile && !retrievalCompleted;
   return (
     <div className="page-stack" data-testid="evidence-page">
       <header className="subpage-heading">
-        <div><p className="overline">법령 근거</p><h2>Agent가 실제 검색한 법령 근거와 의미를 확인합니다.</h2></div>
+        <div><p className="overline">법령 근거</p><h2>현재 심사 회차에 결박된 법령 검색 결과를 확인합니다.</h2></div>
         <span>{selectedRun.evidence.length}개 근거</span>
       </header>
       <section className="rag-summary">
         <div className="rag-summary__mark"><Icon name="evidence" /></div>
         <div>
-          <p className="overline">실제 3법령 RAG</p>
-          <h3>{retrieval?.status === "ok" ? "법령 검색을 정상적으로 완료했습니다." : "법령 검색 결과에 추가 확인이 필요합니다."}</h3>
+          <p className="overline">{actualThreeLawProfile ? "실제 3법령 RAG" : "검색 출처 확인 필요"}</p>
+          <h3>
+            {retrievalCompleted
+              ? "제한된 실제 법령 검색을 정상적으로 완료했습니다."
+              : partialActualRetrieval
+                ? "실제 법령 검색 경로 중 일부가 완료되지 않았습니다."
+                : "이 심사 회차의 실제 검색 완료 여부를 확인할 수 없습니다."}
+          </h3>
           <p>
-            구조화 조회와 의미 검색, 키워드 검색, 법령 관계 확장 경로를 이용해
-            현재 심사 품목과 관련된 근거를 찾았습니다.
+            {actualThreeLawProfile
+              ? `Backend가 ${attemptedMethods.map(methodLabel).join(", ")} 경로의 시도를 증명했습니다. `
+                + `${successfulMethods.map(methodLabel).join(", ")} 경로가 정상 실행됐으며, `
+                + (observedMethods.length > 0
+                  ? `최종 근거에는 ${observedMethods.map(methodLabel).join(", ")} 결과가 반영됐습니다.`
+                  : "최종 상위 근거에 반영된 검색 경로는 없습니다.")
+              : "현재 회차가 실제 3법령 평가 프로필과 정확히 결박됐다는 검증 정보를 확인하지 못했습니다."}
           </p>
         </div>
         <dl>
-          <div><dt>검색 상태</dt><dd>{retrieval?.status === "ok" ? "정상" : "확인 필요"}</dd></div>
-          <div><dt>검색 범위</dt><dd>{retrieval?.coverage === "complete" ? "현재 제한 범위 완료" : "일부 또는 미확인"}</dd></div>
+          <div><dt>검색 상태</dt><dd>{retrievalCompleted ? "정상 완료" : retrieval?.status === "failed" ? "실패" : partialActualRetrieval ? "부분 완료" : "확인 필요"}</dd></div>
+          <div><dt>검색 범위</dt><dd>{retrievalCompleted ? "현재 제한 범위 완료" : "일부 또는 미확인"}</dd></div>
           <div><dt>요건 발견</dt><dd>{retrieval?.requirements_found === true ? "있음" : retrieval?.requirements_found === false ? "없음" : "확인 필요"}</dd></div>
         </dl>
       </section>
@@ -76,6 +116,10 @@ export function EvidencePage(): React.ReactElement {
           <div><dt>검색 의도</dt><dd>{provenance?.query_intent ?? "없음"}</dd></div>
           <div><dt>검색 결과 수</dt><dd>{retrieval?.result_count ?? 0}</dd></div>
           <div><dt>데이터 스냅샷</dt><dd>{selectedRun.release_identity?.evidence_snapshot_id ?? "없음"}</dd></div>
+          <div><dt>실행 프로필 결박</dt><dd>{actualThreeLawProfile ? "실제 3법령 평가 프로필" : "확인되지 않음"}</dd></div>
+          <div><dt>시도한 검색 경로</dt><dd>{attemptedMethods.length > 0 ? attemptedMethods.map(methodLabel).join(", ") : "없음"}</dd></div>
+          <div><dt>성공한 검색 경로</dt><dd>{successfulMethods.length > 0 ? successfulMethods.map(methodLabel).join(", ") : "없음"}</dd></div>
+          <div><dt>관측된 검색 경로</dt><dd>{observedMethods.length > 0 ? observedMethods.map(methodLabel).join(", ") : "없음"}</dd></div>
         </dl>
         ) : null}
       </details>

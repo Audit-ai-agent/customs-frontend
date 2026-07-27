@@ -3,8 +3,14 @@ FROM node:22.23.1-alpine3.23@sha256:8516dce0483394d5708d4b2ee6cacb79fb1d617ea4e2
 
 WORKDIR /workspace
 ENV NODE_ENV=development
-ENV CUSTOMS_ENHANCED_AGENT_EXPERIENCE=true
-ENV CUSTOMS_UAT_ADAPTIVE_ACTIVE=true
+ARG CUSTOMS_ENHANCED_AGENT_EXPERIENCE=false
+ARG CUSTOMS_UAT_ADAPTIVE_ACTIVE=false
+RUN case "${CUSTOMS_ENHANCED_AGENT_EXPERIENCE}:${CUSTOMS_UAT_ADAPTIVE_ACTIVE}" in \
+      true:true|true:false|false:false) ;; \
+      *) echo "invalid or unsafe UAT feature flag combination" >&2; exit 1 ;; \
+    esac
+ENV CUSTOMS_ENHANCED_AGENT_EXPERIENCE=${CUSTOMS_ENHANCED_AGENT_EXPERIENCE}
+ENV CUSTOMS_UAT_ADAPTIVE_ACTIVE=${CUSTOMS_UAT_ADAPTIVE_ACTIVE}
 RUN chown node:node /workspace
 
 COPY --chown=node:node package.json package-lock.json .npmrc ./
