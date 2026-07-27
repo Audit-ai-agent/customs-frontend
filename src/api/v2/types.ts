@@ -290,6 +290,7 @@ export interface AssistantStageEvent {
     | "answer_planning"
     | "answer_composition"
     | "grounding_verification"
+    | "result_validation"
     | "persistence"
     | "completed"
     | "failed";

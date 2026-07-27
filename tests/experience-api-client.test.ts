@@ -418,10 +418,22 @@ describe("ExperienceApiClient v2 trusted browser boundary", () => {
       message_key: "assistant.answer_composition",
     }).stage_code).toBe("answer_composition");
 
+    expect(decodeAssistantStageEvent({
+      event_id: "assistant-event-validation",
+      assistant_job_id: "assistant-job-1",
+      sequence: 2,
+      stage_code: "result_validation",
+      state: "completed",
+      occurred_at: timestamp,
+      duration_ms: 5,
+      safe_counts: { citation_count: 2 },
+      message_key: "assistant.result_validation",
+    }).stage_code).toBe("result_validation");
+
     expect(() => decodeAssistantStageEvent({
       event_id: "assistant-event-2",
       assistant_job_id: "assistant-job-1",
-      sequence: 2,
+      sequence: 3,
       stage_code: "completed",
       state: "completed",
       occurred_at: timestamp,

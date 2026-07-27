@@ -27,6 +27,7 @@ const assistantStageLabels: Record<AssistantStageEvent["stage_code"], string> = 
   answer_planning: "답변에 필요한 사실과 근거를 정리하고 있습니다.",
   answer_composition: "질문에 대한 설명을 작성하고 있습니다.",
   grounding_verification: "답변이 문서와 법령 근거에 맞는지 확인하고 있습니다.",
+  result_validation: "답변의 구조와 인용 근거를 최종 확인하고 있습니다.",
   persistence: "검증된 답변을 대화 이력에 저장하고 있습니다.",
   completed: "답변 준비를 완료했습니다.",
   failed: "답변을 안전하게 완료하지 못했습니다.",

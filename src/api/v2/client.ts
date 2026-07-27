@@ -917,7 +917,8 @@ export function decodeAssistantStageEvent(value: unknown): AssistantStageEvent {
     sequence: integer(raw.sequence, "assistant stage event.sequence"),
     stage_code: enumValue(raw.stage_code, [
       "queued", "request_validation", "conversation_binding", "answer_planning",
-      "answer_composition", "grounding_verification", "persistence", "completed", "failed",
+      "answer_composition", "grounding_verification", "result_validation",
+      "persistence", "completed", "failed",
     ], "assistant stage event.stage_code"),
     state: enumValue(raw.state, ["started", "completed", "skipped", "failed"], "assistant stage event.state"),
     occurred_at: string(raw.occurred_at, "assistant stage event.occurred_at"),
