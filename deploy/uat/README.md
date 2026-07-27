@@ -34,4 +34,8 @@ Browser E2E는 저장소 밖 `_secrets/uat/credentials.json` 또는 명시적인
 `CUSTOMS_E2E_CREDENTIALS_FILE`에서 reviewer 계정을 읽어 실제 Keycloak
 Authorization Code + PKCE 흐름을 통과한다. Token은 계속 Browser 메모리에만
 존재하므로 `storageState`로 우회하지 않으며, credential 입력이 증거에 남지
-않도록 Playwright 자동 trace·video·screenshot을 비활성화한다.
+않도록 Playwright 자동 trace·video·screenshot을 비활성화한다. 현재 Harness
+실행의 exact 9개 Case·Review Run·결과를 묶은
+`CUSTOMS_E2E_SCENARIO_BINDINGS_FILE`과 그 파일의
+`CUSTOMS_E2E_SCENARIO_BINDINGS_SHA256`도 필수다. 성공 증거용 명시적 화면
+캡처는 질문·답변·보고서 본문·입력란·기술 상세를 마스킹한 뒤에만 첨부한다.

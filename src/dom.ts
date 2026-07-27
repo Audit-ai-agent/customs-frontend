@@ -50,6 +50,11 @@ export function badge(label: string, value: string | undefined, tone: string): H
   );
 }
 
+/**
+ * @deprecated Legacy diagnostic-workbench compatibility only.
+ * The commercial experience must use its exhaustive Korean meaning catalogs
+ * and the static boundary gate rejects this helper outside src/app.ts/dom.ts.
+ */
 export function humanize(value: string): string {
   return value.replaceAll("_", " ");
 }

@@ -127,6 +127,23 @@ export const test = base.extend<{ reviewerLogin: void }>({
     // runtime. The product page receives no inline script tag, so the exact
     // strict CSP remains active and is asserted separately in the E2E suite.
     await page.addInitScript({ content: axe.source });
+    await page.addInitScript(() => {
+      const target = window as typeof window & {
+        __customsCspViolations?: Array<{
+          blockedUri: string;
+          effectiveDirective: string;
+          violatedDirective: string;
+        }>;
+      };
+      target.__customsCspViolations = [];
+      document.addEventListener("securitypolicyviolation", (event) => {
+        target.__customsCspViolations?.push({
+          blockedUri: event.blockedURI,
+          effectiveDirective: event.effectiveDirective,
+          violatedDirective: event.violatedDirective,
+        });
+      });
+    });
     await loginUatUser(page, "reviewer");
     await use();
   }, { auto: true }],

@@ -1539,6 +1539,26 @@ describe("commercial-grade local UAT workbench", () => {
     expect(await screen.findByTestId("review-progress")).not.toBeNull();
     expect(screen.getByTestId("current-stage").textContent).toContain("문서 읽기");
     expect(screen.getByTestId("eta-range").textContent).toContain("4분");
+    const stageItems = [...document.querySelectorAll(".live-review__stages > li")];
+    expect(stageItems).toHaveLength(11);
+    expect(stageItems.map((item) => item.getAttribute("data-stage-code"))).toEqual([
+      "request_validation",
+      "document_analysis",
+      "normalization",
+      "document_pairing",
+      "cross_validation",
+      "adaptive_investigation",
+      "evidence_retrieval",
+      "compliance_review",
+      "report_composition",
+      "grounding_verification",
+      "result_validation",
+    ]);
+    expect(
+      document.querySelector('[data-stage-code="document_analysis"]')
+        ?.getAttribute("data-stage-state"),
+    ).toBe("started");
+    expect(screen.getByTestId("handled-stage-count").textContent).toBe("0/11개");
     expect(next.experienceApi.enqueueReview).toHaveBeenCalledTimes(1);
   });
 

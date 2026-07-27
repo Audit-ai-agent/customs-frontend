@@ -581,12 +581,37 @@ function MessageBubble({
   message: AssistantMessage;
 }): React.ReactElement {
   if (message.role === "user") {
-    return <article className="message-bubble message-bubble--user"><span>담당자</span><p>{message.content}</p></article>;
+    return (
+      <article
+        className="message-bubble message-bubble--user"
+        data-message-id={message.message_id}
+        data-parent-message-id={message.parent_message_id ?? ""}
+        data-bound-result-sha256={message.bound_result_sha256}
+      >
+        <span>담당자</span><p>{message.content}</p>
+      </article>
+    );
   }
   const answer = message.answer;
-  if (!answer) return <article className="message-bubble message-bubble--assistant"><span>AI 심사 도우미</span><p>검증된 답변을 준비하지 못했습니다.</p></article>;
+  if (!answer) {
+    return (
+      <article
+        className="message-bubble message-bubble--assistant"
+        data-message-id={message.message_id}
+        data-parent-message-id={message.parent_message_id ?? ""}
+        data-bound-result-sha256={message.bound_result_sha256}
+      >
+        <span>AI 심사 도우미</span><p>검증된 답변을 준비하지 못했습니다.</p>
+      </article>
+    );
+  }
   return (
-    <article className={`message-bubble message-bubble--assistant message-bubble--${answer.answer_scope}`}>
+    <article
+      className={`message-bubble message-bubble--assistant message-bubble--${answer.answer_scope}`}
+      data-message-id={message.message_id}
+      data-parent-message-id={message.parent_message_id ?? ""}
+      data-bound-result-sha256={message.bound_result_sha256}
+    >
       <header><span>AI 심사 도우미</span><small>{assistantScopeLabels[answer.answer_scope]}</small></header>
       <section><h3>직접 답변</h3><p className="assistant-direct-answer">{answer.direct_answer}</p></section>
       <AnswerList title="그렇게 판단한 이유" items={answer.explanation} />

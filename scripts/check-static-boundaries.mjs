@@ -7,10 +7,11 @@ const src = new URL("../src/", import.meta.url);
 const rootPath = fileURLToPath(root);
 const files = await walk(src);
 const violations = [];
+const legacyHumanizeAllowlist = new Set(["src/app.ts", "src/dom.ts"]);
 
 for (const file of files.filter((name) => [".ts", ".tsx", ".css"].includes(extname(name)))) {
   const content = await readFile(file, "utf8");
-  const label = relative(rootPath, file);
+  const label = relative(rootPath, file).replaceAll("\\", "/");
   for (const [pattern, message] of [
     [/\.innerHTML\s*=/g, "unsafe innerHTML assignment"],
     [/\blocalStorage\b/g, "persistent browser secret storage"],
@@ -20,6 +21,9 @@ for (const file of files.filter((name) => [".ts", ".tsx", ".css"].includes(extna
     [/dangerouslySetInnerHTML/g, "unsafe HTML rendering escape hatch"],
   ]) {
     if (pattern.test(content)) violations.push(`${label}: ${message}`);
+  }
+  if (/\bhumanize\b/.test(content) && !legacyHumanizeAllowlist.has(label)) {
+    violations.push(`${label}: legacy diagnostic humanize must not enter product or shared code`);
   }
 }
 
@@ -37,9 +41,13 @@ if (!mainEntry.includes('await import("./app")') || !mainEntry.includes('await i
 const experienceFiles = files.filter((name) => name.includes(`${join("src", "experience")}`) && [".ts", ".tsx"].includes(extname(name)));
 for (const file of experienceFiles) {
   const content = await readFile(file, "utf8");
-  const label = relative(rootPath, file);
+  const label = relative(rootPath, file).replaceAll("\\", "/");
   if (/\bhumanize\s*\(/.test(content)) violations.push(`${label}: user wording must use an exhaustive Korean catalog`);
   if (/dangerouslySetInnerHTML/.test(content)) violations.push(`${label}: enhanced experience must never render untrusted HTML`);
+}
+const legacyDom = await readFile(new URL("../src/dom.ts", import.meta.url), "utf8");
+if (!legacyDom.includes("@deprecated Legacy diagnostic-workbench compatibility only.")) {
+  violations.push("src/dom.ts humanize compatibility exception must remain explicitly deprecated and diagnostic-only");
 }
 
 const client = await readFile(new URL("../src/api/v1/client.ts", import.meta.url), "utf8");

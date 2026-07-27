@@ -26,6 +26,19 @@ const UNCERTAIN_JOB_STATES = new Set([
   "delivery_uncertain",
   "response_persistence_uncertain",
 ]);
+const REVIEW_STAGE_ORDER = [
+  "request_validation",
+  "document_analysis",
+  "normalization",
+  "document_pairing",
+  "cross_validation",
+  "adaptive_investigation",
+  "evidence_retrieval",
+  "compliance_review",
+  "report_composition",
+  "grounding_verification",
+  "result_validation",
+] as const satisfies readonly PublicStageEvent["stage_code"][];
 
 export function ReviewProgress({
   caseId,
@@ -62,6 +75,8 @@ export function ReviewProgress({
         return;
       }
       if (SAFE_TERMINAL_JOB_STATES.has(current.job.status)) {
+        setElapsed(current.elapsed_seconds);
+        startedAtRef.current = null;
         clearPending();
         setPendingBinding(null);
         if (current.job.status === "succeeded") {
@@ -81,10 +96,14 @@ export function ReviewProgress({
       const final = await experienceApi.getReviewJob(jobId, caseId);
       setJob(final);
       if (UNCERTAIN_JOB_STATES.has(final.job.status)) {
+        setElapsed(final.elapsed_seconds);
+        startedAtRef.current = null;
         setError(
           "심사 요청의 전달 또는 저장 완료 여부를 확정할 수 없습니다. 같은 심사를 다시 실행하지 않고 서버 조정 결과를 기다립니다.",
         );
       } else if (SAFE_TERMINAL_JOB_STATES.has(final.job.status)) {
+        setElapsed(final.elapsed_seconds);
+        startedAtRef.current = null;
         clearPending();
         setPendingBinding(null);
         if (final.job.status === "succeeded") {
@@ -205,10 +224,22 @@ export function ReviewProgress({
   };
 
   const latest = events.at(-1);
-  const completedStages = useMemo(
-    () => events.filter((event) => event.state === "completed" && !["completed", "failed"].includes(event.stage_code)),
+  const handledStages = useMemo(
+    () => REVIEW_STAGE_ORDER.filter((stageCode) => events.some(
+      (event) => event.stage_code === stageCode
+        && (event.state === "completed" || event.state === "skipped"),
+    )),
     [events],
   );
+  const stageJournal = useMemo(() => REVIEW_STAGE_ORDER.map((stageCode) => {
+    const matching = events.filter((event) => event.stage_code === stageCode);
+    const latestForStage = matching.at(-1);
+    return {
+      stageCode,
+      state: latestForStage?.state ?? "pending",
+      durationMs: latestForStage?.duration_ms ?? null,
+    };
+  }), [events]);
   const active = job !== null
     && !SAFE_TERMINAL_JOB_STATES.has(job.job.status)
     && !UNCERTAIN_JOB_STATES.has(job.job.status)
@@ -219,6 +250,7 @@ export function ReviewProgress({
   const retryingUnconfirmedEnqueue = pendingBinding?.caseId === caseId
     && pendingBinding.jobId === null;
   const startBlocked = pendingBinding !== null && !retryingUnconfirmedEnqueue;
+  const showStageJournal = job !== null && events.length > 0;
 
   return (
     <section className={`review-launcher${active ? " is-active" : ""}`} aria-labelledby="review-launcher-title">
@@ -271,12 +303,19 @@ export function ReviewProgress({
           현재 권한에서는 새 심사를 실행할 수 없습니다. 기존 심사 결과와 실행 이력은 확인할 수 있습니다.
         </p>
       ) : null}
-      {active ? (
-        <div className="live-review" data-testid="review-progress" aria-live="polite">
+      {showStageJournal ? (
+        <div
+          className={`live-review${active ? " is-running" : " is-finished"}`}
+          data-testid="review-progress"
+          data-review-state={active ? "running" : job.job.status}
+          aria-live="polite"
+        >
           <div className="live-review__pulse" aria-hidden="true" />
           <div className="live-review__current">
-            <span>현재 단계</span>
-            <strong data-testid="current-stage">{latest ? stageLabels[latest.stage_code] : "실행 환경 확인"}</strong>
+            <span>{active ? "현재 단계" : "마지막 실행 상태"}</span>
+            <strong data-testid="current-stage">
+              {latest ? stageLabels[latest.stage_code] : "실행 환경 확인"}
+            </strong>
           </div>
           <div><span>경과 시간</span><strong data-testid="elapsed-time">{formatDuration(elapsed)}</strong></div>
           <div>
@@ -285,9 +324,34 @@ export function ReviewProgress({
               {job ? `${formatDuration(job.eta.lower_seconds)}~${formatDuration(job.eta.upper_seconds)}` : "약 4~7분"}
             </strong>
           </div>
-          <div><span>완료 단계</span><strong>{completedStages.length}개</strong></div>
-          <ol className="live-review__stages">
-            {completedStages.slice(-4).map((event) => <li key={event.sequence}>{stageLabels[event.stage_code]} 완료</li>)}
+          <div>
+            <span>처리 단계</span>
+            <strong data-testid="handled-stage-count">{handledStages.length}/{REVIEW_STAGE_ORDER.length}개</strong>
+          </div>
+          <ol className="live-review__stages" aria-label="Agent 전체 실행 단계">
+            {stageJournal.map((stage, index) => (
+              <li
+                key={stage.stageCode}
+                data-stage-code={stage.stageCode}
+                data-stage-state={stage.state}
+              >
+                <span>{index + 1}</span>
+                <strong>{stageLabels[stage.stageCode]}</strong>
+                <small>
+                  {stage.state === "completed"
+                    ? stage.durationMs === null
+                      ? "완료"
+                      : `${formatDuration(stage.durationMs / 1_000)} 만에 완료`
+                    : stage.state === "skipped"
+                      ? "안전 기준에 따라 생략"
+                      : stage.state === "failed"
+                        ? "완료하지 못함"
+                        : stage.state === "started" || stage.state === "progress"
+                          ? "진행 중"
+                          : "대기"}
+                </small>
+              </li>
+            ))}
           </ol>
         </div>
       ) : null}

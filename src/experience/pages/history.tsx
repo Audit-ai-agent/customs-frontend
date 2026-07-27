@@ -23,7 +23,11 @@ export function HistoryPage(): React.ReactElement {
           <div className="section-heading"><div><h3>심사 회차</h3><p>각 시점의 결과를 다시 열어 비교할 수 있습니다.</p></div></div>
           {runs.length === 0 ? <div className="empty-business-state"><Icon name="history" /><p>심사 이력이 없습니다.</p></div> : (
             <ol className="run-history">{runs.map((run, index) => (
-              <li key={run.review_run_id}>
+              <li
+                key={run.review_run_id}
+                data-review-run-id={run.review_run_id}
+                data-parent-run-id={run.parent_run_id ?? ""}
+              >
                 <span className="history-node">{runs.length - index}</span>
                 <div>
                   <header><strong>{runs.length - index}회차 심사</strong><time>{formatKoreanDate(run.created_at)}</time></header>

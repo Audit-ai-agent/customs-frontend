@@ -260,7 +260,11 @@ function PresentationReport({
 }): React.ReactElement {
   const sections = experience.user_presentation.sections;
   return (
-    <section className="presentation-report" aria-labelledby="presentation-heading">
+    <section
+      className="presentation-report"
+      aria-labelledby="presentation-heading"
+      data-bound-result-sha256={experience.bound_provider_result_sha256}
+    >
       <div className="presentation-report__heading">
         <div>
           <p className="overline">AI 심사 보고서</p>
@@ -328,7 +332,11 @@ function PresentationStatementView({
   statement: GroundedPresentationStatement;
 }): React.ReactElement {
   return (
-    <div className={`presentation-statement presentation-statement--${statement.role}`}>
+    <div
+      className={`presentation-statement presentation-statement--${statement.role}`}
+      data-statement-id={statement.statement_id}
+      data-material={statement.material ? "true" : "false"}
+    >
       <p>{statement.text}</p>
       {statement.citation_references.length > 0 ? (
         <div className="presentation-citations" aria-label="이 설명의 근거">
@@ -416,6 +424,8 @@ function TechnicalRunDrawer({ run }: { run: ReviewRun }): React.ReactElement {
         <div><dt>입력 해시</dt><dd>{run.input_manifest_digest ?? "없음"}</dd></div>
         <div><dt>Agent 버전</dt><dd>{run.release_identity?.agent_package_version ?? "없음"}</dd></div>
         <div><dt>Claude 모델</dt><dd>{run.release_identity?.model_id ?? "없음"}</dd></div>
+        <div><dt>실제 법령 검색 프로필</dt><dd>{run.evidence_profile ?? "없음"}</dd></div>
+        <div><dt>법령 데이터 연결</dt><dd>{run.evidence_data_source ?? "없음"}</dd></div>
         <div><dt>법령 데이터 스냅샷</dt><dd>{run.release_identity?.evidence_snapshot_id ?? "없음"}</dd></div>
       </dl>
       ) : null}

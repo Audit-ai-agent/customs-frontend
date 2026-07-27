@@ -25,6 +25,7 @@ export default defineConfig({
   projects: [
     {
       name: "chrome-1440",
+      grep: /@(primary|responsive)/u,
       use: {
         ...devices["Desktop Chrome"],
         channel: "chrome",
@@ -33,6 +34,7 @@ export default defineConfig({
     },
     {
       name: "edge-1024",
+      grep: /@responsive/u,
       use: {
         ...devices["Desktop Edge"],
         channel: "msedge",
@@ -41,6 +43,7 @@ export default defineConfig({
     },
     {
       name: "chrome-mobile-390",
+      grep: /@responsive/u,
       use: {
         ...devices["Desktop Chrome"],
         channel: "chrome",
