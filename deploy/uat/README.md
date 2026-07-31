@@ -30,7 +30,7 @@ frontend-uat:
 
 두 origin은 credential·path·query·fragment가 없는 HTTP(S) origin이어야 한다. 실제 조합과 network는 개인 `_engineering` UAT harness가 소유한다.
 
-Browser E2E는 저장소 밖 `_secrets/uat/credentials.json` 또는 명시적인 외부
+Browser E2E는 workspace의 Git 밖 `_local/secrets/uat/credentials.json` 또는 명시적인 외부
 `CUSTOMS_E2E_CREDENTIALS_FILE`에서 reviewer 계정을 읽어 실제 Keycloak
 Authorization Code + PKCE 흐름을 통과한다. Token은 계속 Browser 메모리에만
 존재하므로 `storageState`로 우회하지 않으며, credential 입력이 증거에 남지

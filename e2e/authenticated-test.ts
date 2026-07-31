@@ -1,5 +1,6 @@
 import { expect, test as base, type Page } from "@playwright/test";
 import axe from "axe-core";
+import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { dirname, isAbsolute, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -13,10 +14,25 @@ export type UatActorRole = "reviewer" | "approver" | "auditor";
 
 const SCRIPT_DIRECTORY = dirname(fileURLToPath(import.meta.url));
 const REPOSITORY_ROOT = resolve(SCRIPT_DIRECTORY, "..");
-const WORKSPACE_CREDENTIALS_FILE = resolve(
-  SCRIPT_DIRECTORY,
-  "../../../../_secrets/uat/credentials.json",
-);
+
+function workspaceCredentialsFile(): string {
+  let candidateRoot = REPOSITORY_ROOT;
+  while (true) {
+    if (
+      existsSync(resolve(candidateRoot, "_engineering"))
+      && existsSync(resolve(candidateRoot, "_local"))
+    ) {
+      return resolve(candidateRoot, "_local", "secrets", "uat", "credentials.json");
+    }
+    const parent = dirname(candidateRoot);
+    if (parent === candidateRoot) {
+      throw new Error(
+        "Browser E2E workspace credentials are unavailable. Set CUSTOMS_E2E_CREDENTIALS_FILE to an absolute external path.",
+      );
+    }
+    candidateRoot = parent;
+  }
+}
 
 function requiredCredential(value: unknown, field: string): string {
   if (
@@ -52,7 +68,7 @@ async function loadUatCredentials(role: UatActorRole): Promise<UatCredentials> {
 
   const configuredPath = process.env.CUSTOMS_E2E_CREDENTIALS_FILE;
   const credentialsPath = configuredPath === undefined
-    ? WORKSPACE_CREDENTIALS_FILE
+    ? workspaceCredentialsFile()
     : resolve(configuredPath);
   if (configuredPath !== undefined && !isAbsolute(configuredPath)) {
     throw new Error("CUSTOMS_E2E_CREDENTIALS_FILE must be an absolute path outside the repository.");
