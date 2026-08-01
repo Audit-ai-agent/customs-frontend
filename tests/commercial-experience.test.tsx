@@ -579,6 +579,33 @@ describe("commercial-grade local UAT workbench", () => {
     expect(document.activeElement).toBe(trigger);
   });
 
+  it("opens mobile navigation with focus, makes the page inert, and restores focus on Escape", async () => {
+    window.history.replaceState({}, "", "/reviews");
+    render(<CommercialWorkbench {...dependencies()} />);
+    const trigger = await screen.findByRole("button", { name: "메뉴 열기" });
+
+    trigger.focus();
+    fireEvent.click(trigger);
+
+    const sidebar = document.querySelector<HTMLElement>("#commercial-primary-sidebar");
+    const firstNavigationLink = sidebar?.querySelector<HTMLElement>(
+      ".primary-navigation a[href]",
+    );
+    expect(sidebar?.classList.contains("is-open")).toBe(true);
+    expect(document.activeElement).toBe(firstNavigationLink);
+    expect(document.querySelector("#main-content")?.hasAttribute("inert")).toBe(true);
+    expect(document.querySelector(".uat-boundary")?.hasAttribute("inert")).toBe(true);
+    expect(document.body.classList.contains("mobile-navigation-open")).toBe(true);
+
+    fireEvent.keyDown(document, { key: "Escape" });
+
+    await waitFor(() => expect(screen.getByRole("button", { name: "메뉴 열기" })).not.toBeNull());
+    expect(sidebar?.classList.contains("is-open")).toBe(false);
+    expect(document.querySelector("#main-content")?.hasAttribute("inert")).toBe(false);
+    expect(document.body.classList.contains("mobile-navigation-open")).toBe(false);
+    expect(document.activeElement).toBe(trigger);
+  });
+
   it("opens the new-case modal with initial focus, traps Tab, closes with Escape and restores focus", async () => {
     window.history.replaceState({}, "", "/reviews");
     render(<CommercialWorkbench {...dependencies()} />);
@@ -1753,6 +1780,35 @@ describe("commercial-grade local UAT workbench", () => {
     expect(next.experienceApi.listAssistantJobs).not.toHaveBeenCalled();
     expect(next.experienceApi.sendMessage).not.toHaveBeenCalled();
     expect(await screen.findByText("검색된 법령 근거의 의미를 설명합니다.")).not.toBeNull();
+  });
+
+  it("scrolls to a completed Assistant answer, announces it politely, and restores composer focus", async () => {
+    const next = dependencies();
+    const question = "이번 심사의 결론을 설명해 주십시오.";
+    const response = assistantEnqueueResponse(question);
+    const answer = {
+      ...groundedAssistantMessage,
+      parent_message_id: response.user_message.message_id,
+    };
+    const scrollSpy = vi.spyOn(HTMLElement.prototype, "scrollIntoView");
+    vi.mocked(next.experienceApi.listConversations).mockResolvedValue([conversation]);
+    vi.mocked(next.experienceApi.listMessages)
+      .mockResolvedValueOnce([])
+      .mockResolvedValue([response.user_message, answer]);
+    vi.mocked(next.experienceApi.sendMessage).mockResolvedValue(response);
+    window.history.replaceState({}, "", "/cases/case-1/assistant");
+    render(<CommercialWorkbench {...next} />);
+    const textarea = await screen.findByLabelText("AI 심사 도우미에게 질문");
+    await waitFor(() => expect((textarea as HTMLTextAreaElement).disabled).toBe(false));
+
+    await userEvent.type(textarea, question);
+    await userEvent.click(screen.getByRole("button", { name: "질문하기" }));
+
+    const announcement = await screen.findByTestId("assistant-completion-announcement");
+    expect(announcement.getAttribute("aria-live")).toBe("polite");
+    expect(announcement.textContent).toContain("새 답변이 준비되었습니다");
+    await waitFor(() => expect(document.activeElement).toBe(textarea));
+    expect(scrollSpy).toHaveBeenCalledWith({ behavior: "auto", block: "end" });
   });
 
   it("keeps a known uncertain Assistant Job bound and disables all new questions", async () => {

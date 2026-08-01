@@ -67,14 +67,29 @@ export function AssistantPage(): React.ReactElement {
   const [submitting, setSubmitting] = useState(false);
   const [draft, setDraft] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [completedAnswerId, setCompletedAnswerId] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const activeRunRef = useRef<string | null>(selectedRun?.review_run_id ?? null);
+  const messagesEndRef = useRef<HTMLDivElement | null>(null);
+  const questionInputRef = useRef<HTMLTextAreaElement | null>(null);
+  const restoreComposerFocusRef = useRef(false);
 
   activeRunRef.current = selectedRun?.review_run_id ?? null;
 
-  const loadMessages = async (target: AssistantConversation): Promise<AssistantMessage[]> => {
+  const loadMessages = async (
+    target: AssistantConversation,
+    announceLatestAnswer = false,
+  ): Promise<AssistantMessage[]> => {
     const next = await experienceApi.listMessages(target);
-    if (target.review_run_id === activeRunRef.current) setMessages(next);
+    if (target.review_run_id === activeRunRef.current) {
+      setMessages(next);
+      if (announceLatestAnswer) {
+        const latestAnswer = [...next].reverse().find((message) => (
+          message.role === "assistant" && message.answer !== null
+        ));
+        if (latestAnswer) setCompletedAnswerId(latestAnswer.message_id);
+      }
+    }
     return next;
   };
 
@@ -106,7 +121,7 @@ export function AssistantPage(): React.ReactElement {
         return;
       }
       if (beforeStream.state === "succeeded") {
-        await loadMessages(targetConversation);
+        await loadMessages(targetConversation, true);
         clearPendingAssistant();
         setPending(null);
         return;
@@ -142,7 +157,7 @@ export function AssistantPage(): React.ReactElement {
         return;
       }
       if (current.state === "succeeded") {
-        if (targetConversation) await loadMessages(targetConversation);
+        if (targetConversation) await loadMessages(targetConversation, true);
         clearPendingAssistant();
         setPending(null);
       } else if (UNCERTAIN_ASSISTANT_STATES.has(current.state)) {
@@ -173,6 +188,8 @@ export function AssistantPage(): React.ReactElement {
     setSubmitting(false);
     setLoading(true);
     setError(null);
+    setCompletedAnswerId(null);
+    restoreComposerFocusRef.current = false;
     if (!selectedRun?.provider_result_sha256 || !selectedRun.result_digest) {
       setLoading(false);
       return;
@@ -305,6 +322,16 @@ export function AssistantPage(): React.ReactElement {
     ), 1_000);
     return () => window.clearInterval(timer);
   }, [pending]);
+
+  useEffect(() => {
+    if (!completedAnswerId) return;
+    messagesEndRef.current?.scrollIntoView({ behavior: "auto", block: "end" });
+    const questionInput = questionInputRef.current;
+    if (restoreComposerFocusRef.current && questionInput && !questionInput.disabled) {
+      questionInput.focus({ preventScroll: true });
+    }
+    restoreComposerFocusRef.current = false;
+  }, [completedAnswerId]);
 
   const ask = async (question: string): Promise<void> => {
     const clean = question.trim();
@@ -449,6 +476,7 @@ export function AssistantPage(): React.ReactElement {
   const submit = (event: FormEvent<HTMLFormElement>): void => {
     event.preventDefault();
     const question = draft;
+    restoreComposerFocusRef.current = true;
     setDraft("");
     void ask(question);
   };
@@ -495,7 +523,7 @@ export function AssistantPage(): React.ReactElement {
             <span><Icon name="assistant" /></span>
             <div><strong>무엇을 확인해 드릴까요?</strong><p>결과의 원인, 법령 근거의 의미, 다음 조치뿐 아니라 일반 통관 용어와 절차도 질문할 수 있습니다.</p></div>
           </div>
-          <div className="assistant-messages" aria-live="polite">
+          <div className="assistant-messages">
             {loading ? <p className="inline-loading">이전 대화를 불러오는 중입니다.</p> : null}
             {!loading && !conversationMatchesRun && !canAskAssistant ? (
               <p className="assistant-empty">이 심사 회차에 저장된 대화가 없습니다.</p>
@@ -520,7 +548,19 @@ export function AssistantPage(): React.ReactElement {
                 다른 심사 회차의 답변 작업을 확인 중이므로 이 화면에서 새 질문을 보낼 수 없습니다.
               </p>
             ) : null}
+            <div ref={messagesEndRef} className="assistant-scroll-anchor" aria-hidden="true" />
           </div>
+          {completedAnswerId ? (
+            <p
+              key={completedAnswerId}
+              className="sr-only"
+              role="status"
+              aria-live="polite"
+              data-testid="assistant-completion-announcement"
+            >
+              AI 심사 도우미의 새 답변이 준비되었습니다.
+            </p>
+          ) : null}
           <div className="suggested-questions" aria-label="추천 질문">
             {suggestions.slice(0, 3).map((question) => (
               <button key={question} type="button" onClick={() => void ask(question)} disabled={submitting || pending !== null || !conversationMatchesRun || !canAskAssistant}>
@@ -531,6 +571,7 @@ export function AssistantPage(): React.ReactElement {
           <form className="assistant-composer" onSubmit={submit}>
             <label htmlFor="assistant-question" className="sr-only">AI 심사 도우미에게 질문</label>
             <textarea
+              ref={questionInputRef}
               id="assistant-question"
               name="question"
               rows={2}

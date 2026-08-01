@@ -567,7 +567,9 @@ test.describe("상용형 내부 UAT 사용자 작업대", () => {
         '.run-history li[data-parent-run-id]:not([data-parent-run-id=""])',
       );
       await expect(childRun).toHaveCount(1);
+      const childRunId = await childRun.getAttribute("data-review-run-id");
       const parentRunId = await childRun.getAttribute("data-parent-run-id");
+      expect(childRunId).toBeTruthy();
       expect(parentRunId).toBeTruthy();
       await expect(runHistory.locator(`[data-review-run-id="${parentRunId}"]`)).toHaveCount(1);
       expect(await approverPage.locator(".audit-timeline li").count()).toBeGreaterThanOrEqual(6);
@@ -580,6 +582,30 @@ test.describe("상용형 내부 UAT 사용자 작업대", () => {
       const history = approverPage.getByTestId("history-page");
       await expect(history).toContainText("revision_proposal.created");
       await expect(history).toContainText("correction_proposal.decided");
+
+      await childRun.getByRole("link", { name: "이 회차 결과 보기" }).click();
+      await expect(approverPage.locator("#result-heading")).toHaveAttribute(
+        "data-review-run-id",
+        childRunId!,
+      );
+      await approverPage.goto(
+        `/cases/${encodeURIComponent(caseId)}/documents?run=${encodeURIComponent(childRunId!)}`,
+      );
+      await expect(approverPage.getByTestId("documents-page")).toBeVisible();
+      const documentButtons = approverPage.locator(".document-list button");
+      let correctedValueFound = false;
+      for (let index = 0; index < await documentButtons.count(); index += 1) {
+        await documentButtons.nth(index).click();
+        const correctedValue = approverPage
+          .locator(`.extracted-field-list [data-review-run-id="${childRunId}"] dd`)
+          .filter({ hasText: "UAT 담당자 재확인 값" });
+        if (await correctedValue.count() > 0) {
+          await expect(correctedValue).toHaveCount(1);
+          correctedValueFound = true;
+          break;
+        }
+      }
+      expect(correctedValueFound).toBe(true);
     } finally {
       await approverContext.close();
     }

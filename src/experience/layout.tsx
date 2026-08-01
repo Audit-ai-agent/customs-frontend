@@ -19,12 +19,36 @@ export function ApplicationFrame({ children }: PropsWithChildren): React.ReactEl
   const { cases, session, metadata, logout } = useWorkbench();
   const [navigationOpen, setNavigationOpen] = useState(false);
   const [technicalOpen, setTechnicalOpen] = useState(false);
+  const mobileMenuTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const mobileSidebarRef = useRef<HTMLElement | null>(null);
   const technicalTriggerRef = useRef<HTMLButtonElement | null>(null);
   const technicalDrawerRef = useRef<HTMLElement | null>(null);
   const location = useLocation();
   const navigate = useNavigate();
   const selectedCaseId = caseIdFromPath(location.pathname);
   const selectedCase = cases.find((item) => item.case_id === selectedCaseId);
+
+  useEffect(() => {
+    if (!navigationOpen) return;
+    const trigger = mobileMenuTriggerRef.current;
+    const sidebar = mobileSidebarRef.current;
+    const firstTarget = sidebar?.querySelector<HTMLElement>(
+      "a[href], button:not([disabled])",
+    );
+    document.body.classList.add("mobile-navigation-open");
+    firstTarget?.focus();
+    const handleKeyDown = (event: KeyboardEvent): void => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      setNavigationOpen(false);
+    };
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("keydown", handleKeyDown);
+      document.body.classList.remove("mobile-navigation-open");
+      trigger?.focus();
+    };
+  }, [navigationOpen]);
 
   useEffect(() => {
     if (!technicalOpen) return;
@@ -80,19 +104,19 @@ export function ApplicationFrame({ children }: PropsWithChildren): React.ReactEl
     <div className="commercial-app">
       <HashTargetFocus />
       <header className="commercial-topbar">
-        <Link className="commercial-brand" to="/reviews" aria-label="통관 AI 사전심사 업무함">
+        <Link className="commercial-brand" to="/reviews" aria-label="통관 AI 사전심사 업무함" inert={navigationOpen ? true : undefined}>
           <span className="commercial-brand__mark">C</span>
           <span>
             <strong>통관 AI 사전심사</strong>
             <small>심사 담당자 작업대</small>
           </span>
         </Link>
-        <div className="environment-summary" aria-label="현재 검증 환경">
+        <div className="environment-summary" aria-label="현재 검증 환경" inert={navigationOpen ? true : undefined}>
           <span><Icon name="shield" />검증 환경</span>
           <span>실제 법령 3종</span>
           <span className="environment-summary__off">자동 처리 꺼짐</span>
         </div>
-        <div className="commercial-user">
+        <div className="commercial-user" inert={navigationOpen ? true : undefined}>
           <span>
             <strong>로그인 사용자</strong>
             <small>{session.roles.map((role) => roleLabels[role]).join(" · ")}</small>
@@ -102,17 +126,22 @@ export function ApplicationFrame({ children }: PropsWithChildren): React.ReactEl
           </button>
         </div>
         <button
+          ref={mobileMenuTriggerRef}
           className="mobile-menu"
           type="button"
           aria-label={navigationOpen ? "메뉴 닫기" : "메뉴 열기"}
           aria-expanded={navigationOpen}
-          onClick={() => setNavigationOpen((value) => !value)}
+          aria-controls="commercial-primary-sidebar"
+          onClick={() => {
+            setTechnicalOpen(false);
+            setNavigationOpen((value) => !value);
+          }}
         >
           <Icon name={navigationOpen ? "close" : "menu"} />
         </button>
       </header>
 
-      <aside className="uat-boundary" aria-label="내부 사용자 검증 범위">
+      <aside className="uat-boundary" aria-label="내부 사용자 검증 범위" inert={navigationOpen ? true : undefined}>
         <strong>내부 사용자 검증용</strong>
         <span>텍스트 문서만 지원하며, 법적 통관 승인 결과가 아닙니다.</span>
         <button
@@ -167,8 +196,21 @@ export function ApplicationFrame({ children }: PropsWithChildren): React.ReactEl
         </aside>
       ) : null}
 
+      {navigationOpen ? (
+        <div
+          className="mobile-navigation-backdrop"
+          aria-hidden="true"
+          onClick={() => setNavigationOpen(false)}
+        />
+      ) : null}
+
       <div className="commercial-layout">
-        <aside className={`commercial-sidebar${navigationOpen ? " is-open" : ""}`} aria-label="주요 메뉴">
+        <aside
+          ref={mobileSidebarRef}
+          id="commercial-primary-sidebar"
+          className={`commercial-sidebar${navigationOpen ? " is-open" : ""}`}
+          aria-label="주요 메뉴"
+        >
           <nav className="primary-navigation">
             <NavLink to="/reviews" onClick={() => setNavigationOpen(false)}>
               <Icon name="home" /><span>심사 업무함</span>
@@ -210,7 +252,12 @@ export function ApplicationFrame({ children }: PropsWithChildren): React.ReactEl
             <p><strong>사람 검토 원칙</strong><span>Agent 결과는 담당자의 최종 확인을 거칩니다.</span></p>
           </div>
         </aside>
-        <main id="main-content" className="commercial-main" tabIndex={-1}>
+        <main
+          id="main-content"
+          className="commercial-main"
+          tabIndex={-1}
+          inert={navigationOpen ? true : undefined}
+        >
           {children}
         </main>
       </div>
