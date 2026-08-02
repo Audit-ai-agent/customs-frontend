@@ -5,6 +5,7 @@ import type {
   ReviewRun,
   SupportingDocumentRecord,
 } from "../../api/v1/types";
+import type { PublicStageEvent, ReviewJobExperience } from "../../api/v2/types";
 import { canMutate } from "../capabilities";
 import { useCaseWorkspace } from "../case-context";
 import { useWorkbench } from "../context";
@@ -15,19 +16,33 @@ import {
   actorRoleLabel,
   fieldLabel,
   findingLabel,
+  formatDuration,
   issueLabel,
   severityLabels,
+  stageLabels,
 } from "../labels";
+
+const CHILD_REVIEW_OBSERVATION_TIMEOUT_MS = 12 * 60 * 1_000;
+const CHILD_REVIEW_TERMINAL_STATES = new Set([
+  "succeeded",
+  "failed",
+  "delivery_uncertain",
+  "response_received_rejected",
+  "response_persistence_uncertain",
+]);
 
 export function ReviewActionsPage(): React.ReactElement {
   const { caseDetail, selectedRun, loadingRun, refresh } = useCaseWorkspace();
-  const { api, session } = useWorkbench();
+  const { api, experienceApi, session } = useWorkbench();
   const [proposals, setProposals] = useState<CorrectionProposal[]>([]);
   const [supportingDocuments, setSupportingDocuments] = useState<SupportingDocumentRecord[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [childReview, setChildReview] = useState<ReviewJobExperience | null>(null);
+  const [childReviewEvents, setChildReviewEvents] = useState<PublicStageEvent[]>([]);
   const activeRunRef = useRef<string | null>(selectedRun?.review_run_id ?? null);
+  const childReviewAbortRef = useRef<AbortController | null>(null);
   const canPropose = canMutate(session, "propose_revision");
   const canDecide = canMutate(session, "decide_revision");
 
@@ -61,6 +76,8 @@ export function ReviewActionsPage(): React.ReactElement {
       }
     });
   }, [api, caseDetail.case_id, selectedRun?.review_run_id]);
+
+  useEffect(() => () => childReviewAbortRef.current?.abort(), []);
 
   if (!selectedRun) {
     return <div className="empty-business-state content-panel"><Icon name="actions" /><h2>담당자 검토를 시작할 결과가 없습니다.</h2><p>심사를 실행한 뒤 확인·수정·재심사를 진행할 수 있습니다.</p></div>;
@@ -163,21 +180,74 @@ export function ReviewActionsPage(): React.ReactElement {
     ]);
     setBusy(true);
     setError(null);
+    setNotice(null);
     try {
-      await api.decideRevisionProposal(proposal.proposal_id, {
+      const response = await api.decideRevisionProposal(proposal.proposal_id, {
         decision,
         reason,
         parent_result_digest: selectedRun.result_digest,
         case_revision: caseDetail.revision,
       }, idempotencyKey);
-      await Promise.all([loadProposals(), refresh()]);
-      setNotice(decision === "approve"
-        ? "제안을 승인하고 새 심사 회차를 요청했습니다."
-        : "제안을 거절했습니다. 기존 심사 결과는 유지됩니다.");
+      await loadProposals();
+      if (decision === "reject") {
+        await refresh();
+        setNotice("제안을 거절했습니다. 기존 심사 결과는 유지됩니다.");
+        return;
+      }
+      if (!response.job) {
+        throw new Error("승인은 저장됐지만 새 심사 작업을 확인할 수 없습니다. 같은 요청을 다시 보내지 말고 담당자에게 확인해 주십시오.");
+      }
+      setChildReview(null);
+      setChildReviewEvents([]);
+      setNotice("수정 제안을 승인했습니다. Agent가 수정값을 반영한 새 심사 회차를 진행합니다.");
+      await observeChildReview(response.job.job_id, response.job.case_id);
     } catch (reason) {
       setError(userFacingErrorMessage(reason, "제안 결정을 저장하지 못했습니다."));
     } finally {
       setBusy(false);
+    }
+  };
+
+  const observeChildReview = async (jobId: string, expectedCaseId: string): Promise<void> => {
+    childReviewAbortRef.current?.abort();
+    const controller = new AbortController();
+    childReviewAbortRef.current = controller;
+    const timeout = window.setTimeout(() => controller.abort(), CHILD_REVIEW_OBSERVATION_TIMEOUT_MS);
+    try {
+      const current = await experienceApi.getReviewJob(jobId, expectedCaseId);
+      if (current.job.status !== "succeeded") setChildReview(current);
+      if (!CHILD_REVIEW_TERMINAL_STATES.has(current.job.status)) {
+        await experienceApi.streamReviewEvents(jobId, (event) => {
+          setChildReviewEvents((previous) => (
+            previous.some((item) => item.sequence === event.sequence)
+              ? previous
+              : [...previous, event].sort((left, right) => left.sequence - right.sequence)
+          ));
+        }, controller.signal);
+      }
+      const final = CHILD_REVIEW_TERMINAL_STATES.has(current.job.status)
+        ? current
+        : await experienceApi.getReviewJob(jobId, expectedCaseId);
+      if (final.job.status !== "succeeded") {
+        setChildReview(final);
+        if (CHILD_REVIEW_TERMINAL_STATES.has(final.job.status)) {
+          throw new Error(childReviewFailureMessage(final.job.status));
+        }
+        throw new Error("재심사 단계 연결이 먼저 종료되었습니다. 같은 요청을 다시 보내지 말고 심사 이력에서 진행 상태를 확인해 주십시오.");
+      }
+      await refresh();
+      if (!controller.signal.aborted) {
+        setChildReview(final);
+        setNotice("재심사가 완료되어 수정값, 새 심사 회차와 감사 이력을 반영했습니다.");
+      }
+    } catch (reason) {
+      if (controller.signal.aborted) {
+        throw new Error("재심사 확인 시간이 지났습니다. 같은 요청을 다시 보내지 말고 심사 이력에서 진행 상태를 확인해 주십시오.");
+      }
+      throw reason;
+    } finally {
+      window.clearTimeout(timeout);
+      if (childReviewAbortRef.current === controller) childReviewAbortRef.current = null;
     }
   };
 
@@ -202,6 +272,24 @@ export function ReviewActionsPage(): React.ReactElement {
       </header>
       {notice ? <p className="success-notice" role="status">{notice}</p> : null}
       {error ? <p className="form-alert" role="alert">{error}</p> : null}
+      {childReview ? (
+        <section
+          className={`review-launcher${childReview.job.status === "succeeded" ? "" : " is-active"}`}
+          data-testid="child-review-progress"
+          data-job-state={childReview.job.status}
+          data-child-job-id={childReview.job.job_id}
+          data-child-review-run-id={childReview.job.review_run_id}
+          aria-live="polite"
+        >
+          <div className="review-launcher__copy">
+            <p className="overline">수정 반영 재심사</p>
+            <h3>{childReview.job.status === "succeeded"
+              ? "새 심사 회차가 완료되었습니다."
+              : "Agent가 수정값을 반영해 다시 심사하고 있습니다."}</h3>
+            <p>{childReviewStageMessage(childReview, childReviewEvents.at(-1))}</p>
+          </div>
+        </section>
+      ) : null}
       <section className="action-summary-grid">
         <article className="content-panel">
           <div className="section-heading"><div><h3>문서 확인 사항</h3><p>원문과 대조해야 할 값입니다.</p></div><span>{selectedRun.issues.length}</span></div>
@@ -464,4 +552,28 @@ function displayProposalValue(value: unknown): string {
   if (typeof value === "boolean") return value ? "예" : "아니요";
   if (typeof value === "string" || typeof value === "number") return String(value);
   return "구조화된 값";
+}
+
+function childReviewFailureMessage(status: string): string {
+  if (status === "delivery_uncertain" || status === "response_persistence_uncertain") {
+    return "재심사 요청의 전달 또는 저장 완료 여부를 확정할 수 없습니다. 중복 실행하지 말고 심사 이력에서 서버 확인 결과를 기다려 주십시오.";
+  }
+  if (status === "response_received_rejected") {
+    return "재심사 결과가 안전 검증을 통과하지 못해 반영되지 않았습니다. 기존 심사 결과를 유지하고 담당자에게 확인해 주십시오.";
+  }
+  return "재심사를 안전하게 완료하지 못했습니다. 기존 심사 결과를 유지하고 담당자에게 확인해 주십시오.";
+}
+
+function childReviewStageMessage(
+  review: ReviewJobExperience,
+  latest: PublicStageEvent | undefined,
+): string {
+  if (review.job.status === "succeeded") {
+    return `총 ${formatDuration(review.elapsed_seconds)} 동안 처리했으며 새 회차와 감사 이력을 확인할 수 있습니다.`;
+  }
+  if (CHILD_REVIEW_TERMINAL_STATES.has(review.job.status)) {
+    return childReviewFailureMessage(review.job.status);
+  }
+  const stage = latest ? stageLabels[latest.stage_code] : "재심사 실행 준비";
+  return `${stage} 단계입니다. 현재 ${formatDuration(review.elapsed_seconds)} 경과했으며 예상 범위는 ${formatDuration(review.eta.lower_seconds)}~${formatDuration(review.eta.upper_seconds)}입니다.`;
 }

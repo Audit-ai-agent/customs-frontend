@@ -434,18 +434,31 @@ export class ApiClient {
         const item = decodeCorrectionProposal(value);
         this.assertIdentity(item.review_run_id, runId, "Revision proposal Run");
         this.assertIdentity(item.parent_result_digest, payload.parent_result_digest, "Revision proposal parent result");
+        this.assertIdentity(
+          item.parent_input_manifest_sha256,
+          payload.parent_input_manifest_sha256,
+          "Revision proposal parent input manifest",
+        );
+        if (item.case_revision !== payload.case_revision) {
+          throw new ContractError("Revision proposal response does not match the requested Case revision");
+        }
+        if (
+          canonicalJson(normalizeRevisionProposal(item))
+          !== canonicalJson(normalizeRevisionProposal(payload))
+        ) {
+          throw new ContractError("Revision proposal response does not match the submitted proposal");
+        }
         this.assertOrg(item.org_id, "Revision proposal");
         this.assertActor(item.created_by, "Revision proposal creator");
-        this.assertIdempotencyBinding(
+        // The Backend stores this digest after Pydantic has typed `confidence`
+        // as a Python float. JavaScript intentionally treats 1 and 1.0 as the
+        // same JSON number, so the Browser validates the complete semantic echo
+        // above and treats the already shape-checked server digest as opaque.
+        this.assertScopedIdempotencyKey(
           item.idempotency_key,
-          item.idempotency_request_digest,
           "revision-proposal.create/v1",
           item.case_id,
           idempotencyKey,
-          {
-            review_run_id: runId,
-            proposal: normalizeRevisionProposal(payload),
-          },
           "Revision proposal",
         );
         return item;
@@ -658,6 +671,25 @@ export class ApiClient {
     requestPayload: unknown,
     context: string,
   ): void {
+    this.assertScopedIdempotencyKey(
+      actualKey,
+      endpoint,
+      caseId,
+      suppliedKey,
+      context,
+    );
+    if (actualRequestDigest !== canonicalSha256(requestPayload)) {
+      throw new ContractError(`${context} response does not match the submitted request digest`);
+    }
+  }
+
+  private assertScopedIdempotencyKey(
+    actualKey: string | null | undefined,
+    endpoint: "revision-proposal.create/v1" | "revision-proposal.decide/v1" | "case.answer/v1",
+    caseId: string,
+    suppliedKey: string,
+    context: string,
+  ): void {
     if (this.session === undefined) {
       throw new ContractError(`${context} idempotency binding requires an authenticated session`);
     }
@@ -670,9 +702,6 @@ export class ApiClient {
     })}`;
     if (actualKey !== expectedKey) {
       throw new ContractError(`${context} response does not match the scoped idempotency identity`);
-    }
-    if (actualRequestDigest !== canonicalSha256(requestPayload)) {
-      throw new ContractError(`${context} response does not match the submitted request digest`);
     }
   }
 
@@ -782,7 +811,9 @@ function validateEventSequence(events: ReviewStageEvent[], jobId: string): void 
   }
 }
 
-function normalizeRevisionProposal(payload: RevisionProposalCreate): Record<string, unknown> {
+function normalizeRevisionProposal(
+  payload: RevisionProposalCreate | CorrectionProposal,
+): Record<string, unknown> {
   return {
     parent_result_digest: payload.parent_result_digest,
     parent_input_manifest_sha256: payload.parent_input_manifest_sha256,

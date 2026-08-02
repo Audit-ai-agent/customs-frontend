@@ -184,7 +184,7 @@ async function sendAssistantQuestion(
 async function expectCompletedRevisionJourney(page: Page, caseId: string): Promise<void> {
   await page.goto(`/cases/${encodeURIComponent(caseId)}/history`);
   const runHistory = page.locator(".run-history li");
-  await expect(runHistory).toHaveCount(2, { timeout: 7 * 60 * 1_000 });
+  await expect(runHistory).toHaveCount(2, { timeout: 30_000 });
   const childRun = page.locator(
     '.run-history li[data-parent-run-id]:not([data-parent-run-id=""])',
   );
@@ -639,6 +639,13 @@ test.describe("상용형 내부 UAT 사용자 작업대", () => {
         "제안자와 다른 승인 담당자로서 원문 결박과 수정 사유를 확인했습니다.",
       );
       await pending.getByRole("button", { name: "승인·재심사" }).click();
+      const childReviewProgress = approverPage.getByTestId("child-review-progress");
+      await expect(childReviewProgress).toBeVisible({ timeout: 30_000 });
+      await expect(childReviewProgress).toHaveAttribute(
+        "data-job-state",
+        "succeeded",
+        { timeout: 12 * 60 * 1_000 },
+      );
       await expectCompletedRevisionJourney(approverPage, caseId);
     } finally {
       await approverContext.close();

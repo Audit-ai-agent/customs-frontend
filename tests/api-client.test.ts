@@ -1884,7 +1884,17 @@ describe("Backend API v1 client", () => {
       parent_result_digest: "a".repeat(64),
       parent_input_manifest_sha256: "b".repeat(64),
       case_revision: 2,
-      actions: [{ decision: "confirm_field" as const, reason: "verified", confirmed_reference_id: "source-1" }],
+      actions: [{
+        decision: "correct_field" as const,
+        reason: "verified",
+        correction: {
+          document_id: "doc-1",
+          field_path: "fields.invoice_no",
+          new_value: "INV-NEW",
+          reason: "verified",
+          confidence: 1,
+        },
+      }],
     };
     const createKey = "proposal-create-1";
     const decisionRequest = {
@@ -1911,17 +1921,9 @@ describe("Backend API v1 client", () => {
         case_id: "case-1",
         supplied_key: createKey,
       })}`,
-      idempotency_request_digest: canonicalSha256({
-        review_run_id: "run-1",
-        proposal: {
-          ...proposalRequest,
-          actions: [{
-            ...proposalRequest.actions[0],
-            correction: null,
-            supporting_document_id: null,
-          }],
-        },
-      }),
+      // Backend canonicalizes the typed float as `1.0`; the Browser treats this
+      // server-owned digest as opaque and validates the complete semantic echo.
+      idempotency_request_digest: "d".repeat(64),
       status: "approved",
       created_by: "reviewer-1",
       created_at: "2026-07-21T00:00:00Z",
@@ -1964,5 +1966,58 @@ describe("Backend API v1 client", () => {
     expect(fetcher.mock.calls[1]?.[0]).toBe("/api/v1/review-runs/run-1/revision-proposals");
     expect(new Headers(fetcher.mock.calls[2]?.[1]?.headers).get("Idempotency-Key")).toBe(decisionKey);
     expect(fetcher.mock.calls[2]?.[0]).toBe("/api/v1/revision-proposals/proposal-1/decisions");
+  });
+
+  it("rejects a typed revision proposal whose semantic echo was changed", async () => {
+    const request = {
+      parent_result_digest: "a".repeat(64),
+      parent_input_manifest_sha256: "b".repeat(64),
+      case_revision: 2,
+      actions: [{
+        decision: "correct_field" as const,
+        reason: "verified",
+        correction: {
+          document_id: "doc-1",
+          field_path: "fields.invoice_no",
+          new_value: "INV-NEW",
+          reason: "verified",
+          confidence: 1,
+        },
+      }],
+    };
+    const suppliedKey = "proposal-semantic-binding";
+    const response = {
+      proposal_id: "proposal-1",
+      org_id: "org-1",
+      case_id: "case-1",
+      review_run_id: "run-1",
+      parent_result_digest: request.parent_result_digest,
+      parent_input_manifest_sha256: request.parent_input_manifest_sha256,
+      case_revision: request.case_revision,
+      corrections: [],
+      actions: [{
+        ...request.actions[0]!,
+        correction: { ...request.actions[0]!.correction, new_value: "FORGED" },
+      }],
+      idempotency_key: `idem_${canonicalSha256({
+        endpoint: "revision-proposal.create/v1",
+        actor_id: "reviewer-1",
+        org_id: "org-1",
+        case_id: "case-1",
+        supplied_key: suppliedKey,
+      })}`,
+      idempotency_request_digest: "e".repeat(64),
+      status: "pending",
+      created_by: "reviewer-1",
+      created_at: "2026-07-21T00:00:00Z",
+    };
+    const fetcher = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(json({ subject: "reviewer-1", org_id: "org-1", roles: ["reviewer"] }))
+      .mockResolvedValueOnce(json(response, 201));
+    const client = new ApiClient(fetcher, () => "token");
+    await client.getSession();
+
+    await expect(client.createRevisionProposal("run-1", request, suppliedKey))
+      .rejects.toThrow("submitted proposal");
   });
 });
