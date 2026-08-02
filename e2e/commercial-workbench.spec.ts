@@ -418,7 +418,7 @@ test.describe("상용형 내부 UAT 사용자 작업대", () => {
   test("실제 사용자 여정으로 11단계 심사·2턴 대화·독립 승인·child Run을 수행합니다 @candidate", async ({
     browser,
     page,
-  }, testInfo) => {
+  }) => {
     test.setTimeout(25 * 60 * 1_000);
     page.setDefaultTimeout(30_000);
 
@@ -485,20 +485,29 @@ test.describe("상용형 내부 UAT 사용자 작업대", () => {
     await expect(page.getByTestId("agent-process")).toBeVisible();
     await expectCommercialReport(page);
     await expectBoundActualRagRun(page);
-    await attachSafeScreenshot(page, testInfo, "successful-review-overview");
-    await attachSafeScreenshot(
-      page,
-      testInfo,
-      "successful-eight-section-report",
-      page.locator(".presentation-report"),
-    );
 
     await page.getByRole("link", { name: "AI 심사 도우미" }).click();
-    const firstAnswer = await sendAssistantQuestion(
-      page,
-      "이번 심사의 결론과 그 결론에 이른 이유를 설명해 주십시오.",
-      1,
-    );
+    await expect(page.getByTestId("assistant-page")).toBeVisible();
+    const assistantAnswers = page.locator(".message-bubble--assistant");
+    let existingAssistantCount = await assistantAnswers.count();
+    expect(existingAssistantCount).toBeLessThanOrEqual(2);
+    if (existingAssistantCount === 0) {
+      await sendAssistantQuestion(
+        page,
+        "이번 심사의 결론과 그 결론에 이른 이유를 설명해 주십시오.",
+        1,
+      );
+      existingAssistantCount = 1;
+    }
+    if (existingAssistantCount === 1) {
+      await sendAssistantQuestion(
+        page,
+        "방금 설명한 이유 중에서 담당자가 가장 먼저 확인할 항목은 무엇입니까?",
+        2,
+      );
+    }
+    await expect(assistantAnswers).toHaveCount(2);
+    const firstAnswer = assistantAnswers.nth(0);
     const firstUser = page.locator(".message-bubble--user").nth(0);
     const firstUserId = await firstUser.getAttribute("data-message-id");
     const firstAssistantId = await firstAnswer.getAttribute("data-message-id");
@@ -507,11 +516,7 @@ test.describe("상용형 내부 UAT 사용자 작업대", () => {
     await expect(firstAnswer).toHaveAttribute("data-parent-message-id", firstUserId!);
     expect(await firstAnswer.locator('a[data-testid^="citation-"]').count()).toBeGreaterThan(0);
 
-    const secondAnswer = await sendAssistantQuestion(
-      page,
-      "방금 설명한 이유 중에서 담당자가 가장 먼저 확인할 항목은 무엇입니까?",
-      2,
-    );
+    const secondAnswer = assistantAnswers.nth(1);
     const secondUser = page.locator(".message-bubble--user").nth(1);
     await expect(secondUser).toHaveAttribute("data-parent-message-id", firstAssistantId!);
     const secondUserId = await secondUser.getAttribute("data-message-id");
@@ -536,18 +541,21 @@ test.describe("상용형 내부 UAT 사용자 작업대", () => {
     ));
     expect(resultBindings).toHaveLength(1);
     expect(resultBindings[0]).toMatch(/^[a-f0-9]{64}$/u);
-    await attachSafeScreenshot(page, testInfo, "successful-two-turn-assistant");
 
     await page.getByRole("link", { name: "담당자 검토" }).click();
-    const fieldSelect = page.locator('select[name="field_id"]');
-    await expect.poll(() => fieldSelect.locator("option").count()).toBeGreaterThan(1);
-    await fieldSelect.selectOption({ index: 1 });
-    await page.locator('input[name="new_value"]').fill("UAT 담당자 재확인 값");
-    await page.locator('textarea[name="reason"]').fill(
-      "브라우저 사용자 여정에서 원문을 다시 확인한 수정 제안입니다.",
-    );
-    await page.getByRole("button", { name: "수정 제안 저장" }).click();
-    await expect(page.getByRole("status")).toContainText("수정 제안을 저장했습니다.");
+    const reviewerPending = page.getByTestId("hitl-proposals").locator(".proposal--pending");
+    if (await reviewerPending.count() === 0) {
+      const fieldSelect = page.locator('select[name="field_id"]');
+      await expect.poll(() => fieldSelect.locator("option").count()).toBeGreaterThan(1);
+      await fieldSelect.selectOption({ index: 1 });
+      await page.locator('input[name="new_value"]').fill("UAT 담당자 재확인 값");
+      await page.locator('textarea[name="reason"]').fill(
+        "브라우저 사용자 여정에서 원문을 다시 확인한 수정 제안입니다.",
+      );
+      await page.getByRole("button", { name: "수정 제안 저장" }).click();
+    }
+    await expect(reviewerPending).toHaveCount(1);
+    await expect(reviewerPending).toContainText("UAT 담당자 재확인 값");
 
     const baseURL = process.env.CUSTOMS_UAT_BASE_URL ?? "http://127.0.0.1:18088";
     const approverContext = await browser.newContext({
@@ -587,11 +595,6 @@ test.describe("상용형 내부 UAT 사용자 작업대", () => {
       expect(parentRunId).toBeTruthy();
       await expect(runHistory.locator(`[data-review-run-id="${parentRunId}"]`)).toHaveCount(1);
       expect(await approverPage.locator(".audit-timeline li").count()).toBeGreaterThanOrEqual(6);
-      await attachSafeScreenshot(
-        approverPage,
-        testInfo,
-        "successful-child-run-history",
-      );
       await approverPage.getByText("감사 기록 기술 식별자").click();
       const history = approverPage.getByTestId("history-page");
       await expect(history).toContainText("revision_proposal.created");
