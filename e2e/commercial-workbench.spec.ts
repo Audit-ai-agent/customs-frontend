@@ -423,6 +423,7 @@ test.describe("상용형 내부 UAT 사용자 작업대", () => {
     page.setDefaultTimeout(30_000);
 
     const resumeCaseId = process.env.CUSTOMS_E2E_CANDIDATE_CASE_ID;
+    const resumeCompletedReview = resumeCaseId !== undefined;
     let caseId: string;
     if (resumeCaseId !== undefined) {
       caseId = resumeCaseId;
@@ -438,7 +439,7 @@ test.describe("상용형 내부 UAT 사용자 작업대", () => {
       expect(caseMatch).not.toBeNull();
       caseId = decodeURIComponent(caseMatch![1]!);
     }
-    await test.step("심사 요약 화면에서 실행 요청", async () => {
+    await test.step("심사 요약 화면 준비", async () => {
       await page.goto(`/cases/${encodeURIComponent(caseId)}/overview`);
       await expect(page).toHaveURL(
         new RegExp(`/cases/${caseId.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&")}/overview$`, "u"),
@@ -446,35 +447,41 @@ test.describe("상용형 내부 UAT 사용자 작업대", () => {
       await expect(page.locator(`.case-workspace[data-selected-case-id="${caseId}"]`))
         .toBeVisible({ timeout: 90_000 });
       await expect(page.getByTestId("case-overview")).toBeVisible();
-      const startReview = page.getByTestId("start-review");
-      await expect(startReview).toBeVisible();
-      await expect(startReview).toBeEnabled();
-      await startReview.click();
+      if (!resumeCompletedReview) {
+        const startReview = page.getByTestId("start-review");
+        await expect(startReview).toBeVisible();
+        await expect(startReview).toBeEnabled();
+        await startReview.click();
+      }
     });
     const progress = page.getByTestId("review-progress");
-    await expect(progress).toBeVisible({ timeout: 30_000 });
-    await expect(page.getByTestId("current-stage")).not.toHaveText("");
-    await expect(page.getByTestId("elapsed-time")).toHaveText(/\d+(?:분|초)/u);
-    await expect(page.getByTestId("eta-range")).toHaveText(/\d+(?:분|초).*~.*\d+(?:분|초)/u);
-    await expect(progress).not.toContainText("%");
+    if (!resumeCompletedReview) {
+      await expect(progress).toBeVisible({ timeout: 30_000 });
+      await expect(page.getByTestId("current-stage")).not.toHaveText("");
+      await expect(page.getByTestId("elapsed-time")).toHaveText(/\d+(?:분|초)/u);
+      await expect(page.getByTestId("eta-range")).toHaveText(/\d+(?:분|초).*~.*\d+(?:분|초)/u);
+      await expect(progress).not.toContainText("%");
+    }
 
     await expect(page.getByTestId("report-section-conclusion")).toBeVisible({
       timeout: 10 * 60 * 1_000,
     });
-    await expect(progress).toHaveAttribute("data-review-state", "succeeded");
-    const stageItems = progress.locator(".live-review__stages > li");
-    await expect(stageItems).toHaveCount(REVIEW_STAGE_CODES.length);
-    expect(await stageItems.evaluateAll((nodes) => nodes.map(
-      (node) => node.getAttribute("data-stage-code"),
-    ))).toEqual(REVIEW_STAGE_CODES);
-    for (const stageCode of REVIEW_STAGE_CODES) {
-      const stage = progress.locator(`[data-stage-code="${stageCode}"]`);
-      await expect(stage).toHaveAttribute(
-        "data-stage-state",
-        stageCode === "adaptive_investigation" ? /^(?:completed|skipped)$/u : "completed",
-      );
+    if (!resumeCompletedReview) {
+      await expect(progress).toHaveAttribute("data-review-state", "succeeded");
+      const stageItems = progress.locator(".live-review__stages > li");
+      await expect(stageItems).toHaveCount(REVIEW_STAGE_CODES.length);
+      expect(await stageItems.evaluateAll((nodes) => nodes.map(
+        (node) => node.getAttribute("data-stage-code"),
+      ))).toEqual(REVIEW_STAGE_CODES);
+      for (const stageCode of REVIEW_STAGE_CODES) {
+        const stage = progress.locator(`[data-stage-code="${stageCode}"]`);
+        await expect(stage).toHaveAttribute(
+          "data-stage-state",
+          stageCode === "adaptive_investigation" ? /^(?:completed|skipped)$/u : "completed",
+        );
+      }
+      await expect(page.getByTestId("handled-stage-count")).toHaveText("11/11개");
     }
-    await expect(page.getByTestId("handled-stage-count")).toHaveText("11/11개");
     await expect(page.getByTestId("agent-process")).toBeVisible();
     await expectCommercialReport(page);
     await expectBoundActualRagRun(page);

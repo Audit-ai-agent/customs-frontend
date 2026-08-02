@@ -4,6 +4,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
 import { Outlet, useParams, useSearchParams } from "react-router";
@@ -46,11 +47,12 @@ export function CaseWorkspace(): React.ReactElement {
   const [loadingRun, setLoadingRun] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [experienceError, setExperienceError] = useState<string | null>(null);
+  const loadedCaseIdRef = useRef<string | null>(null);
 
   const requestedRunId = searchParams.get("run");
 
   const loadCase = useCallback(async (): Promise<void> => {
-    setLoading(true);
+    if (loadedCaseIdRef.current !== caseId) setLoading(true);
     setError(null);
     try {
       const [nextCase, nextDocuments, nextRuns, nextAudits] = await Promise.all([
@@ -62,6 +64,7 @@ export function CaseWorkspace(): React.ReactElement {
       setCaseDetail({ ...nextCase, documents: nextDocuments, runs: nextRuns });
       setRuns(nextRuns);
       setAudits(nextAudits);
+      loadedCaseIdRef.current = caseId;
     } catch (reason) {
       setError(userFacingErrorMessage(reason, "심사 건을 불러오지 못했습니다."));
     } finally {
