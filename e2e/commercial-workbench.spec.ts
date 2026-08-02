@@ -167,12 +167,20 @@ async function sendAssistantQuestion(
   question: string,
   expectedAssistantCount: number,
 ): Promise<Locator> {
-  await page.getByLabel("AI 심사 도우미에게 질문").fill(question);
-  await page.getByRole("button", { name: "질문하기" }).click();
-  await expect(page.getByTestId("assistant-progress")).toBeVisible({ timeout: 30_000 });
+  const composer = page.getByLabel("AI 심사 도우미에게 질문");
+  const submit = page.getByRole("button", { name: "질문하기" });
   const answers = page.locator(".message-bubble--assistant");
-  await expect(answers).toHaveCount(expectedAssistantCount, { timeout: 4 * 60 * 1_000 });
-  const answer = answers.nth(expectedAssistantCount - 1);
+  await expect(composer).toBeEnabled({ timeout: 30_000 });
+  await expect(submit).toBeEnabled({ timeout: 30_000 });
+  const answerCountBeforeSubmit = await answers.count();
+  await composer.fill(question);
+  await submit.click();
+  await expect.poll(
+    () => answers.count(),
+    { timeout: 4 * 60 * 1_000 },
+  ).toBeGreaterThan(answerCountBeforeSubmit);
+  await expect.poll(() => answers.count()).toBeGreaterThanOrEqual(expectedAssistantCount);
+  const answer = answers.last();
   await expect(answer.getByRole("heading", { name: "직접 답변" })).toBeVisible();
   expect(normalizedText(await answer.locator(".assistant-direct-answer").textContent()).length)
     .toBeGreaterThan(30);
@@ -211,6 +219,9 @@ async function expectCompletedRevisionJourney(page: Page, caseId: string): Promi
     `/cases/${encodeURIComponent(caseId)}/documents?run=${encodeURIComponent(childRunId!)}`,
   );
   await expect(page.getByTestId("documents-page")).toBeVisible();
+  await expect(
+    page.locator(`.extracted-field-list [data-review-run-id="${childRunId}"]`).first(),
+  ).toBeVisible({ timeout: 30_000 });
   const documentButtons = page.locator(".document-list button");
   let correctedValueFound = false;
   for (let index = 0; index < await documentButtons.count(); index += 1) {
@@ -544,20 +555,29 @@ test.describe("상용형 내부 UAT 사용자 작업대", () => {
     await page.getByRole("link", { name: "AI 심사 도우미" }).click();
     await expect(page.getByTestId("assistant-page")).toBeVisible();
     const assistantAnswers = page.locator(".message-bubble--assistant");
-    if (resumeCompletedReview) {
-      await expect.poll(() => assistantAnswers.count(), { timeout: 2 * 60 * 1_000 })
-        .toBeGreaterThanOrEqual(2);
-    } else {
+    await expect(page.getByText("이전 대화를 불러오는 중입니다.")).toHaveCount(0, {
+      timeout: 2 * 60 * 1_000,
+    });
+    await expect(page.getByLabel("AI 심사 도우미에게 질문")).toBeEnabled({
+      timeout: 2 * 60 * 1_000,
+    });
+    if (await assistantAnswers.count() < 1) {
       await sendAssistantQuestion(
         page,
         "이번 심사의 결론과 그 결론에 이른 이유를 설명해 주십시오.",
         1,
       );
+    }
+    if (await assistantAnswers.count() < 2) {
       await sendAssistantQuestion(
         page,
         "방금 설명한 이유 중에서 담당자가 가장 먼저 확인할 항목은 무엇입니까?",
         2,
       );
+    }
+    if (resumeCompletedReview) {
+      await expect.poll(() => assistantAnswers.count()).toBeGreaterThanOrEqual(2);
+    } else {
       await expect(assistantAnswers).toHaveCount(2);
     }
     const firstAnswer = assistantAnswers.nth(0);

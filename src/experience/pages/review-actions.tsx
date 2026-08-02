@@ -88,6 +88,7 @@ export function ReviewActionsPage(): React.ReactElement {
 
   const createCorrection = async (event: FormEvent<HTMLFormElement>): Promise<void> => {
     event.preventDefault();
+    const proposalForm = event.currentTarget;
     if (!canPropose) {
       setError("현재 계정은 조회 전용이거나 승인 전용이므로 수정 제안을 만들 수 없습니다.");
       return;
@@ -101,7 +102,7 @@ export function ReviewActionsPage(): React.ReactElement {
       setError("입력 문서 결박 정보를 확인할 수 없어 수정 제안을 만들 수 없습니다.");
       return;
     }
-    const form = new FormData(event.currentTarget);
+    const form = new FormData(proposalForm);
     const fieldId = String(form.get("field_id"));
     const field = selectedRun.fields.find((item) => item.field_id === fieldId);
     if (!field) {
@@ -138,7 +139,7 @@ export function ReviewActionsPage(): React.ReactElement {
           },
         }],
       }, idempotencyKey);
-      event.currentTarget.reset();
+      proposalForm.reset();
       await loadProposals();
       setNotice("수정 제안을 저장했습니다. 다른 승인 담당자가 확인하기 전에는 기존 결과가 바뀌지 않습니다.");
     } catch (reason) {
