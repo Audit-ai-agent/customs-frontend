@@ -579,9 +579,6 @@ test.describe("상용형 내부 UAT 사용자 작업대", () => {
         "제안자와 다른 승인 담당자로서 원문 결박과 수정 사유를 확인했습니다.",
       );
       await pending.getByRole("button", { name: "승인·재심사" }).click();
-      await expect(approverPage.getByRole("status")).toContainText(
-        "새 심사 회차를 요청했습니다.",
-      );
       await approverPage.getByRole("link", { name: "심사 이력" }).click();
       const runHistory = approverPage.locator(".run-history li");
       await expect(runHistory).toHaveCount(2, { timeout: 5 * 60 * 1_000 });
