@@ -3,6 +3,7 @@ import { Link } from "react-router";
 import { useCaseWorkspace } from "../case-context";
 import { Icon } from "../icons";
 import {
+  auditEventLabel,
   assessmentLabels,
   dispositionLabels,
   executionStatusLabels,
@@ -42,7 +43,7 @@ export function HistoryPage(): React.ReactElement {
           <div className="section-heading"><div><h3>감사 기록</h3><p>누가 언제 어떤 업무를 수행했는지 확인합니다.</p></div></div>
           {audits.length === 0 ? <p className="nothing-found">표시할 감사 기록이 없습니다.</p> : (
             <ol className="audit-timeline">{audits.map((event) => (
-              <li key={event.event_id}><span /><div><header><strong>{event.summary}</strong><time>{formatKoreanDate(event.occurred_at)}</time></header><p>{event.actor_display}</p></div></li>
+              <li key={event.event_id}><span /><div><header><strong>{auditEventLabel(event.event_type, event.summary)}</strong><time>{formatKoreanDate(event.occurred_at)}</time></header><p>{event.actor_display}</p></div></li>
             ))}</ol>
           )}
         </div>

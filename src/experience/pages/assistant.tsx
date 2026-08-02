@@ -653,6 +653,10 @@ function MessageBubble({
       data-message-id={message.message_id}
       data-parent-message-id={message.parent_message_id ?? ""}
       data-bound-result-sha256={message.bound_result_sha256}
+      data-answer-scope={answer.answer_scope}
+      data-generation-mode={answer.generation_audit.mode}
+      data-verification-status={answer.verification_audit.status}
+      data-used-context-message-ids={answer.used_context_message_ids.join(",")}
     >
       <header><span>AI 심사 도우미</span><small>{assistantScopeLabels[answer.answer_scope]}</small></header>
       <section><h3>직접 답변</h3><p className="assistant-direct-answer">{answer.direct_answer}</p></section>

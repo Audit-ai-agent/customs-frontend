@@ -264,6 +264,8 @@ function PresentationReport({
       className="presentation-report"
       aria-labelledby="presentation-heading"
       data-bound-result-sha256={experience.bound_provider_result_sha256}
+      data-generation-mode={experience.user_presentation.generation_audit.mode}
+      data-verification-status={experience.user_presentation.verification_audit.status}
     >
       <div className="presentation-report__heading">
         <div>

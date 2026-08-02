@@ -215,6 +215,14 @@ async function expectCompletedRevisionJourney(page: Page, caseId: string): Promi
     "data-review-run-id",
     childRunId!,
   );
+  const childPresentation = page.locator(".presentation-report");
+  await expect(childPresentation).toHaveAttribute("data-generation-mode", "claude");
+  await expect(childPresentation).toHaveAttribute("data-verification-status", "passed");
+  await expectCommercialReport(page);
+  await expect(page.getByText(
+    "상업송장과 포장명세서의 송장 번호가 일치하지 않습니다.",
+    { exact: false },
+  )).toBeVisible();
   await page.goto(
     `/cases/${encodeURIComponent(caseId)}/documents?run=${encodeURIComponent(childRunId!)}`,
   );
@@ -230,7 +238,7 @@ async function expectCompletedRevisionJourney(page: Page, caseId: string): Promi
     await expect(documentButton).toHaveClass(/\bis-selected\b/u);
     const correctedValue = page
       .locator(`.extracted-field-list [data-review-run-id="${childRunId}"] dd`)
-      .filter({ hasText: "UAT 담당자 재확인 값" });
+      .filter({ hasText: "CI-2026-0001-R1" });
     if (await correctedValue.count() > 0) {
       await expect(correctedValue).toHaveCount(1);
       correctedValueFound = true;
@@ -481,30 +489,16 @@ test.describe("상용형 내부 UAT 사용자 작업대", () => {
     test.setTimeout(25 * 60 * 1_000);
     page.setDefaultTimeout(30_000);
 
-    const resumeCaseId = process.env.CUSTOMS_E2E_CANDIDATE_CASE_ID;
-    const resumeCompletedReview = resumeCaseId !== undefined;
-    let caseId: string;
-    if (resumeCaseId !== undefined) {
-      caseId = resumeCaseId;
-    } else {
-      await page.goto("/test-lab");
-      const scenario = page.getByTestId("scenario-clean_text_no_requirement_uat");
-      await scenario.click();
-      await expect(scenario).toHaveAttribute("aria-pressed", "true");
-      await page.getByRole("button", { name: "이 시나리오로 심사 건 만들기" }).click();
-      await expect(page.getByTestId("documents-page")).toBeVisible({ timeout: 90_000 });
+    await page.goto("/test-lab");
+    const scenario = page.getByTestId("scenario-clean_text_no_requirement_uat");
+    await scenario.click();
+    await expect(scenario).toHaveAttribute("aria-pressed", "true");
+    await page.getByRole("button", { name: "이 시나리오로 심사 건 만들기" }).click();
+    await expect(page.getByTestId("documents-page")).toBeVisible({ timeout: 90_000 });
 
-      const caseMatch = /\/cases\/([^/]+)\/documents$/u.exec(new URL(page.url()).pathname);
-      expect(caseMatch).not.toBeNull();
-      caseId = decodeURIComponent(caseMatch![1]!);
-    }
-    if (
-      resumeCompletedReview
-      && process.env.CUSTOMS_E2E_CANDIDATE_FINAL_ONLY === "true"
-    ) {
-      await expectCompletedRevisionJourney(page, caseId);
-      return;
-    }
+    const caseMatch = /\/cases\/([^/]+)\/documents$/u.exec(new URL(page.url()).pathname);
+    expect(caseMatch).not.toBeNull();
+    const caseId = decodeURIComponent(caseMatch![1]!);
     await test.step("심사 요약 화면 준비", async () => {
       await page.goto(`/cases/${encodeURIComponent(caseId)}/overview`);
       await expect(page).toHaveURL(
@@ -513,43 +507,40 @@ test.describe("상용형 내부 UAT 사용자 작업대", () => {
       await expect(page.locator(`.case-workspace[data-selected-case-id="${caseId}"]`))
         .toBeVisible({ timeout: 90_000 });
       await expect(page.getByTestId("case-overview")).toBeVisible();
-      if (!resumeCompletedReview) {
-        const startReview = page.getByTestId("start-review");
-        await expect(startReview).toBeVisible();
-        await expect(startReview).toBeEnabled();
-        await startReview.click();
-      }
+      const startReview = page.getByTestId("start-review");
+      await expect(startReview).toBeVisible();
+      await expect(startReview).toBeEnabled();
+      await startReview.click();
     });
     const progress = page.getByTestId("review-progress");
-    if (!resumeCompletedReview) {
-      await expect(progress).toBeVisible({ timeout: 30_000 });
-      await expect(page.getByTestId("current-stage")).not.toHaveText("");
-      await expect(page.getByTestId("elapsed-time")).toHaveText(/\d+(?:분|초)/u);
-      await expect(page.getByTestId("eta-range")).toHaveText(/\d+(?:분|초).*~.*\d+(?:분|초)/u);
-      await expect(progress).not.toContainText("%");
-    }
+    await expect(progress).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByTestId("current-stage")).not.toHaveText("");
+    await expect(page.getByTestId("elapsed-time")).toHaveText(/\d+(?:분|초)/u);
+    await expect(page.getByTestId("eta-range")).toHaveText(/\d+(?:분|초).*~.*\d+(?:분|초)/u);
+    await expect(progress).not.toContainText("%");
 
     await expect(page.getByTestId("report-section-conclusion")).toBeVisible({
       timeout: 10 * 60 * 1_000,
     });
-    if (!resumeCompletedReview) {
-      await expect(progress).toHaveAttribute("data-review-state", "succeeded");
-      const stageItems = progress.locator(".live-review__stages > li");
-      await expect(stageItems).toHaveCount(REVIEW_STAGE_CODES.length);
-      expect(await stageItems.evaluateAll((nodes) => nodes.map(
-        (node) => node.getAttribute("data-stage-code"),
-      ))).toEqual(REVIEW_STAGE_CODES);
-      for (const stageCode of REVIEW_STAGE_CODES) {
-        const stage = progress.locator(`[data-stage-code="${stageCode}"]`);
-        await expect(stage).toHaveAttribute(
-          "data-stage-state",
-          stageCode === "adaptive_investigation" ? /^(?:completed|skipped)$/u : "completed",
-        );
-      }
-      await expect(page.getByTestId("handled-stage-count")).toHaveText("11/11개");
+    await expect(progress).toHaveAttribute("data-review-state", "succeeded");
+    const stageItems = progress.locator(".live-review__stages > li");
+    await expect(stageItems).toHaveCount(REVIEW_STAGE_CODES.length);
+    expect(await stageItems.evaluateAll((nodes) => nodes.map(
+      (node) => node.getAttribute("data-stage-code"),
+    ))).toEqual(REVIEW_STAGE_CODES);
+    for (const stageCode of REVIEW_STAGE_CODES) {
+      const stage = progress.locator(`[data-stage-code="${stageCode}"]`);
+      await expect(stage).toHaveAttribute(
+        "data-stage-state",
+        stageCode === "adaptive_investigation" ? /^(?:completed|skipped)$/u : "completed",
+      );
     }
+    await expect(page.getByTestId("handled-stage-count")).toHaveText("11/11개");
     await expect(page.getByTestId("agent-process")).toBeVisible();
     await expectCommercialReport(page);
+    const rootPresentation = page.locator(".presentation-report");
+    await expect(rootPresentation).toHaveAttribute("data-generation-mode", "claude");
+    await expect(rootPresentation).toHaveAttribute("data-verification-status", "passed");
     await expectBoundActualRagRun(page);
 
     await page.getByRole("link", { name: "AI 심사 도우미" }).click();
@@ -561,25 +552,18 @@ test.describe("상용형 내부 UAT 사용자 작업대", () => {
     await expect(page.getByLabel("AI 심사 도우미에게 질문")).toBeEnabled({
       timeout: 2 * 60 * 1_000,
     });
-    if (await assistantAnswers.count() < 1) {
-      await sendAssistantQuestion(
-        page,
-        "이번 심사의 결론과 그 결론에 이른 이유를 설명해 주십시오.",
-        1,
-      );
-    }
-    if (await assistantAnswers.count() < 2) {
-      await sendAssistantQuestion(
-        page,
-        "방금 설명한 이유 중에서 담당자가 가장 먼저 확인할 항목은 무엇입니까?",
-        2,
-      );
-    }
-    if (resumeCompletedReview) {
-      await expect.poll(() => assistantAnswers.count()).toBeGreaterThanOrEqual(2);
-    } else {
-      await expect(assistantAnswers).toHaveCount(2);
-    }
+    await expect(assistantAnswers).toHaveCount(0);
+    await sendAssistantQuestion(
+      page,
+      "이 심사 건이 사람 검토가 필요한 이유는 무엇입니까?",
+      1,
+    );
+    await sendAssistantQuestion(
+      page,
+      "방금 설명한 이유 중에서 담당자가 가장 먼저 확인할 항목은 무엇입니까?",
+      2,
+    );
+    await expect(assistantAnswers).toHaveCount(2);
     const firstAnswer = assistantAnswers.nth(0);
     const firstUser = page.locator(".message-bubble--user").nth(0);
     const firstUserId = await firstUser.getAttribute("data-message-id");
@@ -587,6 +571,8 @@ test.describe("상용형 내부 UAT 사용자 작업대", () => {
     expect(firstUserId).toBeTruthy();
     expect(firstAssistantId).toBeTruthy();
     await expect(firstAnswer).toHaveAttribute("data-parent-message-id", firstUserId!);
+    await expect(firstAnswer).toHaveAttribute("data-generation-mode", "claude");
+    await expect(firstAnswer).toHaveAttribute("data-verification-status", "passed");
     expect(await firstAnswer.locator('a[data-testid^="citation-"]').count()).toBeGreaterThan(0);
 
     const secondAnswer = assistantAnswers.nth(1);
@@ -597,21 +583,28 @@ test.describe("상용형 내부 UAT 사용자 작업대", () => {
     expect(secondUserId).toBeTruthy();
     expect(secondAssistantId).toBeTruthy();
     await expect(secondAnswer).toHaveAttribute("data-parent-message-id", secondUserId!);
+    await expect(secondAnswer).toHaveAttribute("data-generation-mode", "claude");
+    await expect(secondAnswer).toHaveAttribute("data-verification-status", "passed");
+    await expect(secondAnswer).toHaveAttribute(
+      "data-used-context-message-ids",
+      new RegExp(firstAssistantId!, "u"),
+    );
+    expect(normalizedText(await secondAnswer.locator(".assistant-direct-answer").textContent()))
+      .not.toBe(normalizedText(await firstAnswer.locator(".assistant-direct-answer").textContent()));
 
     const secondAnswerPrefix = normalizedText(await secondAnswer.textContent()).slice(0, 50);
     await page.reload();
     await expect(page.getByTestId("assistant-page")).toBeVisible();
     await expect(page).toHaveURL(new RegExp(`/cases/${encodeURIComponent(caseId)}/assistant$`, "u"));
     await expect(page.locator("#username")).toHaveCount(0);
-    if (resumeCompletedReview) {
-      await expect.poll(() => page.locator(".message-bubble--user").count())
-        .toBeGreaterThanOrEqual(2);
-      await expect.poll(() => page.locator(".message-bubble--assistant").count())
-        .toBeGreaterThanOrEqual(2);
-    } else {
-      await expect(page.locator(".message-bubble--user")).toHaveCount(2);
-      await expect(page.locator(".message-bubble--assistant")).toHaveCount(2);
-    }
+    await expect(page.locator(".message-bubble--user")).toHaveCount(2);
+    await expect(page.locator(".message-bubble--assistant")).toHaveCount(2);
+    await expect(page.locator(".message-bubble--user").nth(0)).toContainText(
+      "이 심사 건이 사람 검토가 필요한 이유는 무엇입니까?",
+    );
+    await expect(page.locator(".message-bubble--user").nth(1)).toContainText(
+      "방금 설명한 이유 중에서 담당자가 가장 먼저 확인할 항목은 무엇입니까?",
+    );
     await expect(page.locator(".message-bubble--assistant").nth(1)).toContainText(
       secondAnswerPrefix,
     );
@@ -628,14 +621,14 @@ test.describe("상용형 내부 UAT 사용자 작업대", () => {
       const fieldSelect = page.locator('select[name="field_id"]');
       await expect.poll(() => fieldSelect.locator("option").count()).toBeGreaterThan(1);
       await fieldSelect.selectOption({ index: 1 });
-      await page.locator('input[name="new_value"]').fill("UAT 담당자 재확인 값");
+      await page.locator('input[name="new_value"]').fill("CI-2026-0001-R1");
       await page.locator('textarea[name="reason"]').fill(
         "브라우저 사용자 여정에서 원문을 다시 확인한 수정 제안입니다.",
       );
       await page.getByRole("button", { name: "수정 제안 저장" }).click();
     }
     await expect(reviewerPending).toHaveCount(1);
-    await expect(reviewerPending).toContainText("UAT 담당자 재확인 값");
+    await expect(reviewerPending).toContainText("CI-2026-0001-R1");
 
     const baseURL = process.env.CUSTOMS_UAT_BASE_URL ?? "http://127.0.0.1:18088";
     const approverContext = await browser.newContext({
@@ -654,7 +647,7 @@ test.describe("상용형 내부 UAT 사용자 작업대", () => {
       await expect(pending.getByText("현재 값", { exact: true })).toBeVisible();
       await expect(pending.getByText("제안 값", { exact: true })).toBeVisible();
       await expect(pending.getByText("제안 사유", { exact: true })).toBeVisible();
-      await expect(pending).toContainText("UAT 담당자 재확인 값");
+      await expect(pending).toContainText("CI-2026-0001-R1");
       await pending.getByRole("textbox", { name: "검토 의견" }).fill(
         "제안자와 다른 승인 담당자로서 원문 결박과 수정 사유를 확인했습니다.",
       );

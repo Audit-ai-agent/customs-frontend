@@ -466,6 +466,7 @@ function dependencies(): {
         documents: [],
         runs: [run],
       })),
+      listDocuments: vi.fn(async () => []),
       listReviewRuns: vi.fn(async () => [run]),
       getReviewRun: vi.fn(async () => run),
       getAuditEvents: vi.fn(async () => []),
@@ -1015,6 +1016,7 @@ describe("commercial-grade local UAT workbench", () => {
       documents,
       runs: [run],
     });
+    vi.mocked(next.api.listDocuments).mockResolvedValue(documents);
     window.history.replaceState({}, "", "/cases/case-1/documents");
     render(<CommercialWorkbench {...next} />);
 
@@ -1149,6 +1151,9 @@ describe("commercial-grade local UAT workbench", () => {
         documents: [source],
         runs: [run],
       });
+    vi.mocked(next.api.listDocuments)
+      .mockResolvedValueOnce([])
+      .mockResolvedValue([source]);
     vi.mocked(next.api.addDocument).mockRejectedValue(new Error("response lost"));
     vi.mocked(next.api.addSupportingDocument).mockResolvedValue(registered);
     window.history.replaceState({}, "", "/cases/case-1/documents");
@@ -1281,6 +1286,9 @@ describe("commercial-grade local UAT workbench", () => {
         documents: [source],
         runs: [run],
       });
+    vi.mocked(next.api.listDocuments)
+      .mockResolvedValueOnce([])
+      .mockResolvedValue([source]);
     vi.mocked(next.api.addDocument).mockResolvedValue(source);
     vi.mocked(next.api.addSupportingDocument)
       .mockRejectedValueOnce(new Error("response lost"))
@@ -1336,6 +1344,7 @@ describe("commercial-grade local UAT workbench", () => {
       documents: [documentA, documentB],
       runs: [run],
     });
+    vi.mocked(next.api.listDocuments).mockResolvedValue([documentA, documentB]);
     vi.mocked(next.api.getDocumentContent).mockImplementation(async (_caseId, documentId) => (
       documentId === documentA.document_id ? responseA.promise : responseB.promise
     ));
@@ -1521,6 +1530,7 @@ describe("commercial-grade local UAT workbench", () => {
       documents: [primaryDocument],
       runs: [run],
     });
+    vi.mocked(next.api.listDocuments).mockResolvedValue([primaryDocument]);
     const job: ReviewJobExperience = {
       job: {
         job_id: "job-1",
@@ -1608,6 +1618,7 @@ describe("commercial-grade local UAT workbench", () => {
       documents: [primaryDocument],
       runs: [run],
     });
+    vi.mocked(next.api.listDocuments).mockResolvedValue([primaryDocument]);
     const queued: ReviewJobExperience = {
       job: {
         job_id: "job-response-loss",
@@ -2110,6 +2121,7 @@ describe("commercial-grade local UAT workbench", () => {
       documents: [caseDocument],
       runs: [fieldRun],
     });
+    vi.mocked(next.api.listDocuments).mockResolvedValue([caseDocument]);
     vi.mocked(next.api.listReviewRuns).mockResolvedValue([fieldRun]);
     vi.mocked(next.api.getReviewRun).mockResolvedValue(fieldRun);
     vi.mocked(next.api.getDocumentContent).mockResolvedValue(caseDocument);
@@ -2143,6 +2155,7 @@ describe("commercial-grade local UAT workbench", () => {
       documents: [caseDocument],
       runs: [fieldRun],
     });
+    vi.mocked(fieldLevel.api.listDocuments).mockResolvedValue([caseDocument]);
     vi.mocked(fieldLevel.api.listReviewRuns).mockResolvedValue([fieldRun]);
     vi.mocked(fieldLevel.api.getReviewRun).mockResolvedValue(fieldRun);
     vi.mocked(fieldLevel.api.getDocumentContent).mockResolvedValue(caseDocument);

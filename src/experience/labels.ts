@@ -164,10 +164,32 @@ export function agentToolStatusLabel(status: string): string {
 }
 
 const issueLabels: Readonly<Record<string, string>> = {
+  INVOICE_NO_MISMATCH: "상업송장과 포장명세서의 송장 번호가 일치하지 않습니다.",
   QTY_MISMATCH_INVOICE_PACKING: "상업송장과 포장명세서의 수량이 일치하지 않습니다.",
   INV_LINE_AMOUNT_MISMATCH: "상업송장 품목 금액 계산이 합계와 일치하지 않습니다.",
   ORIGIN_MISMATCH: "문서 사이의 원산지 정보가 일치하지 않습니다.",
   AMBIGUOUS_DOCUMENT_SET: "같은 종류의 문서가 둘 이상이라 자동으로 선택할 수 없습니다.",
+};
+
+const auditEventLabels: Readonly<Record<string, string>> = {
+  "case.created": "심사 건이 생성되었습니다.",
+  "document.added": "심사 문서가 등록되었습니다.",
+  "document.registered": "심사 문서가 등록되었습니다.",
+  "review.enqueued": "AI 사전심사가 실행 대기열에 등록되었습니다.",
+  "review.started": "AI 사전심사가 시작되었습니다.",
+  "review.requested": "AI 사전심사가 요청되었습니다.",
+  "review.completed": "AI 사전심사 결과가 저장되었습니다.",
+  "assistant_conversation.created": "AI 심사 도우미 대화가 시작되었습니다.",
+  "assistant.conversation.created": "AI 심사 도우미 대화가 시작되었습니다.",
+  "assistant_message.enqueued": "담당자의 질문이 접수되었습니다.",
+  "assistant_message.completed": "근거 검증을 마친 답변이 저장되었습니다.",
+  "assistant.message.accepted": "담당자의 질문이 접수되었습니다.",
+  "assistant.answer.completed": "근거 검증을 마친 답변이 저장되었습니다.",
+  "correction_proposal.created": "추출값 수정 제안이 등록되었습니다.",
+  "revision_proposal.created": "추출값 수정 제안이 등록되었습니다.",
+  "correction_proposal.decided": "다른 승인 담당자가 수정 제안을 결정했습니다.",
+  "revision.review.requested": "승인된 수정값으로 재심사가 요청되었습니다.",
+  "revision.review.completed": "수정값을 반영한 재심사가 완료되었습니다.",
 };
 
 const findingLabels: Readonly<Record<string, string>> = {
@@ -228,6 +250,13 @@ export function fieldLabel(name: string, fieldPath: string): string {
 
 export function issueLabel(code: string): string {
   return issueLabels[code] ?? "해석되지 않은 문서 확인 항목입니다.";
+}
+
+export function auditEventLabel(eventType: string, serverSummary: string): string {
+  return auditEventLabels[eventType]
+    ?? (/^[\p{Script=Hangul}\p{N}\p{P}\p{Zs}]+$/u.test(serverSummary)
+      ? serverSummary
+      : "심사 업무 기록이 추가되었습니다.");
 }
 
 export function findingLabel(code: string): string {
