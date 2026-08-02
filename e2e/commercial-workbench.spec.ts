@@ -181,6 +181,54 @@ async function sendAssistantQuestion(
   return answer;
 }
 
+async function expectCompletedRevisionJourney(page: Page, caseId: string): Promise<void> {
+  await page.goto(`/cases/${encodeURIComponent(caseId)}/history`);
+  const runHistory = page.locator(".run-history li");
+  await expect(runHistory).toHaveCount(2, { timeout: 7 * 60 * 1_000 });
+  const childRun = page.locator(
+    '.run-history li[data-parent-run-id]:not([data-parent-run-id=""])',
+  );
+  await expect(childRun).toHaveCount(1);
+  const childRunId = await childRun.getAttribute("data-review-run-id");
+  const parentRunId = await childRun.getAttribute("data-parent-run-id");
+  expect(childRunId).toBeTruthy();
+  expect(parentRunId).toBeTruthy();
+  await expect(
+    page.locator(`.run-history li[data-review-run-id="${parentRunId}"]`),
+  ).toHaveCount(1);
+  expect(await page.locator(".audit-timeline li").count()).toBeGreaterThanOrEqual(6);
+  await page.getByText("감사 기록 기술 식별자").click();
+  const history = page.getByTestId("history-page");
+  await expect(history).toContainText("revision_proposal.created");
+  await expect(history).toContainText("correction_proposal.decided");
+
+  await childRun.getByRole("link", { name: "이 회차 결과 보기" }).click();
+  await expect(page.locator("#result-heading")).toHaveAttribute(
+    "data-review-run-id",
+    childRunId!,
+  );
+  await page.goto(
+    `/cases/${encodeURIComponent(caseId)}/documents?run=${encodeURIComponent(childRunId!)}`,
+  );
+  await expect(page.getByTestId("documents-page")).toBeVisible();
+  const documentButtons = page.locator(".document-list button");
+  let correctedValueFound = false;
+  for (let index = 0; index < await documentButtons.count(); index += 1) {
+    const documentButton = documentButtons.nth(index);
+    await documentButton.click();
+    await expect(documentButton).toHaveClass(/\bis-selected\b/u);
+    const correctedValue = page
+      .locator(`.extracted-field-list [data-review-run-id="${childRunId}"] dd`)
+      .filter({ hasText: "UAT 담당자 재확인 값" });
+    if (await correctedValue.count() > 0) {
+      await expect(correctedValue).toHaveCount(1);
+      correctedValueFound = true;
+      break;
+    }
+  }
+  expect(correctedValueFound).toBe(true);
+}
+
 test.describe("상용형 내부 UAT 사용자 작업대", () => {
   test("업무함과 기술 정보가 사용자 정보 계층을 지킵니다 @primary", async ({ page }) => {
     await page.goto("/reviews");
@@ -439,6 +487,13 @@ test.describe("상용형 내부 UAT 사용자 작업대", () => {
       expect(caseMatch).not.toBeNull();
       caseId = decodeURIComponent(caseMatch![1]!);
     }
+    if (
+      resumeCompletedReview
+      && process.env.CUSTOMS_E2E_CANDIDATE_FINAL_ONLY === "true"
+    ) {
+      await expectCompletedRevisionJourney(page, caseId);
+      return;
+    }
     await test.step("심사 요약 화면 준비", async () => {
       await page.goto(`/cases/${encodeURIComponent(caseId)}/overview`);
       await expect(page).toHaveURL(
@@ -584,47 +639,7 @@ test.describe("상용형 내부 UAT 사용자 작업대", () => {
         "제안자와 다른 승인 담당자로서 원문 결박과 수정 사유를 확인했습니다.",
       );
       await pending.getByRole("button", { name: "승인·재심사" }).click();
-      await approverPage.getByRole("link", { name: "심사 이력" }).click();
-      const runHistory = approverPage.locator(".run-history li");
-      await expect(runHistory).toHaveCount(2, { timeout: 5 * 60 * 1_000 });
-      const childRun = approverPage.locator(
-        '.run-history li[data-parent-run-id]:not([data-parent-run-id=""])',
-      );
-      await expect(childRun).toHaveCount(1);
-      const childRunId = await childRun.getAttribute("data-review-run-id");
-      const parentRunId = await childRun.getAttribute("data-parent-run-id");
-      expect(childRunId).toBeTruthy();
-      expect(parentRunId).toBeTruthy();
-      await expect(runHistory.locator(`[data-review-run-id="${parentRunId}"]`)).toHaveCount(1);
-      expect(await approverPage.locator(".audit-timeline li").count()).toBeGreaterThanOrEqual(6);
-      await approverPage.getByText("감사 기록 기술 식별자").click();
-      const history = approverPage.getByTestId("history-page");
-      await expect(history).toContainText("revision_proposal.created");
-      await expect(history).toContainText("correction_proposal.decided");
-
-      await childRun.getByRole("link", { name: "이 회차 결과 보기" }).click();
-      await expect(approverPage.locator("#result-heading")).toHaveAttribute(
-        "data-review-run-id",
-        childRunId!,
-      );
-      await approverPage.goto(
-        `/cases/${encodeURIComponent(caseId)}/documents?run=${encodeURIComponent(childRunId!)}`,
-      );
-      await expect(approverPage.getByTestId("documents-page")).toBeVisible();
-      const documentButtons = approverPage.locator(".document-list button");
-      let correctedValueFound = false;
-      for (let index = 0; index < await documentButtons.count(); index += 1) {
-        await documentButtons.nth(index).click();
-        const correctedValue = approverPage
-          .locator(`.extracted-field-list [data-review-run-id="${childRunId}"] dd`)
-          .filter({ hasText: "UAT 담당자 재확인 값" });
-        if (await correctedValue.count() > 0) {
-          await expect(correctedValue).toHaveCount(1);
-          correctedValueFound = true;
-          break;
-        }
-      }
-      expect(correctedValueFound).toBe(true);
+      await expectCompletedRevisionJourney(approverPage, caseId);
     } finally {
       await approverContext.close();
     }
