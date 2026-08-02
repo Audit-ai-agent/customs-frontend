@@ -489,24 +489,22 @@ test.describe("상용형 내부 UAT 사용자 작업대", () => {
     await page.getByRole("link", { name: "AI 심사 도우미" }).click();
     await expect(page.getByTestId("assistant-page")).toBeVisible();
     const assistantAnswers = page.locator(".message-bubble--assistant");
-    let existingAssistantCount = await assistantAnswers.count();
-    expect(existingAssistantCount).toBeLessThanOrEqual(2);
-    if (existingAssistantCount === 0) {
+    if (resumeCompletedReview) {
+      await expect.poll(() => assistantAnswers.count(), { timeout: 2 * 60 * 1_000 })
+        .toBeGreaterThanOrEqual(2);
+    } else {
       await sendAssistantQuestion(
         page,
         "이번 심사의 결론과 그 결론에 이른 이유를 설명해 주십시오.",
         1,
       );
-      existingAssistantCount = 1;
-    }
-    if (existingAssistantCount === 1) {
       await sendAssistantQuestion(
         page,
         "방금 설명한 이유 중에서 담당자가 가장 먼저 확인할 항목은 무엇입니까?",
         2,
       );
+      await expect(assistantAnswers).toHaveCount(2);
     }
-    await expect(assistantAnswers).toHaveCount(2);
     const firstAnswer = assistantAnswers.nth(0);
     const firstUser = page.locator(".message-bubble--user").nth(0);
     const firstUserId = await firstUser.getAttribute("data-message-id");
@@ -530,9 +528,16 @@ test.describe("상용형 내부 UAT 사용자 작업대", () => {
     await expect(page.getByTestId("assistant-page")).toBeVisible();
     await expect(page).toHaveURL(new RegExp(`/cases/${encodeURIComponent(caseId)}/assistant$`, "u"));
     await expect(page.locator("#username")).toHaveCount(0);
-    await expect(page.locator(".message-bubble--user")).toHaveCount(2);
-    await expect(page.locator(".message-bubble--assistant")).toHaveCount(2);
-    await expect(page.locator(".message-bubble--assistant").last()).toContainText(
+    if (resumeCompletedReview) {
+      await expect.poll(() => page.locator(".message-bubble--user").count())
+        .toBeGreaterThanOrEqual(2);
+      await expect.poll(() => page.locator(".message-bubble--assistant").count())
+        .toBeGreaterThanOrEqual(2);
+    } else {
+      await expect(page.locator(".message-bubble--user")).toHaveCount(2);
+      await expect(page.locator(".message-bubble--assistant")).toHaveCount(2);
+    }
+    await expect(page.locator(".message-bubble--assistant").nth(1)).toContainText(
       secondAnswerPrefix,
     );
 
