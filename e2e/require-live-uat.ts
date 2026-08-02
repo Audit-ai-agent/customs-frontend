@@ -34,10 +34,12 @@ export default async function requireLiveUat(_config: FullConfig): Promise<void>
       `Browser E2E refuses an unsafe HTML rendering escape hatch: ${violations.join(", ")}`,
     );
   }
-  // `--list` only discovers the immutable project inventory and never opens a
-  // Browser or executes a test body. Every executable E2E run still requires
-  // the exact current Harness binding below.
-  if (!process.argv.includes("--list")) {
+  // The single Candidate journey creates its own Case and therefore has no
+  // dependency on the retired nine-scenario certification matrix. Historical
+  // diagnostics may still opt into exact bindings explicitly.
+  const hasScenarioBinding = process.env.CUSTOMS_E2E_SCENARIO_BINDINGS_FILE !== undefined
+    || process.env.CUSTOMS_E2E_SCENARIO_BINDINGS_SHA256 !== undefined;
+  if (!process.argv.includes("--list") && hasScenarioBinding) {
     const bindings = await loadExactScenarioBindings();
     process.env.CUSTOMS_E2E_VALIDATED_SCENARIO_BINDINGS = JSON.stringify(bindings);
   }

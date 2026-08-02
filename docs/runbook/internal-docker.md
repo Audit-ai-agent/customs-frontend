@@ -12,7 +12,7 @@
 
 ```powershell
 npm ci
-npm run verify
+npm run check:candidate
 docker build --pull -t customs-frontend:<git-sha> .
 ```
 

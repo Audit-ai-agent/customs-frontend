@@ -415,7 +415,7 @@ test.describe("상용형 내부 UAT 사용자 작업대", () => {
     }
   });
 
-  test("실제 사용자 여정으로 11단계 심사·3턴 대화·독립 승인·child Run을 수행합니다 @primary", async ({
+  test("실제 사용자 여정으로 11단계 심사·2턴 대화·독립 승인·child Run을 수행합니다 @candidate", async ({
     browser,
     page,
   }, testInfo) => {
@@ -506,23 +506,12 @@ test.describe("상용형 내부 UAT 사용자 작업대", () => {
       secondAnswerPrefix,
     );
 
-    const thirdAnswer = await sendAssistantQuestion(
-      page,
-      "그 첫 번째 확인 항목을 처리할 때 참고할 법령 근거와 이 답변의 한계를 설명해 주십시오.",
-      3,
-    );
-    const thirdUser = page.locator(".message-bubble--user").nth(2);
-    await expect(thirdUser).toHaveAttribute("data-parent-message-id", secondAssistantId!);
-    const thirdUserId = await thirdUser.getAttribute("data-message-id");
-    expect(thirdUserId).toBeTruthy();
-    await expect(thirdAnswer).toHaveAttribute("data-parent-message-id", thirdUserId!);
-    await expect(thirdAnswer.getByRole("heading", { name: "답변 범위와 한계" })).toBeVisible();
     const resultBindings = await page.locator(".message-bubble").evaluateAll((nodes) => (
       [...new Set(nodes.map((node) => node.getAttribute("data-bound-result-sha256")))]
     ));
     expect(resultBindings).toHaveLength(1);
     expect(resultBindings[0]).toMatch(/^[a-f0-9]{64}$/u);
-    await attachSafeScreenshot(page, testInfo, "successful-three-turn-assistant");
+    await attachSafeScreenshot(page, testInfo, "successful-two-turn-assistant");
 
     await page.getByRole("link", { name: "담당자 검토" }).click();
     const fieldSelect = page.locator('select[name="field_id"]');

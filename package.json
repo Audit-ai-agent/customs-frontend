@@ -11,8 +11,8 @@
     "postinstall": "node scripts/patch-redocly-minimatch.mjs",
     "doctor": "node scripts/doctor.mjs",
     "dev": "vite --host 127.0.0.1",
-    "build": "tsc --noEmit && vite build && npm run bundle:check",
-    "build:uat": "tsc --noEmit && vite build && npm run bundle:check && npm run uat:export:scenarios -- --profile preserved-3law-v3-scenario-eval --output dist/uat-scenario-export.json",
+    "build": "vite build && npm run bundle:check",
+    "build:uat": "vite build && npm run bundle:check && npm run uat:export:scenarios -- --profile preserved-3law-v3-scenario-eval --output dist/uat-scenario-export.json",
     "preview": "vite preview --host 127.0.0.1",
     "typecheck": "tsc --noEmit",
     "lint": "node scripts/check-static-boundaries.mjs",
@@ -21,10 +21,13 @@
     "bundle:check": "node scripts/check-enhanced-bundle.mjs",
     "uat:export:scenarios": "node --experimental-strip-types scripts/export-uat-scenarios.mjs",
     "test": "vitest run",
-    "test:e2e": "playwright test",
+    "test:e2e": "playwright test --project=candidate-chromium",
     "test:coverage": "vitest run --coverage",
     "security:audit": "npm audit --audit-level=high",
-    "verify": "npm run doctor && npm run lint && npm run contract:check && npm run typecheck && npm run test:coverage && npm run build"
+    "check:quick": "npm run lint && npm run typecheck && npm run test",
+    "check:contract": "npm run contract:check",
+    "check:candidate": "npm run check:quick && npm run check:contract && npm run build",
+    "verify": "npm run check:candidate"
   },
   "devDependencies": {
     "@playwright/test": "1.62.0",

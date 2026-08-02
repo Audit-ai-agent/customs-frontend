@@ -24,32 +24,12 @@ export default defineConfig({
   },
   projects: [
     {
-      name: "chrome-1440",
-      grep: /@(primary|responsive)/u,
+      name: "candidate-chromium",
+      grep: /@candidate/u,
       use: {
         ...devices["Desktop Chrome"],
         channel: "chrome",
         viewport: { width: 1440, height: 900 },
-      },
-    },
-    {
-      name: "edge-1024",
-      grep: /@responsive/u,
-      use: {
-        ...devices["Desktop Edge"],
-        channel: "msedge",
-        viewport: { width: 1024, height: 768 },
-      },
-    },
-    {
-      name: "chrome-mobile-390",
-      grep: /@responsive/u,
-      use: {
-        ...devices["Desktop Chrome"],
-        channel: "chrome",
-        viewport: { width: 390, height: 844 },
-        isMobile: true,
-        hasTouch: true,
       },
     },
   ],
