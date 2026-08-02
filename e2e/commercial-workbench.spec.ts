@@ -420,19 +420,37 @@ test.describe("상용형 내부 UAT 사용자 작업대", () => {
     page,
   }, testInfo) => {
     test.setTimeout(25 * 60 * 1_000);
+    page.setDefaultTimeout(30_000);
 
-    await page.goto("/test-lab");
-    const scenario = page.getByTestId("scenario-clean_text_no_requirement_uat");
-    await scenario.click();
-    await expect(scenario).toHaveAttribute("aria-pressed", "true");
-    await page.getByRole("button", { name: "이 시나리오로 심사 건 만들기" }).click();
-    await expect(page.getByTestId("documents-page")).toBeVisible({ timeout: 90_000 });
+    const resumeCaseId = process.env.CUSTOMS_E2E_CANDIDATE_CASE_ID;
+    let caseId: string;
+    if (resumeCaseId !== undefined) {
+      caseId = resumeCaseId;
+    } else {
+      await page.goto("/test-lab");
+      const scenario = page.getByTestId("scenario-clean_text_no_requirement_uat");
+      await scenario.click();
+      await expect(scenario).toHaveAttribute("aria-pressed", "true");
+      await page.getByRole("button", { name: "이 시나리오로 심사 건 만들기" }).click();
+      await expect(page.getByTestId("documents-page")).toBeVisible({ timeout: 90_000 });
 
-    const caseMatch = /\/cases\/([^/]+)\/documents$/u.exec(new URL(page.url()).pathname);
-    expect(caseMatch).not.toBeNull();
-    const caseId = decodeURIComponent(caseMatch![1]!);
-    await page.getByRole("link", { name: "심사 요약" }).click();
-    await page.getByTestId("start-review").click();
+      const caseMatch = /\/cases\/([^/]+)\/documents$/u.exec(new URL(page.url()).pathname);
+      expect(caseMatch).not.toBeNull();
+      caseId = decodeURIComponent(caseMatch![1]!);
+    }
+    await test.step("심사 요약 화면에서 실행 요청", async () => {
+      await page.goto(`/cases/${encodeURIComponent(caseId)}/overview`);
+      await expect(page).toHaveURL(
+        new RegExp(`/cases/${caseId.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&")}/overview$`, "u"),
+      );
+      await expect(page.locator(`.case-workspace[data-selected-case-id="${caseId}"]`))
+        .toBeVisible({ timeout: 90_000 });
+      await expect(page.getByTestId("case-overview")).toBeVisible();
+      const startReview = page.getByTestId("start-review");
+      await expect(startReview).toBeVisible();
+      await expect(startReview).toBeEnabled();
+      await startReview.click();
+    });
     const progress = page.getByTestId("review-progress");
     await expect(progress).toBeVisible({ timeout: 30_000 });
     await expect(page.getByTestId("current-stage")).not.toHaveText("");

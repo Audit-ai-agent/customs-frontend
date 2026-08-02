@@ -53,12 +53,13 @@ export function CaseWorkspace(): React.ReactElement {
     setLoading(true);
     setError(null);
     try {
-      const [nextCase, nextRuns, nextAudits] = await Promise.all([
+      const [nextCase, nextDocuments, nextRuns, nextAudits] = await Promise.all([
         api.getCase(caseId),
+        api.listDocuments(caseId),
         api.listReviewRuns(caseId),
         api.getAuditEvents(caseId),
       ]);
-      setCaseDetail(nextCase);
+      setCaseDetail({ ...nextCase, documents: nextDocuments, runs: nextRuns });
       setRuns(nextRuns);
       setAudits(nextAudits);
     } catch (reason) {
