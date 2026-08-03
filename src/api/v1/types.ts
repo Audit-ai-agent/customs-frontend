@@ -351,6 +351,10 @@ export interface ReviewRun extends RunSummary {
   model_execution_summary?: ModelExecutionSummary;
   /** Safe Backend projection of the V3 narrative Claude-call audit. */
   narrative_execution_summary?: ModelExecutionSummary;
+  /** Calls made in this run, excluding model calls inherited by an incremental revision. */
+  actual_document_model_calls?: number;
+  /** Parent document-analysis calls whose verified extraction was reused by this run. */
+  inherited_document_model_calls?: number;
   findings: ComplianceFinding[];
   sources: SourceReference[];
   narrative_report?: NarrativeReport;

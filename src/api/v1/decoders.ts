@@ -692,6 +692,16 @@ export function decodeReviewRun(value: unknown): ReviewRun {
         result.narrative_execution_summary,
         "reviewRun.result_detail.narrative_execution_summary",
       );
+  const decodeDocumentModelCallCount = (key: string): number | undefined => {
+    const value = result[key];
+    if (value === undefined) return undefined;
+    if (typeof value !== "number" || !Number.isInteger(value) || value < 0 || value > 100) {
+      throw new ContractError(`reviewRun.result_detail.${key}: bounded integer expected`);
+    }
+    return value;
+  };
+  const actualDocumentModelCalls = decodeDocumentModelCallCount("actual_document_model_calls");
+  const inheritedDocumentModelCalls = decodeDocumentModelCallCount("inherited_document_model_calls");
   if (!validateBackendEffectiveResultDigest(raw, modelExecutionSummary, narrativeExecutionSummary)) {
     throw new ContractError("reviewRun.result_digest: Backend effective result digest mismatch");
   }
@@ -986,6 +996,12 @@ export function decodeReviewRun(value: unknown): ReviewRun {
     ...(narrativeExecutionSummary === undefined
       ? {}
       : { narrative_execution_summary: narrativeExecutionSummary }),
+    ...(actualDocumentModelCalls === undefined
+      ? {}
+      : { actual_document_model_calls: actualDocumentModelCalls }),
+    ...(inheritedDocumentModelCalls === undefined
+      ? {}
+      : { inherited_document_model_calls: inheritedDocumentModelCalls }),
     findings,
     sources,
     action_trace: actionTrace,

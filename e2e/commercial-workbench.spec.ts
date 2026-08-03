@@ -1,3 +1,5 @@
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
 import type { Locator, Page, TestInfo } from "@playwright/test";
 import { expect, loginUatUser, test } from "./authenticated-test";
 import {
@@ -34,6 +36,69 @@ const MINIMUM_REPORT_CHARACTERS = 650;
 const MINIMUM_SECTION_CHARACTERS = 28;
 const MINIMUM_MATERIAL_STATEMENT_CHARACTERS = 18;
 const MINIMUM_KOREAN_LETTER_RATIO = 0.65;
+const CANDIDATE_CHECKPOINT_PATH = process.env.CUSTOMS_CANDIDATE_STATE_FILE;
+const CANDIDATE_IDENTITY_SHA256 = process.env.CUSTOMS_CANDIDATE_IDENTITY_SHA256;
+const CANDIDATE_STAGES = [
+  "case_created",
+  "root_completed",
+  "chat_completed",
+  "approval_submitted",
+  "completed",
+] as const;
+
+type CandidateStage = typeof CANDIDATE_STAGES[number];
+
+interface CandidateCheckpoint {
+  schema_version: "customs-candidate-checkpoint/v1";
+  identity_sha256: string;
+  case_id: string;
+  stage: CandidateStage;
+}
+
+function readCandidateCheckpoint(): CandidateCheckpoint | null {
+  if (
+    CANDIDATE_CHECKPOINT_PATH === undefined
+    || CANDIDATE_IDENTITY_SHA256 === undefined
+    || !/^[a-f0-9]{64}$/u.test(CANDIDATE_IDENTITY_SHA256)
+  ) {
+    return null;
+  }
+  try {
+    const value = JSON.parse(readFileSync(CANDIDATE_CHECKPOINT_PATH, "utf8")) as Partial<CandidateCheckpoint>;
+    if (
+      value.schema_version !== "customs-candidate-checkpoint/v1"
+      || value.identity_sha256 !== CANDIDATE_IDENTITY_SHA256
+      || typeof value.case_id !== "string"
+      || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(value.case_id)
+      || !CANDIDATE_STAGES.includes(value.stage as CandidateStage)
+    ) {
+      return null;
+    }
+    return value as CandidateCheckpoint;
+  } catch {
+    return null;
+  }
+}
+
+function writeCandidateCheckpoint(caseId: string, stage: CandidateStage): void {
+  if (
+    CANDIDATE_CHECKPOINT_PATH === undefined
+    || CANDIDATE_IDENTITY_SHA256 === undefined
+    || !/^[a-f0-9]{64}$/u.test(CANDIDATE_IDENTITY_SHA256)
+  ) {
+    return;
+  }
+  const checkpoint: CandidateCheckpoint = {
+    schema_version: "customs-candidate-checkpoint/v1",
+    identity_sha256: CANDIDATE_IDENTITY_SHA256,
+    case_id: caseId,
+    stage,
+  };
+  mkdirSync(dirname(CANDIDATE_CHECKPOINT_PATH), { recursive: true });
+  const temporary = `${CANDIDATE_CHECKPOINT_PATH}.tmp`;
+  writeFileSync(temporary, `${JSON.stringify(checkpoint, null, 2)}\n`, { encoding: "utf8" });
+  renameSync(temporary, CANDIDATE_CHECKPOINT_PATH);
+}
 
 async function seriousAccessibilityViolations(page: Page): Promise<string[]> {
   return page.evaluate(async () => {
@@ -218,6 +283,8 @@ async function expectCompletedRevisionJourney(page: Page, caseId: string): Promi
   const childPresentation = page.locator(".presentation-report");
   await expect(childPresentation).toHaveAttribute("data-generation-mode", "claude");
   await expect(childPresentation).toHaveAttribute("data-verification-status", "passed");
+  await expect(childPresentation).toHaveAttribute("data-actual-document-model-calls", "0");
+  await expect(childPresentation).toHaveAttribute("data-inherited-document-model-calls", "4");
   await expectCommercialReport(page);
   await expect(page.getByText(
     "상업송장과 포장명세서의 송장 번호가 일치하지 않습니다.",
@@ -489,16 +556,27 @@ test.describe("상용형 내부 UAT 사용자 작업대", () => {
     test.setTimeout(25 * 60 * 1_000);
     page.setDefaultTimeout(30_000);
 
-    await page.goto("/test-lab");
-    const scenario = page.getByTestId("scenario-clean_text_no_requirement_uat");
-    await scenario.click();
-    await expect(scenario).toHaveAttribute("aria-pressed", "true");
-    await page.getByRole("button", { name: "이 시나리오로 심사 건 만들기" }).click();
-    await expect(page.getByTestId("documents-page")).toBeVisible({ timeout: 90_000 });
+    const checkpoint = readCandidateCheckpoint();
+    let caseId = checkpoint?.case_id;
+    if (caseId !== undefined) {
+      await page.goto(`/cases/${encodeURIComponent(caseId)}/overview`);
+      if (await page.getByTestId("case-overview").count() === 0) {
+        caseId = undefined;
+      }
+    }
+    if (caseId === undefined) {
+      await page.goto("/test-lab");
+      const scenario = page.getByTestId("scenario-clean_text_no_requirement_uat");
+      await scenario.click();
+      await expect(scenario).toHaveAttribute("aria-pressed", "true");
+      await page.getByRole("button", { name: "이 시나리오로 심사 건 만들기" }).click();
+      await expect(page.getByTestId("documents-page")).toBeVisible({ timeout: 90_000 });
 
-    const caseMatch = /\/cases\/([^/]+)\/documents$/u.exec(new URL(page.url()).pathname);
-    expect(caseMatch).not.toBeNull();
-    const caseId = decodeURIComponent(caseMatch![1]!);
+      const caseMatch = /\/cases\/([^/]+)\/documents$/u.exec(new URL(page.url()).pathname);
+      expect(caseMatch).not.toBeNull();
+      caseId = decodeURIComponent(caseMatch![1]!);
+      writeCandidateCheckpoint(caseId, "case_created");
+    }
     await test.step("심사 요약 화면 준비", async () => {
       await page.goto(`/cases/${encodeURIComponent(caseId)}/overview`);
       await expect(page).toHaveURL(
@@ -507,10 +585,16 @@ test.describe("상용형 내부 UAT 사용자 작업대", () => {
       await expect(page.locator(`.case-workspace[data-selected-case-id="${caseId}"]`))
         .toBeVisible({ timeout: 90_000 });
       await expect(page.getByTestId("case-overview")).toBeVisible();
-      const startReview = page.getByTestId("start-review");
-      await expect(startReview).toBeVisible();
-      await expect(startReview).toBeEnabled();
-      await startReview.click();
+      if (await page.getByTestId("report-section-conclusion").count() === 0) {
+        const startReview = page.getByTestId("start-review");
+        const progress = page.getByTestId("review-progress");
+        const progressState = await progress.getAttribute("data-review-state").catch(() => null);
+        if (await progress.count() === 0 || progressState === "failed") {
+          await expect(startReview).toBeVisible();
+          await expect(startReview).toBeEnabled();
+          await startReview.click();
+        }
+      }
     });
     const progress = page.getByTestId("review-progress");
     await expect(progress).toBeVisible({ timeout: 30_000 });
@@ -541,7 +625,10 @@ test.describe("상용형 내부 UAT 사용자 작업대", () => {
     const rootPresentation = page.locator(".presentation-report");
     await expect(rootPresentation).toHaveAttribute("data-generation-mode", "claude");
     await expect(rootPresentation).toHaveAttribute("data-verification-status", "passed");
+    await expect(rootPresentation).toHaveAttribute("data-actual-document-model-calls", "4");
+    await expect(rootPresentation).toHaveAttribute("data-inherited-document-model-calls", "0");
     await expectBoundActualRagRun(page);
+    writeCandidateCheckpoint(caseId, "root_completed");
 
     await page.getByRole("link", { name: "AI 심사 도우미" }).click();
     await expect(page.getByTestId("assistant-page")).toBeVisible();
@@ -552,17 +639,22 @@ test.describe("상용형 내부 UAT 사용자 작업대", () => {
     await expect(page.getByLabel("AI 심사 도우미에게 질문")).toBeEnabled({
       timeout: 2 * 60 * 1_000,
     });
-    await expect(assistantAnswers).toHaveCount(0);
-    await sendAssistantQuestion(
-      page,
-      "이 심사 건이 사람 검토가 필요한 이유는 무엇입니까?",
-      1,
-    );
-    await sendAssistantQuestion(
-      page,
-      "방금 설명한 이유 중에서 담당자가 가장 먼저 확인할 항목은 무엇입니까?",
-      2,
-    );
+    const existingAnswerCount = await assistantAnswers.count();
+    expect(existingAnswerCount).toBeLessThanOrEqual(2);
+    if (existingAnswerCount === 0) {
+      await sendAssistantQuestion(
+        page,
+        "이 심사 건이 사람 검토가 필요한 이유는 무엇입니까?",
+        1,
+      );
+    }
+    if (existingAnswerCount <= 1) {
+      await sendAssistantQuestion(
+        page,
+        "방금 설명한 이유 중에서 담당자가 가장 먼저 확인할 항목은 무엇입니까?",
+        2,
+      );
+    }
     await expect(assistantAnswers).toHaveCount(2);
     const firstAnswer = assistantAnswers.nth(0);
     const firstUser = page.locator(".message-bubble--user").nth(0);
@@ -614,6 +706,23 @@ test.describe("상용형 내부 UAT 사용자 작업대", () => {
     ));
     expect(resultBindings).toHaveLength(1);
     expect(resultBindings[0]).toMatch(/^[a-f0-9]{64}$/u);
+    writeCandidateCheckpoint(caseId, "chat_completed");
+
+    await page.goto(`/cases/${encodeURIComponent(caseId)}/history`);
+    if (await page.locator('.run-history li[data-parent-run-id]:not([data-parent-run-id=""])').count() === 1) {
+      await expectCompletedRevisionJourney(page, caseId);
+      writeCandidateCheckpoint(caseId, "completed");
+      return;
+    }
+    if (checkpoint?.stage === "approval_submitted") {
+      await expect.poll(
+        () => page.locator('.run-history li[data-parent-run-id]:not([data-parent-run-id=""])').count(),
+        { timeout: 15 * 60 * 1_000 },
+      ).toBe(1);
+      await expectCompletedRevisionJourney(page, caseId);
+      writeCandidateCheckpoint(caseId, "completed");
+      return;
+    }
 
     await page.getByRole("link", { name: "담당자 검토" }).click();
     const reviewerPending = page.getByTestId("hitl-proposals").locator(".proposal--pending");
@@ -652,6 +761,7 @@ test.describe("상용형 내부 UAT 사용자 작업대", () => {
         "제안자와 다른 승인 담당자로서 원문 결박과 수정 사유를 확인했습니다.",
       );
       await pending.getByRole("button", { name: "승인·재심사" }).click();
+      writeCandidateCheckpoint(caseId, "approval_submitted");
       const childReviewProgress = approverPage.getByTestId("child-review-progress");
       await expect(childReviewProgress).toBeVisible({ timeout: 30_000 });
       await expect(childReviewProgress).toHaveAttribute(
@@ -660,6 +770,7 @@ test.describe("상용형 내부 UAT 사용자 작업대", () => {
         { timeout: 15 * 60 * 1_000 },
       );
       await expectCompletedRevisionJourney(approverPage, caseId);
+      writeCandidateCheckpoint(caseId, "completed");
     } finally {
       await approverContext.close();
     }

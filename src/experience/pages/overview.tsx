@@ -60,6 +60,8 @@ export function OverviewPage(): React.ReactElement {
               caseId={caseDetail.case_id}
               reviewRunId={selectedRun.review_run_id}
               experience={experience}
+              actualDocumentModelCalls={selectedRun.actual_document_model_calls}
+              inheritedDocumentModelCalls={selectedRun.inherited_document_model_calls}
             />
           ) : null}
           <UserActionSummary
@@ -253,10 +255,14 @@ function PresentationReport({
   caseId,
   reviewRunId,
   experience,
+  actualDocumentModelCalls,
+  inheritedDocumentModelCalls,
 }: {
   caseId: string;
   reviewRunId: string;
   experience: PublicReviewExperience;
+  actualDocumentModelCalls: number | undefined;
+  inheritedDocumentModelCalls: number | undefined;
 }): React.ReactElement {
   const sections = experience.user_presentation.sections;
   return (
@@ -266,6 +272,8 @@ function PresentationReport({
       data-bound-result-sha256={experience.bound_provider_result_sha256}
       data-generation-mode={experience.user_presentation.generation_audit.mode}
       data-verification-status={experience.user_presentation.verification_audit.status}
+      data-actual-document-model-calls={actualDocumentModelCalls ?? ""}
+      data-inherited-document-model-calls={inheritedDocumentModelCalls ?? ""}
     >
       <div className="presentation-report__heading">
         <div>
