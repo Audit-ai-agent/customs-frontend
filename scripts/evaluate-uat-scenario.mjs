@@ -2,13 +2,10 @@ import {
   assertFunctionalScenarioActual,
   evaluateFunctionalScenario,
 } from "../src/uat/functional-assertions.ts";
-import {
-  UAT_SCENARIOS,
-  localUatScenarioManifestSha256,
-  localUatScenarioManifestV2,
-} from "../src/uat/scenarios.ts";
+import { UAT_SCENARIOS } from "../src/uat/scenarios.ts";
 
 const MAX_STDIN_BYTES = 8 * 1024 * 1024;
+const MISSING_BINDING_SHA256 = "0".repeat(64);
 const chunks = [];
 let byteCount = 0;
 for await (const chunk of process.stdin) {
@@ -35,9 +32,9 @@ function projectBackendResult(value) {
   const detail = isRecord(reviewRun.result_detail) ? reviewRun.result_detail : reviewRun;
   const experience = record(actual.experience);
   const evidenceTrace = record(actual.evidence_trace);
+  const scenarioBinding = isRecord(actual.scenario_binding) ? actual.scenario_binding : {};
   const scenario = UAT_SCENARIOS.find((candidate) => candidate.scenario_id === scenarioId);
   if (scenario === undefined) throw new Error("unknown scenario");
-  const manifest = localUatScenarioManifestV2(scenario, evidenceProfile);
 
   const issues = firstArray(reviewRun.issues, detail.issues, detail.validation_issues);
   const findings = firstArray(reviewRun.findings, detail.findings, detail.regulatory_findings);
@@ -80,9 +77,9 @@ function projectBackendResult(value) {
     scenario_id: scenarioId,
     evidence_profile: evidenceProfile,
     manifest: {
-      input_manifest_sha256: manifest.input_manifest_sha256,
-      expected_semantics_sha256: manifest.expected_semantics_sha256,
-      manifest_sha256: localUatScenarioManifestSha256(manifest),
+      input_manifest_sha256: bindingSha256(scenarioBinding.input_manifest_sha256),
+      expected_semantics_sha256: bindingSha256(scenarioBinding.expected_semantics_sha256),
+      manifest_sha256: bindingSha256(scenarioBinding.scenario_manifest_sha256),
     },
     document_agent: {
       execution_status: firstDefined(detail.execution_status, reviewRun.execution_status),
@@ -204,6 +201,12 @@ function nonEmptyString(value) {
 function text(value) {
   if (typeof value !== "string") throw new Error("expected text");
   return value;
+}
+
+function bindingSha256(value) {
+  return typeof value === "string" && /^[a-f0-9]{64}$/u.test(value)
+    ? value
+    : MISSING_BINDING_SHA256;
 }
 
 function array(value) {

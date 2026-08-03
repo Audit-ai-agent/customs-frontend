@@ -66,25 +66,10 @@ describe("TASK-0033 product-owned functional scenario assertions", () => {
   });
 
   it("CLI accepts Backend-shaped input but emits only a safe three-axis verdict", () => {
-    const payload = backendEnvelope();
-    const output = execFileSync(
-      process.execPath,
-      ["--experimental-strip-types", resolve("scripts/evaluate-uat-scenario.mjs")],
-      {
-        cwd: resolve("."),
-        input: JSON.stringify(payload),
-        encoding: "utf8",
-        env: { ...process.env, NODE_NO_WARNINGS: "1" },
-        maxBuffer: 256 * 1024,
-      },
-    );
+    const output = runCli(backendEnvelope());
 
     expect(output).not.toContain("HIGHLY_SENSITIVE_TEST_TEXT");
-    const verdict = JSON.parse(output) as {
-      status: string;
-      verdict_sha256: string;
-      axes: Record<string, { passed: boolean }>;
-    };
+    const verdict = parseVerdict(output);
     expect(verdict.status).toBe("PASS");
     expect(verdict.verdict_sha256).toMatch(/^[a-f0-9]{64}$/u);
     expect(Object.keys(verdict.axes).sort()).toEqual([
@@ -93,7 +78,67 @@ describe("TASK-0033 product-owned functional scenario assertions", () => {
       "policy_release",
     ]);
   });
+
+  it("CLI fails the document axis when the actual Case binding is missing", () => {
+    const payload = backendEnvelope();
+    const actual = payload.actual as Record<string, unknown>;
+    delete actual.scenario_binding;
+
+    const verdict = parseVerdict(runCli(payload));
+
+    expect(verdict.status).toBe("FAIL");
+    expect(verdict.axes.document_agent.passed).toBe(false);
+    expect(verdict.axes.document_agent.checks).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: "manifest.input", actual: "0".repeat(64), passed: false }),
+      expect.objectContaining({ code: "manifest.expected", actual: "0".repeat(64), passed: false }),
+      expect.objectContaining({ code: "manifest.envelope", actual: "0".repeat(64), passed: false }),
+    ]));
+  });
+
+  it("CLI fails the document axis when the actual Case binding differs", () => {
+    const payload = backendEnvelope();
+    const actual = payload.actual as Record<string, unknown>;
+    const binding = actual.scenario_binding as Record<string, unknown>;
+    binding.input_manifest_sha256 = "f".repeat(64);
+
+    const verdict = parseVerdict(runCli(payload));
+
+    expect(verdict.status).toBe("FAIL");
+    expect(verdict.axes.document_agent.passed).toBe(false);
+    expect(verdict.axes.document_agent.checks).toContainEqual(expect.objectContaining({
+      code: "manifest.input",
+      actual: "f".repeat(64),
+      passed: false,
+    }));
+    expect(verdict.axes.actual_rag.passed).toBe(true);
+    expect(verdict.axes.policy_release.passed).toBe(true);
+  });
 });
+
+function runCli(payload: Record<string, unknown>): string {
+  return execFileSync(
+    process.execPath,
+    ["--experimental-strip-types", resolve("scripts/evaluate-uat-scenario.mjs")],
+    {
+      cwd: resolve("."),
+      input: JSON.stringify(payload),
+      encoding: "utf8",
+      env: { ...process.env, NODE_NO_WARNINGS: "1" },
+      maxBuffer: 256 * 1024,
+    },
+  );
+}
+
+function parseVerdict(output: string): {
+  status: string;
+  verdict_sha256: string;
+  axes: Record<"document_agent" | "actual_rag" | "policy_release", {
+    passed: boolean;
+    checks: Array<{ code: string; actual: unknown; passed: boolean }>;
+  }>;
+} {
+  return JSON.parse(output) as ReturnType<typeof parseVerdict>;
+}
 
 function cleanActual(): FunctionalScenarioActualV1 {
   const scenario = UAT_SCENARIOS.find(
@@ -178,6 +223,11 @@ function backendEnvelope(): Record<string, unknown> {
     scenario_id: actual.scenario_id,
     evidence_profile: actual.evidence_profile,
     actual: {
+      scenario_binding: {
+        input_manifest_sha256: actual.manifest.input_manifest_sha256,
+        expected_semantics_sha256: actual.manifest.expected_semantics_sha256,
+        scenario_manifest_sha256: actual.manifest.manifest_sha256,
+      },
       review_run: {
         execution_status: actual.document_agent.execution_status,
         assessment: actual.document_agent.assessment,
