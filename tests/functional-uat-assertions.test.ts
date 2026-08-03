@@ -183,7 +183,12 @@ function backendEnvelope(): Record<string, unknown> {
         assessment: actual.document_agent.assessment,
         review_disposition: actual.policy_release.review_disposition,
         required_actions: [],
-        action_trace: [],
+        action_trace: [
+          {
+            tool_name: "evidence.retrieve/v3",
+            status: "succeeded",
+          },
+        ],
         review_stage_trace: [{ stage: "retrieve_regulations", status: "completed" }],
         result_detail: {
           validation_issues: [],

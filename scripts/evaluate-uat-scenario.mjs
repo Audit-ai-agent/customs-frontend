@@ -115,7 +115,7 @@ function projectBackendResult(value) {
       finding_codes: findings.map((item) => codeFrom(item, "code", "finding_code")),
       required_action_codes: requiredActions.map((item) => codeFrom(item, "code", "action_code")),
       actions: actionTrace.map((item) => ({
-        tool: text(record(item).tool),
+        tool: text(firstDefined(record(item).tool_name, record(item).tool)),
         status: text(record(item).status),
       })),
       completed_stages: stageTrace
