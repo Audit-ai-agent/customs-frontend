@@ -2571,7 +2571,7 @@ describe("review workbench", () => {
     app.destroy();
   });
 
-  it("tracks a long Claude Job past 267 seconds and preserves recovery at the 12-minute UI boundary", async () => {
+  it("tracks a long Claude Job past 267 seconds and preserves recovery at the 15-minute UI boundary", async () => {
     const root = document.createElement("div");
     document.body.append(root);
     seedRecovery("reviewer-1", {
@@ -2616,6 +2616,51 @@ describe("review workbench", () => {
     app.destroy();
     timeout.mockRestore();
     now.mockRestore();
+  });
+
+  it("shows authoritative Job completion before the larger result aggregate finishes loading", async () => {
+    const root = document.createElement("div");
+    document.body.append(root);
+    const api = fakeApi();
+    const app = new WorkbenchApp(root, api, auth(true));
+    await app.start();
+    [...root.querySelectorAll<HTMLButtonElement>("button")]
+      .find((item) => item.textContent?.includes("<img src=x"))
+      ?.click();
+    await vi.waitFor(() => expect(root.textContent).toContain("문서 정합성 문제가 없습니다."));
+
+    let finishResultLoad: ((value: ReviewRun) => void) | undefined;
+    vi.mocked(api.getReviewRun)
+      .mockImplementationOnce(() => new Promise((resolve) => {
+        finishResultLoad = resolve;
+      }))
+      .mockResolvedValue(run);
+    vi.mocked(api.getJob).mockResolvedValue({
+      ...jobRecord("job-completed-before-result"),
+      status: "succeeded",
+      agent_call_state: "completed",
+      review_run_id: run.review_run_id,
+    });
+    const internals = app as unknown as {
+      state: { job: JobRecord | undefined };
+      beginJobTracking(jobId: string): void;
+      pollJob(jobId: string): Promise<void>;
+    };
+    internals.state.job = {
+      ...jobRecord("job-completed-before-result"),
+      status: "running",
+      agent_call_state: "started",
+    };
+    internals.beginJobTracking("job-completed-before-result");
+    const poll = internals.pollJob("job-completed-before-result");
+
+    await vi.waitFor(() => expect(
+      root.querySelector('[data-review-progress="succeeded"]'),
+    ).not.toBeNull());
+    expect(finishResultLoad).toBeTypeOf("function");
+    finishResultLoad!(run);
+    await poll;
+    app.destroy();
   });
 
   it("cancels the reserved timer, single-flights the same Job, and discards a response after destroy", async () => {

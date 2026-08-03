@@ -4029,6 +4029,10 @@ export class WorkbenchApp {
     if (recovery?.job_id === job.job_id) this.assertJobRecoveryBinding(job, recovery);
     if (job.status === "succeeded") {
       this.clearIdempotencyKeysForJob(job);
+      // The Job ledger is authoritative. Show its completed state before the
+      // larger immutable Run/Presentation aggregate finishes hydrating so a
+      // long result load cannot leave a stale "running" card on screen.
+      this.render();
       if (job.review_run_id) {
         await this.selectRun(job.review_run_id, lifecycleEpoch);
         if (!this.isJobLifecycleActive(lifecycleEpoch)) return;
