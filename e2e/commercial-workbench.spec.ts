@@ -100,6 +100,14 @@ function writeCandidateCheckpoint(caseId: string, stage: CandidateStage): void {
   renameSync(temporary, CANDIDATE_CHECKPOINT_PATH);
 }
 
+function requiredFunctionalId(name: string): string {
+  const value = process.env[name];
+  if (value === undefined || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u.test(value)) {
+    throw new Error(`${name} must be a bounded identifier from the current functional UAT run.`);
+  }
+  return value;
+}
+
 async function seriousAccessibilityViolations(page: Page): Promise<string[]> {
   return page.evaluate(async () => {
     const runner = (window as typeof window & {
@@ -546,6 +554,89 @@ test.describe("상용형 내부 UAT 사용자 작업대", () => {
       await expect(auditor.getByTestId("history-page")).toBeVisible();
     } finally {
       await context.close();
+    }
+  });
+
+  test("생성된 9개 심사·3턴 대화·승인 재심사를 사용자 화면에서 재사용해 확인합니다 @functional", async ({
+    browser,
+    page,
+  }) => {
+    test.setTimeout(12 * 60 * 1_000);
+    page.setDefaultTimeout(30_000);
+    const bindings = scenarioBindingsFromWorkerEnvironment();
+    const chatCaseId = requiredFunctionalId("CUSTOMS_E2E_FUNCTIONAL_CHAT_CASE_ID");
+    const chatRunId = requiredFunctionalId("CUSTOMS_E2E_FUNCTIONAL_CHAT_RUN_ID");
+    const hitlCaseId = requiredFunctionalId("CUSTOMS_E2E_FUNCTIONAL_HITL_CASE_ID");
+
+    await page.goto("/test-lab");
+    await expect(page.getByTestId("scenario-count")).toHaveText("9개 시나리오");
+    await expect(page.locator(".scenario-catalog button")).toHaveCount(SCENARIO_IDS.length);
+    for (const scenarioId of SCENARIO_IDS) {
+      await expect(page.getByTestId(`scenario-${scenarioId}`)).toBeEnabled();
+    }
+
+    for (const binding of bindings) {
+      await page.goto(
+        `/cases/${encodeURIComponent(binding.case_id)}/overview`
+          + `?run=${encodeURIComponent(binding.review_run_id)}`,
+      );
+      const workspace = page.locator(".case-workspace[data-selected-case-id]");
+      await expect(workspace).toHaveAttribute("data-selected-case-id", binding.case_id);
+      await expect(workspace).toHaveAttribute(
+        "data-selected-case-external-reference",
+        binding.external_reference,
+      );
+      await expect(page.locator(".presentation-report")).toHaveAttribute(
+        "data-bound-result-sha256",
+        binding.result_sha256,
+      );
+      await expectCommercialReport(page);
+      await expectBoundActualRagRun(page, binding.review_run_id);
+      const visibleText = normalizedText(await page.locator("body").innerText());
+      expect(visibleText).not.toMatch(/\b[a-f0-9]{64}\b/u);
+      expect(visibleText).not.toContain("REQUIRED_CERT_MISSING");
+      await expectNoCspViolations(page);
+    }
+
+    await page.goto(
+      `/cases/${encodeURIComponent(chatCaseId)}/assistant?run=${encodeURIComponent(chatRunId)}`,
+    );
+    await expect(page.getByTestId("assistant-page")).toBeVisible();
+    const userMessages = page.locator(".message-bubble--user");
+    const assistantMessages = page.locator(".message-bubble--assistant");
+    await expect(userMessages).toHaveCount(3, { timeout: 60_000 });
+    await expect(assistantMessages).toHaveCount(3, { timeout: 60_000 });
+    for (const answer of await assistantMessages.all()) {
+      await expect(answer.getByRole("heading", { name: "직접 답변" })).toBeVisible();
+      await expect(answer.getByRole("heading", { name: "그렇게 판단한 이유" })).toBeVisible();
+      await expect(answer.getByRole("heading", { name: "다음 조치" })).toBeVisible();
+    }
+    await page.reload();
+    await expect(page.getByTestId("assistant-page")).toBeVisible();
+    await expect(page.locator(".message-bubble--user")).toHaveCount(3, { timeout: 60_000 });
+    await expect(page.locator(".message-bubble--assistant")).toHaveCount(3, { timeout: 60_000 });
+
+    await expectCompletedRevisionJourney(page, hitlCaseId);
+
+    const baseURL = process.env.CUSTOMS_UAT_BASE_URL ?? "http://127.0.0.1:18088";
+    const auditorContext = await browser.newContext({
+      baseURL,
+      locale: "ko-KR",
+      timezoneId: "Asia/Seoul",
+    });
+    try {
+      const auditor = await auditorContext.newPage();
+      await loginUatUser(auditor, "auditor");
+      await auditor.goto(`/cases/${encodeURIComponent(hitlCaseId)}/history`);
+      await expect(auditor.getByTestId("history-page")).toBeVisible();
+      await expect(auditor.getByTestId("start-review")).toHaveCount(0);
+      await auditor.goto(`/cases/${encodeURIComponent(hitlCaseId)}/assistant`);
+      await expect(auditor.getByRole("button", { name: "질문하기" })).toBeDisabled();
+      await auditor.goto(`/cases/${encodeURIComponent(hitlCaseId)}/review-actions`);
+      await expect(auditor.getByRole("button", { name: "수정 제안 저장" })).toBeDisabled();
+      await expect(auditor.getByRole("button", { name: "승인·재심사" })).toHaveCount(0);
+    } finally {
+      await auditorContext.close();
     }
   });
 

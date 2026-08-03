@@ -145,6 +145,12 @@ if (!playwrightConfig.includes('name: "candidate-chromium"') || !playwrightConfi
 if ((browserSuite.match(/@candidate/gu) ?? []).length !== 1) {
   violations.push("exactly one representative Browser journey must be marked @candidate");
 }
+if (!playwrightConfig.includes('name: "functional-chromium"') || !playwrightConfig.includes("grep: /@functional/u")) {
+  violations.push("functional UAT must reuse generated results in one explicit Chromium project");
+}
+if ((browserSuite.match(/@functional/gu) ?? []).length !== 1) {
+  violations.push("exactly one generated-result Browser check must be marked @functional");
+}
 const uatDockerfile = await readFile(new URL("../deploy/uat/Dockerfile", import.meta.url), "utf8");
 const uatEntrypoint = await readFile(new URL("../deploy/uat/entrypoint.sh", import.meta.url), "utf8");
 const uatReadme = await readFile(new URL("../deploy/uat/README.md", import.meta.url), "utf8");
