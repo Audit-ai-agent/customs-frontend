@@ -548,7 +548,7 @@ describe("review workbench", () => {
       occurred_at: new Date(Date.now() - 60_000).toISOString(),
     }];
     internals.beginJobTracking("job-observation-paused");
-    internals.jobTrackingStartedAtMs = Date.now() - (12 * 60_000 + 1);
+    internals.jobTrackingStartedAtMs = Date.now() - (15 * 60_000 + 1);
 
     expect(internals.stopIfJobTrackingExpired("job-observation-paused")).toBe(true);
     expect(internals.jobElapsedTimer).toBeUndefined();
@@ -2601,13 +2601,13 @@ describe("review workbench", () => {
     };
     tracked.jobTrackingStartedAtMs = 1_000_000 - 267_596;
     await tracked.pollJob("job-long-claude");
-    expect(root.textContent).not.toContain("12분 동안 완료 상태를 확인하지 못했습니다");
+    expect(root.textContent).not.toContain("15분 동안 완료 상태를 확인하지 못했습니다");
     expect(timeout.mock.calls.some((call) => call[1] === 1_000)).toBe(true);
     expect(window.sessionStorage.getItem(recoveryKey())).not.toBeNull();
 
-    tracked.jobTrackingStartedAtMs = 1_000_000 - (12 * 60_000);
+    tracked.jobTrackingStartedAtMs = 1_000_000 - (15 * 60_000);
     await tracked.pollJob("job-long-claude");
-    expect(root.textContent).toContain("12분 동안 완료 상태를 확인하지 못했습니다");
+    expect(root.textContent).toContain("15분 동안 완료 상태를 확인하지 못했습니다");
     expect(root.textContent).toContain("실행 실패로 단정하지 않으며");
     expect(window.sessionStorage.getItem(recoveryKey())).not.toBeNull();
     expect([...root.querySelectorAll<HTMLButtonElement>("button")]

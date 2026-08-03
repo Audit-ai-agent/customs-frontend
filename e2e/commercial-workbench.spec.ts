@@ -657,7 +657,7 @@ test.describe("상용형 내부 UAT 사용자 작업대", () => {
       await expect(childReviewProgress).toHaveAttribute(
         "data-job-state",
         "succeeded",
-        { timeout: 12 * 60 * 1_000 },
+        { timeout: 15 * 60 * 1_000 },
       );
       await expectCompletedRevisionJourney(approverPage, caseId);
     } finally {

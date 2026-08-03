@@ -62,7 +62,7 @@ const DELIVERY_RECONCILIATION_RECOVERY_STORAGE_PREFIX = "customs.workbench.deliv
 const MAX_RECOVERY_RECORDS = 50;
 const MAX_TRANSIENT_POLL_FAILURES = 8;
 const MAX_POLL_DELAY_MS = 15_000;
-const JOB_TRACKING_TIMEOUT_MS = 12 * 60_000;
+const JOB_TRACKING_TIMEOUT_MS = 15 * 60_000;
 const REVIEW_TYPICAL_MINUTES = "4~7분";
 const CHAT_TYPICAL_SECONDS = "약 1~2분";
 interface UatRuntimeDisplayMetadata {
@@ -3611,7 +3611,7 @@ export class WorkbenchApp {
       return false;
     }
     this.pauseJobObservation(
-      "12분 동안 완료 상태를 확인하지 못했습니다. 실행 실패로 단정하지 않으며 같은 Job만 다시 조회합니다.",
+      "15분 동안 완료 상태를 확인하지 못했습니다. 실행 실패로 단정하지 않으며 같은 Job만 다시 조회합니다.",
       "심사 상태 자동 관측을 일시 중단했습니다. 동일 Job 상태를 다시 확인하세요.",
     );
     return true;
