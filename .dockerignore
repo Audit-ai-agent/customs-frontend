@@ -1,8 +1,15 @@
 .git
+.github
+_worktrees
 node_modules
 dist
 coverage
 test-results
 playwright-report
+docs
+e2e
+tests
+*.tsbuildinfo
+*.cdx.json
 *.log
 .env*

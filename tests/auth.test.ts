@@ -78,7 +78,7 @@ describe("OIDC memory-only session", () => {
   it("uses PKCE, session-only callback state and an in-memory user store", async () => {
     const session = await authenticatedSession();
     expect(await session.freshAccessToken()).toBe("memory-token");
-    expect(window.location.pathname).toBe("/");
+    expect(window.location.pathname).toBe("/reviews");
     expect(oidc.config).toMatchObject({ response_type: "code", automaticSilentRenew: false });
     expect(oidc.config?.stateStore).toBeDefined();
     expect(oidc.config?.userStore).toBeDefined();
@@ -103,7 +103,7 @@ describe("OIDC memory-only session", () => {
     session.configure(config());
     window.history.replaceState({}, "", "/auth/callback?error=access_denied&state=bound-state");
     await expect(session.finishCallbackIfPresent()).rejects.toThrow("access denied");
-    expect(window.location.pathname).toBe("/");
+    expect(window.location.pathname).toBe("/login");
     expect(window.location.search).toBe("");
   });
 
@@ -182,5 +182,71 @@ describe("OIDC memory-only session", () => {
     expect(session.isAuthenticated()).toBe(false);
     await expect(session.freshAccessToken()).resolves.toBeUndefined();
     expect(oidc.manager.removeUser).toHaveBeenCalledTimes(2);
+  });
+
+  it("restores a hard-refreshed route through the IdP cookie without persisting tokens", async () => {
+    const session = new OidcSession();
+    session.configure(config());
+    window.history.replaceState(
+      {},
+      "",
+      "/cases/case-1/assistant?run=run-1#latest-answer",
+    );
+
+    await expect(session.tryCookieSessionRestore()).resolves.toBe(true);
+    expect(oidc.manager.signinRedirect).toHaveBeenCalledWith({
+      prompt: "none",
+      state: {
+        intent: "cookie_session_restore",
+        returnTo: "/cases/case-1/assistant?run=run-1#latest-answer",
+      },
+    });
+    const stored = window.sessionStorage.getItem("customs.oidc.session-reauth");
+    expect(stored).toContain("/cases/case-1/assistant");
+    expect(stored).not.toMatch(/token|password|secret/iu);
+
+    oidc.manager.signinRedirectCallback.mockResolvedValue(user("restored-token", {
+      state: {
+        intent: "cookie_session_restore",
+        returnTo: "/cases/case-1/assistant?run=run-1#latest-answer",
+      },
+    }));
+    window.history.replaceState({}, "", "/auth/callback?code=one-time&state=restored");
+    await expect(session.finishCallbackIfPresent()).resolves.toBe(true);
+    expect(window.location.pathname).toBe("/cases/case-1/assistant");
+    expect(window.location.search).toBe("?run=run-1");
+    expect(window.location.hash).toBe("#latest-answer");
+    expect(window.sessionStorage.getItem("customs.oidc.session-reauth")).toBeNull();
+    expect(await session.freshAccessToken()).toBe("restored-token");
+  });
+
+  it("fails a cookie-session restore safely to login and rejects an external return path", async () => {
+    const session = new OidcSession();
+    session.configure(config());
+    window.history.replaceState({}, "", "/login?returnTo=https%3A%2F%2Fattacker.example%2Fsteal");
+    await session.login();
+    expect(oidc.manager.signinRedirect).toHaveBeenLastCalledWith({
+      state: {
+        intent: "interactive_login",
+        returnTo: "/reviews",
+      },
+    });
+    window.history.replaceState({}, "", "/reviews");
+    await expect(session.tryCookieSessionRestore()).resolves.toBe(true);
+    expect(oidc.manager.signinRedirect).toHaveBeenCalledWith({
+      prompt: "none",
+      state: {
+        intent: "cookie_session_restore",
+        returnTo: "/reviews",
+      },
+    });
+
+    oidc.manager.signinRedirectCallback.mockRejectedValue(new Error("login_required"));
+    window.history.replaceState({}, "", "/auth/callback?error=login_required&state=restored");
+    await expect(session.finishCallbackIfPresent()).resolves.toBe(true);
+    expect(window.location.pathname).toBe("/login");
+    expect(window.location.search).toContain("returnTo=%2Freviews");
+    expect(window.location.href).not.toContain("login_required");
+    expect(session.isAuthenticated()).toBe(false);
   });
 });

@@ -1,9 +1,16 @@
 # Customs Frontend Workbench
 
-내부 통관 심사 담당자가 text-only AI 사전심사를 실행하고 근거·수정·승인 이력을 검토하는 최소 제품 작업대다. Vite와 strict TypeScript로 빌드되며 Browser의 제품 데이터 호출은 Backend `/api/v1`로 제한한다.
+내부 통관 심사 담당자가 text-only AI 사전심사를 실행하고 결론·원인·법령 근거·다음 조치·수정·승인 이력을 확인하는 상용형 Local UAT 작업대다. React 19, Vite와 strict TypeScript로 빌드되며 Browser의 제품 데이터 호출은 Backend `/api/v1`과 `/api/v2`로만 제한한다.
 
 ## 제공 기능
 
+- 한국어 중심의 로그인·심사 업무함·Case 업무 화면과 반응형 App Shell
+- 결론→과정→문서 대조→원인→법령 의미→영향→조치→한계의 8구역 장문 AI 보고서
+- Backend가 영속한 실제 심사 단계·경과시간·실측 또는 검증 기본 ETA 표시
+- Case 결과 SHA에 결박된 멀티턴 AI 심사 도우미와 직접 답변·이유·근거·영향·조치 구역
+- 법령·문서·확인 사항으로 이동하고 focus되는 근거 링크
+- 기본 화면의 내부 코드 제거와 model/profile/hash를 분리한 검증 정보 Drawer
+- `/test-lab`의 실제 3법령 RAG 합성 시나리오 9개
 - OIDC Authorization Code + PKCE 로그인 진입점
 - Case 목록·생성, text-only 문서 등록
 - 인증된 SSE 실행 단계와 Job polling fallback
@@ -22,7 +29,7 @@
 
 ## LOCAL USER UAT 경계
 
-이 Workbench는 Backend의 `GET /api/v1/uat/metadata`만 통해 안전한 실행 상태를 읽고 화면 상단에 고정 표시한다. Browser가 Agent, Data 또는 해당 서비스의 readiness endpoint를 직접 호출하지 않는다. 표시 항목은 실제 Claude 모드, Evidence profile과 범위(`3/58` 포함), Data source, 관측 법령·조문 수, PostgreSQL/Qdrant/Neo4j 개수, `rag_quality_evaluated=false`, Planner 모드, text-only 여부, assurance ceiling, 자동완료 상태, Backend가 지원하는 `supported_review_as_of`다. 메타데이터나 이 기준일을 읽지 못하면 새 심사를 실행하지 않고 `UNKNOWN / AUTO-COMPLETION OFF / NOT PRODUCTION`으로 닫힌다. 모든 Review 요청은 화면에 표시된 이 날짜를 정확히 전달하며 현재 날짜를 임의로 대입하지 않는다.
+상용형 Workbench는 Backend의 `GET /api/v2/uat/metadata`를 통해 안전한 실행 상태와 Experience/Assistant/실제 단계 기능을 읽습니다. 기존 작업대의 `/api/v1/uat/metadata` 계약은 그대로 보존합니다. Browser가 Agent, Data 또는 해당 서비스의 readiness endpoint를 직접 호출하지 않습니다. 표시 항목은 실제 Claude 모드, Evidence profile과 범위(`3/58` 포함), Data source, 관측 법령·조문 수, PostgreSQL/Qdrant/Neo4j 개수, `rag_quality_evaluated=false`, Planner 모드, text-only 여부, assurance ceiling, 자동완료 상태, Backend가 지원하는 `supported_review_as_of`입니다. 메타데이터나 이 기준일을 읽지 못하면 새 심사를 실행하지 않고 안전하게 닫힙니다. 모든 Review 요청은 화면에 표시된 이 날짜를 정확히 전달하며 현재 날짜를 임의로 대입하지 않습니다.
 
 시나리오 결과는 기능 Gate와 업무 처리 판정을 분리해 표시한다.
 
@@ -47,10 +54,14 @@ V3 text 입력은 일반 문서 최대 6개, 문서당 200,000자/800,000 UTF-8 
 npm ci
 $env:BACKEND_ORIGIN='http://127.0.0.1:8080'
 $env:OIDC_BACKEND_ORIGIN='http://127.0.0.1:8082'
+$env:CUSTOMS_ENHANCED_AGENT_EXPERIENCE='true'
+$env:CUSTOMS_UAT_ADAPTIVE_ACTIVE='true'
 npm run dev
 ```
 
 Backend의 `/api/v1/auth/config`가 OIDC issuer/client/endpoint를 제공해야 한다. Browser에 표시되는 OIDC URL은 Workbench의 same-origin `/oidc/`를 사용하고, Vite/Nginx가 내부 Keycloak로 proxy한다. SPA callback `/auth/callback`과 proxy 경로를 분리해 callback이 Keycloak으로 오라우팅되지 않게 한다. access/id/refresh token은 메모리에만 저장한다. 보호 API 요청 직전에 만료가 가까우면 refresh token을 single-flight로 갱신하며 subject가 바뀌거나 갱신이 실패하면 세션을 폐기한다. OAuth state·PKCE verifier와 미확정 Review/Proposal decision intent의 식별자·버전·digest·request hash·idempotency key만 `sessionStorage`에 둔다. 모든 복구 레코드는 `org_id`와 OIDC `subject`로 namespace를 분리하고 종류별 최대 50개로 제한한다. Proposal 승인/거절 사유, 문서 원문·결과·token은 저장하지 않으며, 새로고침 뒤 로그인하면 Backend의 Job/Proposal 원장을 재조회해 응답 유실을 대조한다.
+
+Enhanced Review와 AI 심사 도우미도 외부 호출 전에 비민감 재시도 intent를 먼저 기록한다. Review는 Case ID·심사 기준일·idempotency key만 저장하고 문서 내용은 저장하지 않는다. 질문은 `conversation_id + bound result hash + parent message ID + 질문`의 SHA-256으로 만든 idempotency key만 저장하며 질문·답변 원문은 저장하지 않는다. Assistant POST 응답을 잃은 경우 Backend 대화 원장에 이미 영속된 마지막 사용자 메시지가 해당 key와 정확히 일치할 때만 같은 key로 재전송한다. Job이 확인된 뒤에는 권위 Job 상태가 terminal임을 확인하기 전까지 intent를 지우지 않는다.
 
 Review 복구 레코드는 `kind=review`, `parent_run_id=null`, Case revision, 현재 OIDC subject, 당시 Backend가 발행한 `review_as_of`, 고정 text-only 요청의 canonical SHA-256과 정확히 일치해야 한다. 현재 메타데이터 기준일과 다른 복구 intent는 재전송하지 않는다. Proposal decision의 직접 응답과 복구는 Backend decision 원장의 동일 Proposal/Run/Case/org, 현재 actor, 요청한 terminal status, scoped idempotency key, request digest가 모두 일치할 때만 child revision Job을 결박한다. approve에는 동일 ID의 child Job이 필수이고 reject에는 child Job이 없어야 한다. 다른 actor·key·digest가 먼저 종결한 intent는 `superseded`로 표시하며 그 child Job을 현재 raw key에 연결하지 않는다.
 
@@ -63,7 +74,14 @@ Review 복구 레코드는 `kind=review`, `parent_run_id=null`, Case revision, �
 ## 검증
 
 ```powershell
-npm run verify
+# 일상 국소 검사: lint + typecheck + Vitest
+npm run check:quick
+
+# Backend OpenAPI 계약이 변경됐을 때만 실행
+npm run check:contract
+
+# 병합 후보: quick + contract + bundle 1회
+npm run check:candidate
 
 # Backend exact SHA에서 export한 OpenAPI로 snapshot·TypeScript type·lock 재생성
 $env:BACKEND_OPENAPI_FILE='C:\path\to\openapi.json'
@@ -72,11 +90,21 @@ npm run contract:generate
 # 저장소에 고정된 exact OpenAPI/type hash 검증
 $env:BACKEND_OPENAPI_FILE='C:\path\to\openapi.json'
 npm run contract:check
+
+# 실행 중인 loopback 전체 UAT에서만 실제 Browser Gate 실행
+$env:CUSTOMS_E2E_LIVE='true'
+$env:CUSTOMS_UAT_BASE_URL='http://127.0.0.1:18088'
+$env:CUSTOMS_E2E_CREDENTIALS_FILE='C:\absolute\path\outside-repository\credentials.json'
+$env:CUSTOMS_E2E_SCENARIO_BINDINGS_FILE='C:\absolute\artifact\browser-scenario-bindings.json'
+$env:CUSTOMS_E2E_SCENARIO_BINDINGS_SHA256='<Harness가 계산한 파일 SHA-256>'
+# 특정 시나리오 Case를 exact 결박할 때만 선택적으로 지정
+$env:CUSTOMS_E2E_CASE_EXTERNAL_REFERENCE='UAT2:<scenario>:EVAL:<manifest-sha256>'
+npm run test:e2e
 ```
 
-`verify`는 exact runtime doctor, 경계/XSS 정적 검사, 계약 검사, strict typecheck, DOM·접근성 전체 테스트와 coverage gate, production build를 실행한다. 경계 검사는 외부 GitHub Action의 40자리 commit pin과 Docker/Gitleaks/Trivy의 SHA-256 digest pin도 강제한다. GitHub Actions는 여기에 high 이상 dependency audit, dependency·container CycloneDX SBOM과 30일 보존, 고정 digest Gitleaks의 현재 소스·전체 Git history fail-closed 검사, 미수정 취약점을 예외 처리하지 않는 Trivy High/Critical runtime 스캔, read-only/non-root container smoke를 추가한다. Windows linked worktree에서는 `scripts/run-gitleaks.ps1`을 사용한다.
+`check:quick`은 변경 중에 실행하는 기본 검사이며 coverage나 Docker image를 만들지 않습니다. `check:candidate`는 typecheck을 중복하지 않고 계약 검사와 production bundle을 한 번만 추가합니다. Browser E2E는 실제 Backend·Agent·Data가 실행 중인 literal loopback UAT에서만 실행되며, Chromium 1440×900의 대표 여정 한 건만 확인합니다. 9개 시나리오·다중 Browser·coverage·SBOM·전체 Git 이력 검사는 일상 PR이나 기능 후보 확인에서 반복하지 않습니다. Dependency audit은 manifest·lockfile이 바뀌 PR에서만, container build는 Dockerfile·deploy 경계가 바뀌 PR에서만 실행합니다.
 
-`tests/fixtures/backend-63079af-public-review-run.json`은 실제 Backend serializer에서 시작해 현재 안전 공개 projection(`result_detail.report` 제거와 Backend policy narrative overlay)을 고정한 회귀 fixture다. Frontend는 이 형식만 소비하며 provider 전용 `schema_version`, `status`, `requires_human_review`, `case_id`, `input_manifest_sha256`나 legacy V2 `report`를 `result_detail`에 요구하거나 다시 주입하지 않는다. Backend와 동일한 effective-summary canonical JSON SHA-256을 다시 계산해 `result_digest`를 검증하며, 추출과 V3 narrative의 실제 모델 실행 여부는 raw ID가 제거된 `model_execution_summary`와 `narrative_execution_summary`를 각각 strict decode한다. 자동완료에서는 Retrieval item의 exact HS resolution·complete coverage·빈 errors·item-bound Evidence, V3 `narrative_report`의 빈 action과 citation 결박, 두 실행 summary의 완전한 audit까지 일관되어야 한다. Backend가 Gate 결과를 안전하게 낮춘 보고서는 `generated_by=backend_policy_overlay`로 구분한다. 발견된 법령 요건이 있어도 검증된 Supporting Document code와 profile에 결박되어 Finding 없이 충족된 경우는 정상 자동완료를 허용한다.
+`tests/fixtures/backend-task0027-public-review-run.json`은 실제 Backend serializer에서 시작해 현재 안전 공개 projection과 result-digest-bound 실제 Store 실행 증명을 고정한 회귀 fixture다. Frontend는 이 형식만 소비하며 provider 전용 raw 필드나 legacy V2 보고서를 다시 주입하지 않는다. Backend와 동일한 effective-summary canonical JSON SHA-256을 다시 계산해 `result_digest`를 검증하며, 추출·설명·검색 실행 여부는 원문과 credential이 제거된 공개 audit projection만 strict decode한다. 자동완료에서는 Retrieval item의 exact HSK resolution·complete coverage·빈 오류·item-bound 법령 근거와 실행 identity까지 일관되어야 한다. Gate가 충족되지 않은 설명은 검증된 결정론적 fallback으로 명확히 구분하며, 사용자 화면의 결과를 임의로 상향하지 않는다.
 
 ## Production container
 
@@ -85,4 +113,4 @@ docker build -t customs-frontend:task-0020 .
 docker run --rm -p 8081:8080 customs-frontend:task-0020
 ```
 
-Nginx는 `/api/v1/`을 `backend:8080`, `/oidc/`를 `keycloak:8080`에 proxy한다. Browser는 자체 origin 밖으로 제품 API·token 요청을 보내지 않는다. 자세한 절차는 `docs/runbook/internal-docker.md`를 따른다.
+Nginx는 `/api/v1/`과 `/api/v2/`를 `backend:8080`, `/oidc/`를 `keycloak:8080`에 proxy합니다. Browser는 자체 origin 밖으로 제품 API·token 요청을 보내지 않습니다. 자세한 절차는 `docs/runbook/internal-docker.md`를 따릅니다.

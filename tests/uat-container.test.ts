@@ -12,6 +12,12 @@ describe("LOCAL USER UAT frontend container", () => {
     expect(dockerfile).toContain("nginxinc/nginx-unprivileged:stable-alpine@sha256:44e36330f74d4f3a1d4e222acca9e23b401fb87811a7597024502bb759c4dd49");
     expect(dockerfile).toContain("RUN npm run build:uat");
     expect(dockerfile).toContain("COPY --chown=node:node scripts ./scripts");
+    expect(dockerfile).toContain(
+      "COPY --chown=node:node scripts/patch-redocly-minimatch.mjs ./scripts/patch-redocly-minimatch.mjs",
+    );
+    expect(dockerfile.indexOf("ENV NODE_ENV=production")).toBeLessThan(
+      dockerfile.indexOf("RUN npm run build:uat"),
+    );
     expect(dockerfile).toContain("COPY --from=build /workspace/dist /usr/share/nginx/html");
     expect(dockerfile).toContain('com.customs.production="false"');
     expect(dockerfile).toContain('com.customs.auto-completion="off"');

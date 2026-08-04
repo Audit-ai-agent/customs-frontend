@@ -173,6 +173,8 @@ export interface RankedEvidenceProvenance {
   evidence_id: string;
   item_id: string;
   rank: number;
+  title: string;
+  excerpt: string;
   source_type: "law_article" | "customs_requirement" | "hsk_entry" | "notice";
   retrieval_methods: EvidenceRetrievalMethod[];
   score: number | null;
@@ -321,6 +323,14 @@ export interface ReviewRun extends RunSummary {
   input_manifest_digest?: string;
   agent_input_manifest_sha256?: string;
   provider_result_sha256?: string;
+  /** Backend-owned, result-digest-bound proof of the Evidence execution boundary. */
+  evidence_profile?: string;
+  evidence_data_source?: "UNATTESTED" | "ACTUAL_POSTGRESQL_QDRANT_NEO4J_READ_ONLY";
+  evidence_request_id?: string | null;
+  observed_retrieval_methods?: EvidenceRetrievalMethod[];
+  attempted_retrieval_methods?: EvidenceRetrievalMethod[];
+  successful_retrieval_methods?: EvidenceRetrievalMethod[];
+  retrieval_execution_attested?: boolean;
   stages: ReviewStageEvent[];
   fields: ExtractedField[];
   issues: ReviewIssue[];
@@ -341,6 +351,10 @@ export interface ReviewRun extends RunSummary {
   model_execution_summary?: ModelExecutionSummary;
   /** Safe Backend projection of the V3 narrative Claude-call audit. */
   narrative_execution_summary?: ModelExecutionSummary;
+  /** Calls made in this run, excluding model calls inherited by an incremental revision. */
+  actual_document_model_calls?: number;
+  /** Parent document-analysis calls whose verified extraction was reused by this run. */
+  inherited_document_model_calls?: number;
   findings: ComplianceFinding[];
   sources: SourceReference[];
   narrative_report?: NarrativeReport;

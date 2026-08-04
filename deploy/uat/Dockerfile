@@ -3,15 +3,25 @@ FROM node:22.23.1-alpine3.23@sha256:8516dce0483394d5708d4b2ee6cacb79fb1d617ea4e2
 
 WORKDIR /workspace
 ENV NODE_ENV=development
+ARG CUSTOMS_ENHANCED_AGENT_EXPERIENCE=false
+ARG CUSTOMS_UAT_ADAPTIVE_ACTIVE=false
+RUN case "${CUSTOMS_ENHANCED_AGENT_EXPERIENCE}:${CUSTOMS_UAT_ADAPTIVE_ACTIVE}" in \
+      true:true|true:false|false:false) ;; \
+      *) echo "invalid or unsafe UAT feature flag combination" >&2; exit 1 ;; \
+    esac
+ENV CUSTOMS_ENHANCED_AGENT_EXPERIENCE=${CUSTOMS_ENHANCED_AGENT_EXPERIENCE}
+ENV CUSTOMS_UAT_ADAPTIVE_ACTIVE=${CUSTOMS_UAT_ADAPTIVE_ACTIVE}
 RUN chown node:node /workspace
 
 COPY --chown=node:node package.json package-lock.json .npmrc ./
+COPY --chown=node:node scripts/patch-redocly-minimatch.mjs ./scripts/patch-redocly-minimatch.mjs
 USER node
 RUN npm ci --no-audit --no-fund
 
 COPY --chown=node:node index.html tsconfig.json vite.config.ts ./
 COPY --chown=node:node src ./src
 COPY --chown=node:node scripts ./scripts
+ENV NODE_ENV=production
 RUN npm run build:uat
 
 FROM nginxinc/nginx-unprivileged:stable-alpine@sha256:44e36330f74d4f3a1d4e222acca9e23b401fb87811a7597024502bb759c4dd49

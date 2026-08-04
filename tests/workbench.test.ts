@@ -548,7 +548,7 @@ describe("review workbench", () => {
       occurred_at: new Date(Date.now() - 60_000).toISOString(),
     }];
     internals.beginJobTracking("job-observation-paused");
-    internals.jobTrackingStartedAtMs = Date.now() - (12 * 60_000 + 1);
+    internals.jobTrackingStartedAtMs = Date.now() - (15 * 60_000 + 1);
 
     expect(internals.stopIfJobTrackingExpired("job-observation-paused")).toBe(true);
     expect(internals.jobElapsedTimer).toBeUndefined();
@@ -1451,6 +1451,8 @@ describe("review workbench", () => {
           evidence_id: "evidence-1",
           item_id: "item-1",
           rank: 1,
+          title: "관세법 제241조",
+          excerpt: "수입 신고와 관련된 관세법 조문입니다.",
           source_type: "law_article",
           retrieval_methods: ["dense", "bm25"],
           score: 0.87,
@@ -2022,6 +2024,8 @@ describe("review workbench", () => {
           evidence_id: "evidence-1",
           item_id: "item-1",
           rank: 1,
+          title: "관세법 제241조",
+          excerpt: "수입 신고와 관련된 관세법 조문입니다.",
           source_type: "law_article",
           retrieval_methods: ["dense", "bm25", "graph"],
           score: 0.87,
@@ -2567,7 +2571,7 @@ describe("review workbench", () => {
     app.destroy();
   });
 
-  it("tracks a long Claude Job past 267 seconds and preserves recovery at the 12-minute UI boundary", async () => {
+  it("tracks a long Claude Job past 267 seconds and preserves recovery at the 15-minute UI boundary", async () => {
     const root = document.createElement("div");
     document.body.append(root);
     seedRecovery("reviewer-1", {
@@ -2597,13 +2601,13 @@ describe("review workbench", () => {
     };
     tracked.jobTrackingStartedAtMs = 1_000_000 - 267_596;
     await tracked.pollJob("job-long-claude");
-    expect(root.textContent).not.toContain("12분 동안 완료 상태를 확인하지 못했습니다");
+    expect(root.textContent).not.toContain("15분 동안 완료 상태를 확인하지 못했습니다");
     expect(timeout.mock.calls.some((call) => call[1] === 1_000)).toBe(true);
     expect(window.sessionStorage.getItem(recoveryKey())).not.toBeNull();
 
-    tracked.jobTrackingStartedAtMs = 1_000_000 - (12 * 60_000);
+    tracked.jobTrackingStartedAtMs = 1_000_000 - (15 * 60_000);
     await tracked.pollJob("job-long-claude");
-    expect(root.textContent).toContain("12분 동안 완료 상태를 확인하지 못했습니다");
+    expect(root.textContent).toContain("15분 동안 완료 상태를 확인하지 못했습니다");
     expect(root.textContent).toContain("실행 실패로 단정하지 않으며");
     expect(window.sessionStorage.getItem(recoveryKey())).not.toBeNull();
     expect([...root.querySelectorAll<HTMLButtonElement>("button")]
@@ -2612,6 +2616,51 @@ describe("review workbench", () => {
     app.destroy();
     timeout.mockRestore();
     now.mockRestore();
+  });
+
+  it("shows authoritative Job completion before the larger result aggregate finishes loading", async () => {
+    const root = document.createElement("div");
+    document.body.append(root);
+    const api = fakeApi();
+    const app = new WorkbenchApp(root, api, auth(true));
+    await app.start();
+    [...root.querySelectorAll<HTMLButtonElement>("button")]
+      .find((item) => item.textContent?.includes("<img src=x"))
+      ?.click();
+    await vi.waitFor(() => expect(root.textContent).toContain("문서 정합성 문제가 없습니다."));
+
+    let finishResultLoad: ((value: ReviewRun) => void) | undefined;
+    vi.mocked(api.getReviewRun)
+      .mockImplementationOnce(() => new Promise((resolve) => {
+        finishResultLoad = resolve;
+      }))
+      .mockResolvedValue(run);
+    vi.mocked(api.getJob).mockResolvedValue({
+      ...jobRecord("job-completed-before-result"),
+      status: "succeeded",
+      agent_call_state: "completed",
+      review_run_id: run.review_run_id,
+    });
+    const internals = app as unknown as {
+      state: { job: JobRecord | undefined };
+      beginJobTracking(jobId: string): void;
+      pollJob(jobId: string): Promise<void>;
+    };
+    internals.state.job = {
+      ...jobRecord("job-completed-before-result"),
+      status: "running",
+      agent_call_state: "started",
+    };
+    internals.beginJobTracking("job-completed-before-result");
+    const poll = internals.pollJob("job-completed-before-result");
+
+    await vi.waitFor(() => expect(
+      root.querySelector('[data-review-progress="succeeded"]'),
+    ).not.toBeNull());
+    expect(finishResultLoad).toBeTypeOf("function");
+    finishResultLoad!(run);
+    await poll;
+    app.destroy();
   });
 
   it("cancels the reserved timer, single-flights the same Job, and discards a response after destroy", async () => {

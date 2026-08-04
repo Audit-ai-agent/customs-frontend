@@ -7,10 +7,11 @@ const src = new URL("../src/", import.meta.url);
 const rootPath = fileURLToPath(root);
 const files = await walk(src);
 const violations = [];
+const legacyHumanizeAllowlist = new Set(["src/app.ts", "src/dom.ts"]);
 
-for (const file of files.filter((name) => [".ts", ".css"].includes(extname(name)))) {
+for (const file of files.filter((name) => [".ts", ".tsx", ".css"].includes(extname(name)))) {
   const content = await readFile(file, "utf8");
-  const label = relative(rootPath, file);
+  const label = relative(rootPath, file).replaceAll("\\", "/");
   for (const [pattern, message] of [
     [/\.innerHTML\s*=/g, "unsafe innerHTML assignment"],
     [/\blocalStorage\b/g, "persistent browser secret storage"],
@@ -21,6 +22,32 @@ for (const file of files.filter((name) => [".ts", ".css"].includes(extname(name)
   ]) {
     if (pattern.test(content)) violations.push(`${label}: ${message}`);
   }
+  if (/\bhumanize\b/.test(content) && !legacyHumanizeAllowlist.has(label)) {
+    violations.push(`${label}: legacy diagnostic humanize must not enter product or shared code`);
+  }
+}
+
+const v2Client = await readFile(new URL("../src/api/v2/client.ts", import.meta.url), "utf8");
+if (!v2Client.includes('const API_BASE = "/api/v2"')) {
+  violations.push("Enhanced experience client must keep a literal /api/v2 Backend-only boundary");
+}
+const mainEntry = await readFile(new URL("../src/main.ts", import.meta.url), "utf8");
+if (/from\s+["']\.\/app["']/.test(mainEntry)) {
+  violations.push("Enhanced entry must not statically include the legacy developer workbench");
+}
+if (!mainEntry.includes('await import("./app")') || !mainEntry.includes('await import("./experience/bootstrap")')) {
+  violations.push("Legacy and commercial workbenches must remain isolated dynamic entry chunks");
+}
+const experienceFiles = files.filter((name) => name.includes(`${join("src", "experience")}`) && [".ts", ".tsx"].includes(extname(name)));
+for (const file of experienceFiles) {
+  const content = await readFile(file, "utf8");
+  const label = relative(rootPath, file).replaceAll("\\", "/");
+  if (/\bhumanize\s*\(/.test(content)) violations.push(`${label}: user wording must use an exhaustive Korean catalog`);
+  if (/dangerouslySetInnerHTML/.test(content)) violations.push(`${label}: enhanced experience must never render untrusted HTML`);
+}
+const legacyDom = await readFile(new URL("../src/dom.ts", import.meta.url), "utf8");
+if (!legacyDom.includes("@deprecated Legacy diagnostic-workbench compatibility only.")) {
+  violations.push("src/dom.ts humanize compatibility exception must remain explicitly deprecated and diagnostic-only");
 }
 
 const client = await readFile(new URL("../src/api/v1/client.ts", import.meta.url), "utf8");
@@ -42,36 +69,56 @@ const workflow = await readFile(new URL("../.github/workflows/repository-guard.y
 const packageJson = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
 if (packageJson.engines?.node !== "22.23.1") violations.push("Node runtime must be pinned to exact 22.23.1");
 if (packageJson.packageManager !== "npm@10.9.8") violations.push("npm runtime must be pinned to exact 10.9.8");
-if (!String(packageJson.scripts?.verify ?? "").startsWith("npm run doctor &&")) violations.push("verify must fail fast through the runtime doctor");
+if (packageJson.dependencies?.["react-router"] !== "8.3.0") {
+  violations.push("commercial workbench must pin patched React Router 8.3.0; see DL-0008");
+}
+if (packageJson.dependencies?.["react-router-dom"] !== undefined) {
+  violations.push("React Router DOM 7.18.1 is prohibited by the High-severity dependency gate");
+}
+const expectedScripts = {
+  "check:quick": "npm run lint && npm run typecheck && npm run test",
+  "check:contract": "npm run contract:check",
+  "check:candidate": "npm run check:quick && npm run check:contract && npm run build",
+  verify: "npm run check:candidate",
+};
+for (const [name, expected] of Object.entries(expectedScripts)) {
+  if (packageJson.scripts?.[name] !== expected) {
+    violations.push(`${name} must keep the lightweight lifecycle command ${JSON.stringify(expected)}`);
+  }
+}
+if (/tsc|coverage|\btest\b/u.test(String(packageJson.scripts?.build ?? ""))) {
+  violations.push("build must bundle once and must not repeat typecheck, tests, or coverage");
+}
+for (const name of ["check:quick", "check:contract", "check:candidate", "verify"]) {
+  if (String(packageJson.scripts?.[name] ?? "").includes("test:coverage")) {
+    violations.push(`${name} must not generate ordinary-run coverage`);
+  }
+}
 const npmrc = await readFile(new URL("../.npmrc", import.meta.url), "utf8");
 if (!/^engine-strict=true$/m.test(npmrc)) violations.push("npm must reject an unsupported Node runtime");
 if (!workflow.includes("node-version: 22.23.1")) violations.push("CI Node runtime must match the exact project pin");
 if (!workflow.includes("timeout-minutes:")) violations.push("CI job requires a bounded timeout");
+if (!workflow.includes("cancel-in-progress: true")) violations.push("CI must cancel superseded executions");
+if (workflow.includes("fetch-depth: 0")) violations.push("ordinary PR CI must not fetch complete Git history");
+for (const command of ["npm run check:quick", "npm run check:contract", "npm run build"]) {
+  if (!workflow.includes(command)) violations.push(`ordinary PR CI is missing ${command}`);
+}
+for (const forbidden of ["npm run verify", "test:coverage", "npm sbom", "gitleaks", "aquasec/trivy", "upload-artifact"]) {
+  if (workflow.toLowerCase().includes(forbidden)) {
+    violations.push(`ordinary PR CI must not run Production certification step ${forbidden}`);
+  }
+}
+if (!workflow.includes("steps.changes.outputs.dependency") || !workflow.includes("npm run security:audit")) {
+  violations.push("dependency audit must run only when the dependency manifest or lock changes");
+}
+if (!workflow.includes("steps.changes.outputs.container") || !workflow.includes("docker build")) {
+  violations.push("container build must run only when its definition changes");
+}
 for (const match of workflow.matchAll(/^\s*-\s+uses:\s*([^\s#]+)/gm)) {
   const action = match[1];
   if (!action.startsWith("./") && !/@[a-f0-9]{40}$/.test(action)) {
     violations.push(`GitHub Action must be pinned to an exact 40-character commit: ${action}`);
   }
-}
-for (const match of workflow.matchAll(/^\s*zricethezav\/gitleaks@([^\s]+)$/gm)) {
-  if (!/^sha256:[a-f0-9]{64}$/.test(match[1])) {
-    violations.push("Gitleaks image must be pinned to an exact sha256 digest");
-  }
-}
-for (const match of workflow.matchAll(/['"]?(aquasec\/trivy@[^'"\s]+)['"]?/g)) {
-  if (!/@sha256:[a-f0-9]{64}$/.test(match[1])) violations.push("Trivy image must use an exact sha256 digest");
-}
-if (!workflow.includes("npm sbom --sbom-format cyclonedx")) violations.push("CI must generate a dependency SBOM");
-if (!workflow.includes("frontend-image.cdx.json")) violations.push("CI must generate and retain a container SBOM");
-if (!workflow.includes("actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02")) violations.push("CI must retain SBOMs through the pinned artifact action");
-if (!workflow.includes("if-no-files-found: error") || !workflow.includes("retention-days: 30")) violations.push("SBOM artifact policy must fail closed and retain evidence for 30 days");
-if (!workflow.includes("--severity HIGH,CRITICAL")) violations.push("CI must scan the runtime image for High/Critical vulnerabilities");
-if (workflow.includes("--ignore-unfixed")) violations.push("High/Critical vulnerability gate must not silently ignore unfixed findings");
-if (!workflow.includes("Secret history scan refuses a zero-commit repository") || !workflow.includes("Gitleaks complete-history scan failed or found a secret")) {
-  violations.push("complete-history secret scanning must fail on enumeration, zero history, scanner failure, or findings");
-}
-if (!workflow.includes("--read-only") || !workflow.includes("--cap-drop ALL") || !workflow.includes("no-new-privileges:true")) {
-  violations.push("CI must smoke-test the runtime with a read-only root filesystem and reduced privileges");
 }
 
 const dockerfile = await readFile(new URL("../Dockerfile", import.meta.url), "utf8");
@@ -84,6 +131,26 @@ for (const match of dockerfile.matchAll(/^FROM\s+([^\s]+)(?:\s+AS\s+\S+)?$/gmi))
   }
 }
 if (!dockerfile.includes("HEALTHCHECK")) violations.push("Runtime image requires a healthcheck");
+if (!dockerfile.includes("RUN npm run build") || dockerfile.includes("RUN npm run verify")) {
+  violations.push("Runtime image must build the bundle once without running the verification suite");
+}
+for (const excludedCopy of ["COPY tests", "COPY .github", "COPY Dockerfile"] ) {
+  if (dockerfile.includes(excludedCopy)) violations.push(`Runtime build context must not copy ${excludedCopy.slice(5)}`);
+}
+const playwrightConfig = await readFile(new URL("../playwright.config.ts", import.meta.url), "utf8");
+const browserSuite = await readFile(new URL("../e2e/commercial-workbench.spec.ts", import.meta.url), "utf8");
+if (!playwrightConfig.includes('name: "candidate-chromium"') || !playwrightConfig.includes("grep: /@candidate/u")) {
+  violations.push("candidate Browser check must use one explicit Chromium project");
+}
+if ((browserSuite.match(/@candidate/gu) ?? []).length !== 1) {
+  violations.push("exactly one representative Browser journey must be marked @candidate");
+}
+if (!playwrightConfig.includes('name: "functional-chromium"') || !playwrightConfig.includes("grep: /@functional/u")) {
+  violations.push("functional UAT must reuse generated results in one explicit Chromium project");
+}
+if ((browserSuite.match(/@functional/gu) ?? []).length !== 1) {
+  violations.push("exactly one generated-result Browser check must be marked @functional");
+}
 const uatDockerfile = await readFile(new URL("../deploy/uat/Dockerfile", import.meta.url), "utf8");
 const uatEntrypoint = await readFile(new URL("../deploy/uat/entrypoint.sh", import.meta.url), "utf8");
 const uatReadme = await readFile(new URL("../deploy/uat/README.md", import.meta.url), "utf8");

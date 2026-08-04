@@ -54,6 +54,7 @@ import type {
   UatEvidenceTrace,
   VerificationAssertionCreate,
 } from "./types";
+import { stableApiErrorMessage, technicalApiErrorDetail } from "../user-facing-errors";
 
 const API_BASE = "/api/v1" as const;
 const MAX_JSON_BODY_BYTES = 4 * 1024 * 1024;
@@ -65,14 +66,22 @@ const MAX_TOTAL_DOCUMENT_RECORDS = MAX_PRIMARY_DOCUMENTS + MAX_SUPPORTING_DOCUME
 const MAX_PRIMARY_TEXT_CHARACTERS = 500_000;
 
 export class ApiError extends Error {
+  readonly technicalDetail: string;
+
   constructor(
-    message: string,
+    detail: string,
     readonly status: number,
     readonly code?: string,
     readonly requestId?: string,
   ) {
-    super(message);
+    super(stableApiErrorMessage(status, code));
     this.name = "ApiError";
+    this.technicalDetail = technicalApiErrorDetail({
+      detail,
+      status,
+      ...(code ? { code } : {}),
+      ...(requestId ? { requestId } : {}),
+    });
   }
 }
 
@@ -194,6 +203,20 @@ export class ApiClient {
       this.assertIdentity(item.case_id, caseId, "Supporting document Case");
       this.assertIdentity(item.document_id, payload.document_id, "Supporting document");
       this.assertOrg(item.org_id, "Supporting document");
+      if (
+        item.document_code !== payload.document_code
+        || item.issuer !== payload.issuer
+        || item.document_number !== payload.document_number
+        || item.issued_on !== payload.issued_on
+        || item.valid_until !== (payload.valid_until ?? null)
+        || item.source_sha256 !== payload.source_sha256
+        || !sameStringSet(item.subject_item_ids, payload.subject_item_ids)
+        || !sameStringSet(item.hs_codes, payload.hs_codes ?? [])
+      ) {
+        throw new ContractError(
+          "Supporting document response does not match the submitted verification metadata",
+        );
+      }
       return item;
     });
   }
@@ -411,18 +434,31 @@ export class ApiClient {
         const item = decodeCorrectionProposal(value);
         this.assertIdentity(item.review_run_id, runId, "Revision proposal Run");
         this.assertIdentity(item.parent_result_digest, payload.parent_result_digest, "Revision proposal parent result");
+        this.assertIdentity(
+          item.parent_input_manifest_sha256,
+          payload.parent_input_manifest_sha256,
+          "Revision proposal parent input manifest",
+        );
+        if (item.case_revision !== payload.case_revision) {
+          throw new ContractError("Revision proposal response does not match the requested Case revision");
+        }
+        if (
+          canonicalJson(normalizeRevisionProposal(item))
+          !== canonicalJson(normalizeRevisionProposal(payload))
+        ) {
+          throw new ContractError("Revision proposal response does not match the submitted proposal");
+        }
         this.assertOrg(item.org_id, "Revision proposal");
         this.assertActor(item.created_by, "Revision proposal creator");
-        this.assertIdempotencyBinding(
+        // The Backend stores this digest after Pydantic has typed `confidence`
+        // as a Python float. JavaScript intentionally treats 1 and 1.0 as the
+        // same JSON number, so the Browser validates the complete semantic echo
+        // above and treats the already shape-checked server digest as opaque.
+        this.assertScopedIdempotencyKey(
           item.idempotency_key,
-          item.idempotency_request_digest,
           "revision-proposal.create/v1",
           item.case_id,
           idempotencyKey,
-          {
-            review_run_id: runId,
-            proposal: normalizeRevisionProposal(payload),
-          },
           "Revision proposal",
         );
         return item;
@@ -635,6 +671,25 @@ export class ApiClient {
     requestPayload: unknown,
     context: string,
   ): void {
+    this.assertScopedIdempotencyKey(
+      actualKey,
+      endpoint,
+      caseId,
+      suppliedKey,
+      context,
+    );
+    if (actualRequestDigest !== canonicalSha256(requestPayload)) {
+      throw new ContractError(`${context} response does not match the submitted request digest`);
+    }
+  }
+
+  private assertScopedIdempotencyKey(
+    actualKey: string | null | undefined,
+    endpoint: "revision-proposal.create/v1" | "revision-proposal.decide/v1" | "case.answer/v1",
+    caseId: string,
+    suppliedKey: string,
+    context: string,
+  ): void {
     if (this.session === undefined) {
       throw new ContractError(`${context} idempotency binding requires an authenticated session`);
     }
@@ -647,9 +702,6 @@ export class ApiClient {
     })}`;
     if (actualKey !== expectedKey) {
       throw new ContractError(`${context} response does not match the scoped idempotency identity`);
-    }
-    if (actualRequestDigest !== canonicalSha256(requestPayload)) {
-      throw new ContractError(`${context} response does not match the submitted request digest`);
     }
   }
 
@@ -737,6 +789,15 @@ function assertSameValue(values: string[], message: string): void {
   if (new Set(values).size > 1) throw new ContractError(message);
 }
 
+function sameStringSet(left: string[], right: string[]): boolean {
+  const sortedLeft = [...left].sort();
+  const sortedRight = [...right].sort();
+  return (
+    sortedLeft.length === sortedRight.length
+    && sortedLeft.every((value, index) => value === sortedRight[index])
+  );
+}
+
 function validateEventSequence(events: ReviewStageEvent[], jobId: string): void {
   let lastSequence = -1;
   const eventIds = new Set<string>();
@@ -750,7 +811,9 @@ function validateEventSequence(events: ReviewStageEvent[], jobId: string): void 
   }
 }
 
-function normalizeRevisionProposal(payload: RevisionProposalCreate): Record<string, unknown> {
+function normalizeRevisionProposal(
+  payload: RevisionProposalCreate | CorrectionProposal,
+): Record<string, unknown> {
   return {
     parent_result_digest: payload.parent_result_digest,
     parent_input_manifest_sha256: payload.parent_input_manifest_sha256,

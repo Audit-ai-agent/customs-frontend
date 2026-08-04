@@ -11,7 +11,19 @@ describe("pinned Backend OpenAPI contract", () => {
     const generated = readFileSync(resolve("src/api/v1/generated.ts"), "utf8");
     expect(createHash("sha256").update(snapshot).digest("hex")).toBe(lock.openapi_sha256);
     expect(createHash("sha256").update(generated).digest("hex")).toBe(lock.generated_types_sha256);
-    expect(Object.keys(openapi.paths).every((path) => path.startsWith("/api/v1/") || path.startsWith("/health/"))).toBe(true);
+    expect(Object.keys(openapi.paths).every((path) => (
+      path.startsWith("/api/v1/")
+      || path.startsWith("/api/v2/")
+      || path.startsWith("/health/")
+    ))).toBe(true);
+    expect(openapi.paths).toHaveProperty("/api/v2/review-runs/{review_run_id}/experience");
+    expect(openapi.paths).toHaveProperty(
+      "/api/v2/review-runs/{review_run_id}/assistant/conversations",
+    );
+    expect(openapi.paths).toHaveProperty(
+      "/api/v2/assistant/conversations/{conversation_id}/messages",
+    );
+    expect(openapi.paths).toHaveProperty("/api/v2/jobs/{job_id}/events/stream");
     const serialized = JSON.stringify(openapi);
     expect(serialized).not.toMatch(/internal\/agent/i);
     expect(serialized).not.toMatch(

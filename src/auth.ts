@@ -3,6 +3,13 @@ import type { AuthConfig } from "./api/v1/types";
 
 const TOKEN_RENEWAL_SKEW_SECONDS = 60;
 const TOKEN_RENEWAL_TIMEOUT_SECONDS = 10;
+const SESSION_REAUTH_KEY = "customs.oidc.session-reauth";
+const SESSION_REAUTH_MAX_AGE_MS = 5 * 60 * 1_000;
+
+interface SessionReauthState {
+  returnTo: string;
+  initiatedAt: string;
+}
 
 export class OidcSession {
   private manager: UserManager | undefined;
@@ -44,6 +51,7 @@ export class OidcSession {
       && url.searchParams.has("state")
       && (url.searchParams.has("code") || url.searchParams.has("error"));
     if (!callback) return false;
+    const reauth = readSessionReauth();
     try {
       const user = await this.manager.signinRedirectCallback(window.location.href);
       if (!user.access_token || !user.profile?.sub) {
@@ -52,17 +60,88 @@ export class OidcSession {
       }
       this.sessionEpoch += 1;
       this.user = user;
+      clearSessionReauth();
+      window.history.replaceState(
+        {},
+        document.title,
+        callbackReturnTo(user.state, reauth?.returnTo),
+      );
       return true;
+    } catch (error) {
+      if (reauth !== null) {
+        this.sessionEpoch += 1;
+        this.user = undefined;
+        this.renewal = undefined;
+        clearSessionReauth();
+        try {
+          await this.manager.removeUser();
+        } catch {
+          // The browser process has no usable credential. Provider cleanup
+          // details must not reach the user-facing bootstrap screen.
+        }
+        const returnTo = safeReturnTo(reauth.returnTo, "/reviews");
+        window.history.replaceState(
+          {},
+          document.title,
+          `/login?returnTo=${encodeURIComponent(returnTo)}&session=expired`,
+        );
+        return true;
+      }
+      throw error;
     } finally {
       // One-time code, state, and provider errors must not remain in history,
       // screenshots, referrers, or a later browser refresh.
-      window.history.replaceState({}, document.title, "/");
+      if (window.location.pathname === "/auth/callback") {
+        window.history.replaceState({}, document.title, "/login");
+      }
+    }
+  }
+
+  async tryCookieSessionRestore(): Promise<boolean> {
+    if (!this.manager) throw new Error("OIDC session is not configured");
+    if (this.isAuthenticated()) return false;
+    const current = new URL(window.location.href);
+    if (current.pathname === "/login" || current.pathname === "/auth/callback") return false;
+    const existing = readSessionReauth();
+    if (existing !== null) {
+      clearSessionReauth();
+      window.history.replaceState(
+        {},
+        document.title,
+        `/login?returnTo=${encodeURIComponent(safeReturnTo(existing.returnTo, "/reviews"))}&session=expired`,
+      );
+      return false;
+    }
+    const returnTo = safeReturnTo(
+      `${current.pathname}${current.search}${current.hash}`,
+      "/reviews",
+    );
+    writeSessionReauth({ returnTo, initiatedAt: new Date().toISOString() });
+    try {
+      await this.manager.signinRedirect({
+        prompt: "none",
+        state: {
+          intent: "cookie_session_restore",
+          returnTo,
+        },
+      });
+      return true;
+    } catch (error) {
+      clearSessionReauth();
+      throw error;
     }
   }
 
   async login(): Promise<void> {
     if (!this.manager) throw new Error("OIDC session is not configured");
-    await this.manager.signinRedirect({ state: { returnTo: "/" } });
+    const current = new URL(window.location.href);
+    const returnTo = safeReturnTo(current.searchParams.get("returnTo"), "/reviews");
+    await this.manager.signinRedirect({
+      state: {
+        intent: "interactive_login",
+        returnTo,
+      },
+    });
   }
 
   async logout(): Promise<void> {
@@ -162,4 +241,68 @@ export class OidcSession {
       // will fail closed if the library store cannot provide its refresh token.
     }
   }
+}
+
+function callbackReturnTo(state: unknown, fallback: string | undefined): string {
+  if (typeof state !== "object" || state === null) return safeReturnTo(fallback, "/reviews");
+  const value = (state as { returnTo?: unknown }).returnTo;
+  return safeReturnTo(typeof value === "string" ? value : fallback, "/reviews");
+}
+
+function safeReturnTo(value: string | null | undefined, fallback: string): string {
+  if (
+    typeof value !== "string"
+    || value.length < 1
+    || value.length > 2_048
+    || !value.startsWith("/")
+    || value.startsWith("//")
+    || /[\r\n\0]/u.test(value)
+  ) return fallback;
+  let parsed: URL;
+  try {
+    parsed = new URL(value, window.location.origin);
+  } catch {
+    return fallback;
+  }
+  if (
+    parsed.origin !== window.location.origin
+    || parsed.pathname === "/auth/callback"
+    || parsed.pathname === "/login"
+  ) return fallback;
+  return `${parsed.pathname}${parsed.search}${parsed.hash}`;
+}
+
+function readSessionReauth(): SessionReauthState | null {
+  try {
+    const raw = window.sessionStorage.getItem(SESSION_REAUTH_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<SessionReauthState>;
+    const initiatedAt = typeof parsed.initiatedAt === "string"
+      ? new Date(parsed.initiatedAt).getTime()
+      : Number.NaN;
+    if (
+      typeof parsed.returnTo !== "string"
+      || !Number.isFinite(initiatedAt)
+      || Date.now() - initiatedAt > SESSION_REAUTH_MAX_AGE_MS
+      || initiatedAt - Date.now() > 60_000
+    ) {
+      clearSessionReauth();
+      return null;
+    }
+    return {
+      returnTo: safeReturnTo(parsed.returnTo, "/reviews"),
+      initiatedAt: String(parsed.initiatedAt),
+    };
+  } catch {
+    clearSessionReauth();
+    return null;
+  }
+}
+
+function writeSessionReauth(value: SessionReauthState): void {
+  window.sessionStorage.setItem(SESSION_REAUTH_KEY, JSON.stringify(value));
+}
+
+function clearSessionReauth(): void {
+  window.sessionStorage.removeItem(SESSION_REAUTH_KEY);
 }

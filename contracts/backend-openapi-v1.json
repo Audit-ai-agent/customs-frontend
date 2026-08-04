@@ -14,6 +14,311 @@
         "title": "AgentCallState",
         "type": "string"
       },
+      "AgentUatCapabilityAttestationV1": {
+        "additionalProperties": false,
+        "properties": {
+          "adaptive_active": {
+            "title": "Adaptive Active",
+            "type": "boolean"
+          },
+          "agent_code_snapshot_sha256": {
+            "pattern": "^[a-f0-9]{64}$",
+            "title": "Agent Code Snapshot Sha256",
+            "type": "string"
+          },
+          "agent_commit": {
+            "pattern": "^[a-f0-9]{40}$",
+            "title": "Agent Commit",
+            "type": "string"
+          },
+          "auto_completion_enabled": {
+            "const": false,
+            "title": "Auto Completion Enabled",
+            "type": "boolean"
+          },
+          "capability_sha256": {
+            "pattern": "^[a-f0-9]{64}$",
+            "title": "Capability Sha256",
+            "type": "string"
+          },
+          "environment": {
+            "const": "local_uat",
+            "title": "Environment",
+            "type": "string"
+          },
+          "evidence_profile": {
+            "const": "preserved-3law-v3-scenario-eval",
+            "title": "Evidence Profile",
+            "type": "string"
+          },
+          "evidence_runtime_v3_sha256": {
+            "pattern": "^[a-f0-9]{64}$",
+            "title": "Evidence Runtime V3 Sha256",
+            "type": "string"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
+          },
+          "issued_at": {
+            "format": "date-time",
+            "title": "Issued At",
+            "type": "string"
+          },
+          "loopback_only": {
+            "const": true,
+            "title": "Loopback Only",
+            "type": "boolean"
+          },
+          "max_cycles": {
+            "const": 2,
+            "title": "Max Cycles",
+            "type": "integer"
+          },
+          "max_rereads_per_field": {
+            "const": 1,
+            "title": "Max Rereads Per Field",
+            "type": "integer"
+          },
+          "max_tool_calls": {
+            "const": 6,
+            "title": "Max Tool Calls",
+            "type": "integer"
+          },
+          "model_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Model Id",
+            "type": "string"
+          },
+          "profile_id": {
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Profile Id",
+            "type": "string"
+          },
+          "prompt_bundle_sha256": {
+            "pattern": "^[a-f0-9]{64}$",
+            "title": "Prompt Bundle Sha256",
+            "type": "string"
+          },
+          "schema_bundle_sha256": {
+            "pattern": "^[a-f0-9]{64}$",
+            "title": "Schema Bundle Sha256",
+            "type": "string"
+          },
+          "schema_version": {
+            "const": "1.0",
+            "default": "1.0",
+            "title": "Schema Version",
+            "type": "string"
+          },
+          "tool_registry_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Tool Registry Id",
+            "type": "string"
+          },
+          "tool_registry_sha256": {
+            "pattern": "^[a-f0-9]{64}$",
+            "title": "Tool Registry Sha256",
+            "type": "string"
+          }
+        },
+        "required": [
+          "profile_id",
+          "environment",
+          "evidence_profile",
+          "loopback_only",
+          "issued_at",
+          "expires_at",
+          "agent_commit",
+          "agent_code_snapshot_sha256",
+          "model_id",
+          "prompt_bundle_sha256",
+          "schema_bundle_sha256",
+          "tool_registry_id",
+          "tool_registry_sha256",
+          "evidence_runtime_v3_sha256",
+          "max_cycles",
+          "max_tool_calls",
+          "max_rereads_per_field",
+          "adaptive_active",
+          "auto_completion_enabled",
+          "capability_sha256"
+        ],
+        "title": "AgentUatCapabilityAttestationV1",
+        "type": "object"
+      },
+      "AnswerClaimSelectionsV1": {
+        "additionalProperties": false,
+        "description": "Canonical claim IDs selected for each user-visible answer area.",
+        "properties": {
+          "direct_answer": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 1,
+            "title": "Direct Answer",
+            "type": "array"
+          },
+          "evidence_meaning": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 40,
+            "title": "Evidence Meaning",
+            "type": "array"
+          },
+          "explanation": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 40,
+            "title": "Explanation",
+            "type": "array"
+          },
+          "impact": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 40,
+            "title": "Impact",
+            "type": "array"
+          },
+          "next_steps": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 40,
+            "title": "Next Steps",
+            "type": "array"
+          }
+        },
+        "title": "AnswerClaimSelectionsV1",
+        "type": "object"
+      },
+      "AnswerScopeClassificationAuditV1": {
+        "additionalProperties": false,
+        "properties": {
+          "classified_scope": {
+            "enum": [
+              "case_grounded",
+              "evidence_grounded",
+              "general_customs_guidance",
+              "clarification_needed",
+              "insufficient_evidence",
+              "out_of_scope"
+            ],
+            "title": "Classified Scope",
+            "type": "string"
+          },
+          "guidance_topics": {
+            "items": {
+              "enum": [
+                "invoice",
+                "packing_list",
+                "bill_of_lading",
+                "certificate_of_origin",
+                "hsk",
+                "hs_hsk_comparison",
+                "customs_review",
+                "import_declaration",
+                "customs_valuation",
+                "duties_and_taxes",
+                "free_trade_agreement",
+                "import_requirements",
+                "inspection_and_supplement",
+                "document_correction",
+                "customs_broker"
+              ],
+              "type": "string"
+            },
+            "maxItems": 3,
+            "title": "Guidance Topics",
+            "type": "array"
+          },
+          "input_tokens": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Input Tokens",
+            "type": "integer"
+          },
+          "latency_ms": {
+            "default": 0,
+            "maximum": 300000.0,
+            "minimum": 0.0,
+            "title": "Latency Ms",
+            "type": "integer"
+          },
+          "mode": {
+            "enum": [
+              "claude",
+              "deterministic_guard",
+              "fallback"
+            ],
+            "title": "Mode",
+            "type": "string"
+          },
+          "model_id": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Id"
+          },
+          "output_schema_sha256": {
+            "pattern": "^[a-f0-9]{64}$",
+            "title": "Output Schema Sha256",
+            "type": "string"
+          },
+          "output_tokens": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Output Tokens",
+            "type": "integer"
+          },
+          "prompt_sha256": {
+            "pattern": "^[a-f0-9]{64}$",
+            "title": "Prompt Sha256",
+            "type": "string"
+          },
+          "reason_code": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Reason Code",
+            "type": "string"
+          },
+          "semantic_output_schema_sha256": {
+            "pattern": "^[a-f0-9]{64}$",
+            "title": "Semantic Output Schema Sha256",
+            "type": "string"
+          },
+          "task_id": {
+            "const": "customs_case_scope_classifier",
+            "title": "Task Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "mode",
+          "task_id",
+          "classified_scope",
+          "prompt_sha256",
+          "output_schema_sha256",
+          "semantic_output_schema_sha256",
+          "reason_code"
+        ],
+        "title": "AnswerScopeClassificationAuditV1",
+        "type": "object"
+      },
       "Assessment": {
         "enum": [
           "no_issue_detected",
@@ -22,6 +327,572 @@
         ],
         "title": "Assessment",
         "type": "string"
+      },
+      "AssistantAnswerV2": {
+        "additionalProperties": false,
+        "properties": {
+          "answer_scope": {
+            "enum": [
+              "case_grounded",
+              "evidence_grounded",
+              "general_customs_guidance",
+              "clarification_needed",
+              "insufficient_evidence",
+              "out_of_scope"
+            ],
+            "title": "Answer Scope",
+            "type": "string"
+          },
+          "answer_sha256": {
+            "pattern": "^[a-f0-9]{64}$",
+            "title": "Answer Sha256",
+            "type": "string"
+          },
+          "citations": {
+            "items": {
+              "$ref": "#/components/schemas/CitationReferenceV1"
+            },
+            "maxItems": 100,
+            "title": "Citations",
+            "type": "array"
+          },
+          "claim_selections": {
+            "$ref": "#/components/schemas/AnswerClaimSelectionsV1"
+          },
+          "direct_answer": {
+            "maxLength": 4000,
+            "minLength": 1,
+            "title": "Direct Answer",
+            "type": "string"
+          },
+          "evidence_meaning": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 20,
+            "title": "Evidence Meaning",
+            "type": "array"
+          },
+          "explanation": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 20,
+            "title": "Explanation",
+            "type": "array"
+          },
+          "generation_audit": {
+            "$ref": "#/components/schemas/ExperienceGenerationAuditV1"
+          },
+          "impact": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 20,
+            "title": "Impact",
+            "type": "array"
+          },
+          "limitations": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 20,
+            "title": "Limitations",
+            "type": "array"
+          },
+          "next_steps": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 20,
+            "title": "Next Steps",
+            "type": "array"
+          },
+          "request_sha256": {
+            "pattern": "^[a-f0-9]{64}$",
+            "title": "Request Sha256",
+            "type": "string"
+          },
+          "schema_version": {
+            "const": "2.0",
+            "default": "2.0",
+            "title": "Schema Version",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "answered",
+              "clarification_needed",
+              "insufficient_evidence",
+              "out_of_scope"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "suggested_questions": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 3,
+            "title": "Suggested Questions",
+            "type": "array"
+          },
+          "used_context_message_ids": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 8,
+            "title": "Used Context Message Ids",
+            "type": "array"
+          },
+          "verification_audit": {
+            "$ref": "#/components/schemas/ExperienceVerificationAuditV1"
+          }
+        },
+        "required": [
+          "answer_scope",
+          "status",
+          "direct_answer",
+          "generation_audit",
+          "verification_audit",
+          "request_sha256",
+          "answer_sha256"
+        ],
+        "title": "AssistantAnswerV2",
+        "type": "object"
+      },
+      "AssistantConversationListResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/AssistantConversationRecord"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "AssistantConversationListResponse",
+        "type": "object"
+      },
+      "AssistantConversationRecord": {
+        "additionalProperties": false,
+        "properties": {
+          "bound_effective_result_digest": {
+            "pattern": "^[a-f0-9]{64}$",
+            "title": "Bound Effective Result Digest",
+            "type": "string"
+          },
+          "bound_result_sha256": {
+            "pattern": "^[a-f0-9]{64}$",
+            "title": "Bound Result Sha256",
+            "type": "string"
+          },
+          "case_id": {
+            "title": "Case Id",
+            "type": "string"
+          },
+          "conversation_id": {
+            "pattern": "^conversation_[a-f0-9]{64}$",
+            "title": "Conversation Id",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "created_by": {
+            "title": "Created By",
+            "type": "string"
+          },
+          "org_id": {
+            "title": "Org Id",
+            "type": "string"
+          },
+          "review_run_id": {
+            "title": "Review Run Id",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "conversation_id",
+          "review_run_id",
+          "case_id",
+          "org_id",
+          "bound_result_sha256",
+          "bound_effective_result_digest",
+          "created_by",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "AssistantConversationRecord",
+        "type": "object"
+      },
+      "AssistantJobEnqueueResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "idempotency_reused": {
+            "title": "Idempotency Reused",
+            "type": "boolean"
+          },
+          "job": {
+            "$ref": "#/components/schemas/AssistantJobView"
+          },
+          "user_message": {
+            "$ref": "#/components/schemas/AssistantMessageRecord"
+          }
+        },
+        "required": [
+          "job",
+          "user_message",
+          "idempotency_reused"
+        ],
+        "title": "AssistantJobEnqueueResponse",
+        "type": "object"
+      },
+      "AssistantJobListResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/AssistantJobView"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "AssistantJobListResponse",
+        "type": "object"
+      },
+      "AssistantJobState": {
+        "enum": [
+          "queued",
+          "running",
+          "succeeded",
+          "failed",
+          "delivery_uncertain",
+          "response_received_rejected",
+          "response_persistence_uncertain"
+        ],
+        "title": "AssistantJobState",
+        "type": "string"
+      },
+      "AssistantJobView": {
+        "additionalProperties": false,
+        "properties": {
+          "answer_message_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Answer Message Id"
+          },
+          "assistant_job_id": {
+            "title": "Assistant Job Id",
+            "type": "string"
+          },
+          "case_id": {
+            "title": "Case Id",
+            "type": "string"
+          },
+          "conversation_id": {
+            "title": "Conversation Id",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "error_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Code"
+          },
+          "events": {
+            "items": {
+              "$ref": "#/components/schemas/AssistantStageEvent"
+            },
+            "title": "Events",
+            "type": "array"
+          },
+          "request_binding_sha256": {
+            "pattern": "^[a-f0-9]{64}$",
+            "title": "Request Binding Sha256",
+            "type": "string"
+          },
+          "review_run_id": {
+            "title": "Review Run Id",
+            "type": "string"
+          },
+          "state": {
+            "$ref": "#/components/schemas/AssistantJobState"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "assistant_job_id",
+          "request_binding_sha256",
+          "conversation_id",
+          "review_run_id",
+          "case_id",
+          "state",
+          "events",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "AssistantJobView",
+        "type": "object"
+      },
+      "AssistantMessageCreateV2": {
+        "additionalProperties": false,
+        "properties": {
+          "bound_result_sha256": {
+            "pattern": "^[a-f0-9]{64}$",
+            "title": "Bound Result Sha256",
+            "type": "string"
+          },
+          "parent_message_id": {
+            "anyOf": [
+              {
+                "maxLength": 256,
+                "minLength": 1,
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Message Id"
+          },
+          "question": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Question",
+            "type": "string"
+          }
+        },
+        "required": [
+          "question",
+          "bound_result_sha256"
+        ],
+        "title": "AssistantMessageCreateV2",
+        "type": "object"
+      },
+      "AssistantMessageListResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/AssistantMessageRecord"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "AssistantMessageListResponse",
+        "type": "object"
+      },
+      "AssistantMessageRecord": {
+        "additionalProperties": false,
+        "properties": {
+          "bound_result_sha256": {
+            "pattern": "^[a-f0-9]{64}$",
+            "title": "Bound Result Sha256",
+            "type": "string"
+          },
+          "case_id": {
+            "title": "Case Id",
+            "type": "string"
+          },
+          "content": {
+            "maxLength": 20000,
+            "minLength": 1,
+            "title": "Content",
+            "type": "string"
+          },
+          "conversation_id": {
+            "title": "Conversation Id",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "created_by": {
+            "title": "Created By",
+            "type": "string"
+          },
+          "message_id": {
+            "pattern": "^assistant_message_[a-f0-9]{64}$",
+            "title": "Message Id",
+            "type": "string"
+          },
+          "org_id": {
+            "title": "Org Id",
+            "type": "string"
+          },
+          "parent_message_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Message Id"
+          },
+          "review_run_id": {
+            "title": "Review Run Id",
+            "type": "string"
+          },
+          "role": {
+            "enum": [
+              "user",
+              "assistant"
+            ],
+            "title": "Role",
+            "type": "string"
+          },
+          "structured_answer": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AssistantAnswerV2"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "message_id",
+          "conversation_id",
+          "review_run_id",
+          "case_id",
+          "org_id",
+          "role",
+          "content",
+          "bound_result_sha256",
+          "created_by",
+          "created_at"
+        ],
+        "title": "AssistantMessageRecord",
+        "type": "object"
+      },
+      "AssistantStageEvent": {
+        "additionalProperties": false,
+        "properties": {
+          "assistant_job_id": {
+            "title": "Assistant Job Id",
+            "type": "string"
+          },
+          "duration_ms": {
+            "maximum": 3600000.0,
+            "minimum": 0.0,
+            "title": "Duration Ms",
+            "type": "integer"
+          },
+          "event_id": {
+            "pattern": "^assistant_event_[a-f0-9]{64}$",
+            "title": "Event Id",
+            "type": "string"
+          },
+          "message_key": {
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Message Key",
+            "type": "string"
+          },
+          "occurred_at": {
+            "format": "date-time",
+            "title": "Occurred At",
+            "type": "string"
+          },
+          "safe_counts": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Safe Counts",
+            "type": "object"
+          },
+          "sequence": {
+            "maximum": 100.0,
+            "minimum": 1.0,
+            "title": "Sequence",
+            "type": "integer"
+          },
+          "stage_code": {
+            "enum": [
+              "queued",
+              "request_validation",
+              "conversation_binding",
+              "answer_planning",
+              "answer_composition",
+              "grounding_verification",
+              "result_validation",
+              "persistence",
+              "completed",
+              "failed"
+            ],
+            "title": "Stage Code",
+            "type": "string"
+          },
+          "state": {
+            "enum": [
+              "started",
+              "completed",
+              "skipped",
+              "failed"
+            ],
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "event_id",
+          "assistant_job_id",
+          "sequence",
+          "stage_code",
+          "state",
+          "occurred_at",
+          "duration_ms",
+          "message_key"
+        ],
+        "title": "AssistantStageEvent",
+        "type": "object"
       },
       "AssuranceLevel": {
         "enum": [
@@ -485,6 +1356,34 @@
         "title": "ChatRecord",
         "type": "object"
       },
+      "CitationReferenceV1": {
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "enum": [
+              "field_source",
+              "issue",
+              "finding",
+              "evidence",
+              "outcome"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "reference_id": {
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Reference Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "reference_id"
+        ],
+        "title": "CitationReferenceV1",
+        "type": "object"
+      },
       "CompletionEligibility": {
         "additionalProperties": false,
         "properties": {
@@ -522,6 +1421,21 @@
           }
         },
         "title": "CompletionEligibility",
+        "type": "object"
+      },
+      "ConversationCreateV2": {
+        "additionalProperties": false,
+        "properties": {
+          "bound_result_sha256": {
+            "pattern": "^[a-f0-9]{64}$",
+            "title": "Bound Result Sha256",
+            "type": "string"
+          }
+        },
+        "required": [
+          "bound_result_sha256"
+        ],
+        "title": "ConversationCreateV2",
         "type": "object"
       },
       "CorrectionOperation": {
@@ -918,6 +1832,228 @@
         "title": "ExecutionStatus",
         "type": "string"
       },
+      "ExperienceGenerationAuditV1": {
+        "additionalProperties": false,
+        "properties": {
+          "attempt_count": {
+            "default": 1,
+            "maximum": 2.0,
+            "minimum": 1.0,
+            "title": "Attempt Count",
+            "type": "integer"
+          },
+          "input_tokens": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Input Tokens",
+            "type": "integer"
+          },
+          "latency_ms": {
+            "default": 0,
+            "maximum": 300000.0,
+            "minimum": 0.0,
+            "title": "Latency Ms",
+            "type": "integer"
+          },
+          "mode": {
+            "enum": [
+              "claude",
+              "deterministic_fallback"
+            ],
+            "title": "Mode",
+            "type": "string"
+          },
+          "model_id": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Id"
+          },
+          "output_schema_sha256": {
+            "pattern": "^[a-f0-9]{64}$",
+            "title": "Output Schema Sha256",
+            "type": "string"
+          },
+          "output_tokens": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Output Tokens",
+            "type": "integer"
+          },
+          "prompt_sha256": {
+            "pattern": "^[a-f0-9]{64}$",
+            "title": "Prompt Sha256",
+            "type": "string"
+          },
+          "scope_classification": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AnswerScopeClassificationAuditV1"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "task_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Task Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "mode",
+          "task_id",
+          "prompt_sha256",
+          "output_schema_sha256"
+        ],
+        "title": "ExperienceGenerationAuditV1",
+        "type": "object"
+      },
+      "ExperienceVerificationAuditV1": {
+        "additionalProperties": false,
+        "properties": {
+          "checked_statement_count": {
+            "maximum": 1000.0,
+            "minimum": 0.0,
+            "title": "Checked Statement Count",
+            "type": "integer"
+          },
+          "deterministic_checks_passed": {
+            "title": "Deterministic Checks Passed",
+            "type": "boolean"
+          },
+          "entailment_verifier": {
+            "enum": [
+              "claude",
+              "not_run"
+            ],
+            "title": "Entailment Verifier",
+            "type": "string"
+          },
+          "reason_codes": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 100,
+            "title": "Reason Codes",
+            "type": "array"
+          },
+          "status": {
+            "enum": [
+              "passed",
+              "fallback"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "verified_content_sha256": {
+            "pattern": "^[a-f0-9]{64}$",
+            "title": "Verified Content Sha256",
+            "type": "string"
+          },
+          "verifier_context_sha256": {
+            "anyOf": [
+              {
+                "pattern": "^[a-f0-9]{64}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Verifier Context Sha256"
+          },
+          "verifier_model_id": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Verifier Model Id"
+          },
+          "verifier_prompt_sha256": {
+            "pattern": "^[a-f0-9]{64}$",
+            "title": "Verifier Prompt Sha256",
+            "type": "string"
+          },
+          "verifier_schema_sha256": {
+            "pattern": "^[a-f0-9]{64}$",
+            "title": "Verifier Schema Sha256",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "deterministic_checks_passed",
+          "entailment_verifier",
+          "verifier_prompt_sha256",
+          "verifier_schema_sha256",
+          "checked_statement_count",
+          "verified_content_sha256"
+        ],
+        "title": "ExperienceVerificationAuditV1",
+        "type": "object"
+      },
+      "GroundedPresentationV1": {
+        "additionalProperties": false,
+        "properties": {
+          "generation_audit": {
+            "$ref": "#/components/schemas/ExperienceGenerationAuditV1"
+          },
+          "headline": {
+            "maxLength": 300,
+            "minLength": 1,
+            "title": "Headline",
+            "type": "string"
+          },
+          "presentation_sha256": {
+            "pattern": "^[a-f0-9]{64}$",
+            "title": "Presentation Sha256",
+            "type": "string"
+          },
+          "schema_version": {
+            "const": "1.0",
+            "default": "1.0",
+            "title": "Schema Version",
+            "type": "string"
+          },
+          "sections": {
+            "items": {
+              "$ref": "#/components/schemas/PresentationSection"
+            },
+            "maxItems": 8,
+            "minItems": 8,
+            "title": "Sections",
+            "type": "array"
+          },
+          "verification_audit": {
+            "$ref": "#/components/schemas/ExperienceVerificationAuditV1"
+          }
+        },
+        "required": [
+          "headline",
+          "sections",
+          "generation_audit",
+          "verification_audit",
+          "presentation_sha256"
+        ],
+        "title": "GroundedPresentationV1",
+        "type": "object"
+      },
       "GroundedQuestion": {
         "additionalProperties": false,
         "properties": {
@@ -1088,6 +2224,120 @@
           "items"
         ],
         "title": "JobEventsResponse",
+        "type": "object"
+      },
+      "JobExperienceResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "idempotency_reused": {
+            "title": "Idempotency Reused",
+            "type": "boolean"
+          },
+          "job": {
+            "$ref": "#/components/schemas/JobExperienceView"
+          }
+        },
+        "required": [
+          "job",
+          "idempotency_reused"
+        ],
+        "title": "JobExperienceResponse",
+        "type": "object"
+      },
+      "JobExperienceView": {
+        "additionalProperties": false,
+        "properties": {
+          "agent_call_state": {
+            "title": "Agent Call State",
+            "type": "string"
+          },
+          "attempt_count": {
+            "title": "Attempt Count",
+            "type": "integer"
+          },
+          "case_id": {
+            "title": "Case Id",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "created_by": {
+            "title": "Created By",
+            "type": "string"
+          },
+          "elapsed_seconds": {
+            "minimum": 0.0,
+            "title": "Elapsed Seconds",
+            "type": "integer"
+          },
+          "error_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Code"
+          },
+          "eta": {
+            "$ref": "#/components/schemas/ReviewEta"
+          },
+          "job_id": {
+            "title": "Job Id",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "review",
+              "revision"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "parent_run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Run Id"
+          },
+          "review_run_id": {
+            "title": "Review Run Id",
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/JobStatus"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "job_id",
+          "case_id",
+          "kind",
+          "status",
+          "review_run_id",
+          "attempt_count",
+          "agent_call_state",
+          "created_by",
+          "created_at",
+          "updated_at",
+          "elapsed_seconds",
+          "eta"
+        ],
+        "title": "JobExperienceView",
         "type": "object"
       },
       "JobResponse": {
@@ -1307,6 +2557,106 @@
         "title": "ModelExecutionSummary",
         "type": "object"
       },
+      "PresentationSection": {
+        "additionalProperties": false,
+        "properties": {
+          "section_code": {
+            "enum": [
+              "conclusion",
+              "process",
+              "document_comparison",
+              "issues_and_causes",
+              "regulatory_meaning",
+              "business_impact",
+              "next_actions",
+              "scope_and_limits"
+            ],
+            "title": "Section Code",
+            "type": "string"
+          },
+          "statements": {
+            "items": {
+              "$ref": "#/components/schemas/PresentationStatement"
+            },
+            "maxItems": 100,
+            "minItems": 1,
+            "title": "Statements",
+            "type": "array"
+          },
+          "title": {
+            "maxLength": 120,
+            "minLength": 1,
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "section_code",
+          "title",
+          "statements"
+        ],
+        "title": "PresentationSection",
+        "type": "object"
+      },
+      "PresentationStatement": {
+        "additionalProperties": false,
+        "properties": {
+          "citation_references": {
+            "items": {
+              "$ref": "#/components/schemas/CitationReferenceV1"
+            },
+            "maxItems": 100,
+            "title": "Citation References",
+            "type": "array"
+          },
+          "material": {
+            "default": true,
+            "title": "Material",
+            "type": "boolean"
+          },
+          "role": {
+            "enum": [
+              "conclusion",
+              "observation",
+              "reason",
+              "evidence",
+              "impact",
+              "action",
+              "limitation"
+            ],
+            "title": "Role",
+            "type": "string"
+          },
+          "source_claim_ids": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 20,
+            "minItems": 1,
+            "title": "Source Claim Ids",
+            "type": "array"
+          },
+          "statement_id": {
+            "pattern": "^statement_[a-f0-9]{64}$",
+            "title": "Statement Id",
+            "type": "string"
+          },
+          "text": {
+            "maxLength": 4000,
+            "minLength": 1,
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "statement_id",
+          "role",
+          "text",
+          "source_claim_ids"
+        ],
+        "title": "PresentationStatement",
+        "type": "object"
+      },
       "ProblemDetailsV1": {
         "additionalProperties": false,
         "properties": {
@@ -1406,6 +2756,62 @@
         "title": "PublicDocumentRecord",
         "type": "object"
       },
+      "PublicReviewExperienceV1": {
+        "additionalProperties": false,
+        "description": "Browser-safe projection; the full canonical Agent result remains private.",
+        "properties": {
+          "agent_envelope_sha256": {
+            "pattern": "^[a-f0-9]{64}$",
+            "title": "Agent Envelope Sha256",
+            "type": "string"
+          },
+          "bound_effective_result_digest": {
+            "pattern": "^[a-f0-9]{64}$",
+            "title": "Bound Effective Result Digest",
+            "type": "string"
+          },
+          "bound_provider_result_sha256": {
+            "pattern": "^[a-f0-9]{64}$",
+            "title": "Bound Provider Result Sha256",
+            "type": "string"
+          },
+          "capability_attestation": {
+            "$ref": "#/components/schemas/AgentUatCapabilityAttestationV1"
+          },
+          "public_experience_sha256": {
+            "pattern": "^[a-f0-9]{64}$",
+            "title": "Public Experience Sha256",
+            "type": "string"
+          },
+          "schema_version": {
+            "const": "1.0",
+            "default": "1.0",
+            "title": "Schema Version",
+            "type": "string"
+          },
+          "user_action_events": {
+            "items": {
+              "$ref": "#/components/schemas/UserActionEventV1"
+            },
+            "maxItems": 100,
+            "title": "User Action Events",
+            "type": "array"
+          },
+          "user_presentation": {
+            "$ref": "#/components/schemas/GroundedPresentationV1"
+          }
+        },
+        "required": [
+          "bound_provider_result_sha256",
+          "bound_effective_result_digest",
+          "user_presentation",
+          "capability_attestation",
+          "agent_envelope_sha256",
+          "public_experience_sha256"
+        ],
+        "title": "PublicReviewExperienceV1",
+        "type": "object"
+      },
       "RequiredAction": {
         "additionalProperties": false,
         "properties": {
@@ -1482,6 +2888,67 @@
         "title": "ReviewEnqueueRequest",
         "type": "object"
       },
+      "ReviewEta": {
+        "additionalProperties": false,
+        "properties": {
+          "p50_seconds": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "P50 Seconds"
+          },
+          "p90_seconds": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "P90 Seconds"
+          },
+          "range_max_seconds": {
+            "minimum": 0.0,
+            "title": "Range Max Seconds",
+            "type": "integer"
+          },
+          "range_min_seconds": {
+            "minimum": 0.0,
+            "title": "Range Min Seconds",
+            "type": "integer"
+          },
+          "sample_size": {
+            "maximum": 30.0,
+            "minimum": 0.0,
+            "title": "Sample Size",
+            "type": "integer"
+          },
+          "source": {
+            "enum": [
+              "observed",
+              "validated_default"
+            ],
+            "title": "Source",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source",
+          "sample_size",
+          "range_min_seconds",
+          "range_max_seconds"
+        ],
+        "title": "ReviewEta",
+        "type": "object"
+      },
       "ReviewRunListResponse": {
         "properties": {
           "items": {
@@ -1520,6 +2987,20 @@
           "assurance_level": {
             "$ref": "#/components/schemas/AssuranceLevel"
           },
+          "attempted_retrieval_methods": {
+            "items": {
+              "enum": [
+                "exact_hs",
+                "dense",
+                "bm25",
+                "graph"
+              ],
+              "type": "string"
+            },
+            "maxItems": 4,
+            "title": "Attempted Retrieval Methods",
+            "type": "array"
+          },
           "auto_completion_profile": {
             "$ref": "#/components/schemas/AutoCompletionProfileBinding"
           },
@@ -1543,6 +3024,34 @@
           "created_by": {
             "title": "Created By",
             "type": "string"
+          },
+          "evidence_data_source": {
+            "default": "UNATTESTED",
+            "enum": [
+              "UNATTESTED",
+              "ACTUAL_POSTGRESQL_QDRANT_NEO4J_READ_ONLY"
+            ],
+            "title": "Evidence Data Source",
+            "type": "string"
+          },
+          "evidence_profile": {
+            "default": "unknown",
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Evidence Profile",
+            "type": "string"
+          },
+          "evidence_request_id": {
+            "anyOf": [
+              {
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Evidence Request Id"
           },
           "execution_status": {
             "$ref": "#/components/schemas/ExecutionStatus"
@@ -1575,6 +3084,20 @@
             "additionalProperties": true,
             "title": "Narrative Report",
             "type": "object"
+          },
+          "observed_retrieval_methods": {
+            "items": {
+              "enum": [
+                "exact_hs",
+                "dense",
+                "bm25",
+                "graph"
+              ],
+              "type": "string"
+            },
+            "maxItems": 4,
+            "title": "Observed Retrieval Methods",
+            "type": "array"
           },
           "org_id": {
             "title": "Org Id",
@@ -1618,6 +3141,11 @@
             "title": "Result Digest",
             "type": "string"
           },
+          "retrieval_execution_attested": {
+            "default": false,
+            "title": "Retrieval Execution Attested",
+            "type": "boolean"
+          },
           "review_as_of": {
             "anyOf": [
               {
@@ -1643,6 +3171,20 @@
             },
             "maxItems": 64,
             "title": "Review Stage Trace",
+            "type": "array"
+          },
+          "successful_retrieval_methods": {
+            "items": {
+              "enum": [
+                "exact_hs",
+                "dense",
+                "bm25",
+                "graph"
+              ],
+              "type": "string"
+            },
+            "maxItems": 4,
+            "title": "Successful Retrieval Methods",
             "type": "array"
           },
           "trade_type": {
@@ -1909,8 +3451,19 @@
               "agent_analysis",
               "result_validation",
               "persistence",
+              "request_validation",
               "document_analysis",
               "normalization",
+              "document_pairing",
+              "cross_validation",
+              "adaptive_investigation",
+              "evidence_retrieval",
+              "compliance_review",
+              "report_composition",
+              "grounding_verification",
+              "conversation_binding",
+              "answer_planning",
+              "answer_composition",
               "validation",
               "evidence",
               "compliance",
@@ -1926,6 +3479,7 @@
               "started",
               "progress",
               "completed",
+              "skipped",
               "failed"
             ],
             "title": "State",
@@ -2567,6 +4121,217 @@
         "title": "UatMetadataResponse",
         "type": "object"
       },
+      "UatMetadataV2Response": {
+        "additionalProperties": false,
+        "properties": {
+          "actual_stage_streaming": {
+            "default": false,
+            "title": "Actual Stage Streaming",
+            "type": "boolean"
+          },
+          "agent_experience_api_version": {
+            "default": "disabled",
+            "enum": [
+              "disabled",
+              "3.0"
+            ],
+            "title": "Agent Experience Api Version",
+            "type": "string"
+          },
+          "assistant_api_version": {
+            "default": "disabled",
+            "enum": [
+              "disabled",
+              "2.0"
+            ],
+            "title": "Assistant Api Version",
+            "type": "string"
+          },
+          "assurance_ceiling": {
+            "const": "diagnostic",
+            "default": "diagnostic",
+            "title": "Assurance Ceiling",
+            "type": "string"
+          },
+          "auto_completion_enabled": {
+            "const": false,
+            "default": false,
+            "title": "Auto Completion Enabled",
+            "type": "boolean"
+          },
+          "claude_mode": {
+            "const": "actual",
+            "default": "actual",
+            "title": "Claude Mode",
+            "type": "string"
+          },
+          "enhanced_agent_experience": {
+            "default": false,
+            "title": "Enhanced Agent Experience",
+            "type": "boolean"
+          },
+          "evidence_data_source": {
+            "enum": [
+              "SYNTHETIC_V3_NO_RAG_QUALITY",
+              "ACTUAL_POSTGRESQL_QDRANT_NEO4J_READ_ONLY",
+              "UNKNOWN"
+            ],
+            "title": "Evidence Data Source",
+            "type": "string"
+          },
+          "evidence_dataset": {
+            "$ref": "#/components/schemas/UatEvidenceDatasetResponse"
+          },
+          "evidence_policy_mode": {
+            "enum": [
+              "SYNTHETIC_FIXTURE",
+              "ACTUAL_CODES_HUMAN_ONLY",
+              "SEALED_TEST_ONLY_ACTUAL_CCCT_HUMAN_ONLY",
+              "UNKNOWN"
+            ],
+            "title": "Evidence Policy Mode",
+            "type": "string"
+          },
+          "evidence_profile": {
+            "enum": [
+              "synthetic-v3",
+              "preserved-3law-v3-diagnostic",
+              "preserved-3law-v3-scenario-eval",
+              "unknown"
+            ],
+            "title": "Evidence Profile",
+            "type": "string"
+          },
+          "evidence_scope": {
+            "enum": [
+              "TEST_ONLY_V3",
+              "ACTUAL_3_LAW_RAG_3_OF_58",
+              "ACTUAL_3_LAW_RAG_SCENARIO_EVAL_3_OF_58",
+              "UNKNOWN"
+            ],
+            "title": "Evidence Scope",
+            "type": "string"
+          },
+          "evidence_scope_label": {
+            "enum": [
+              "TEST_ONLY_V3",
+              "ACTUAL_3_LAW_RAG_3_OF_58",
+              "ACTUAL_3_LAW_RAG_SCENARIO_EVAL_3_OF_58",
+              "UNKNOWN"
+            ],
+            "title": "Evidence Scope Label",
+            "type": "string"
+          },
+          "mode": {
+            "const": "local_uat",
+            "default": "local_uat",
+            "title": "Mode",
+            "type": "string"
+          },
+          "planner_mode": {
+            "enum": [
+              "shadow",
+              "diagnostic_active"
+            ],
+            "title": "Planner Mode",
+            "type": "string"
+          },
+          "production_release": {
+            "const": false,
+            "default": false,
+            "title": "Production Release",
+            "type": "boolean"
+          },
+          "supported_review_as_of": {
+            "format": "date",
+            "title": "Supported Review As Of",
+            "type": "string"
+          },
+          "text_only": {
+            "const": true,
+            "default": true,
+            "title": "Text Only",
+            "type": "boolean"
+          },
+          "uat_adaptive_active": {
+            "default": false,
+            "title": "Uat Adaptive Active",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "evidence_profile",
+          "evidence_scope",
+          "evidence_scope_label",
+          "evidence_data_source",
+          "evidence_policy_mode",
+          "evidence_dataset",
+          "supported_review_as_of",
+          "planner_mode"
+        ],
+        "title": "UatMetadataV2Response",
+        "type": "object"
+      },
+      "UserActionEventV1": {
+        "additionalProperties": false,
+        "properties": {
+          "action_code": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Action Code",
+            "type": "string"
+          },
+          "description": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Description",
+            "type": "string"
+          },
+          "event_id": {
+            "pattern": "^user_action_[a-f0-9]{64}$",
+            "title": "Event Id",
+            "type": "string"
+          },
+          "schema_version": {
+            "const": "1.0",
+            "default": "1.0",
+            "title": "Schema Version",
+            "type": "string"
+          },
+          "source_reference_ids": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 100,
+            "title": "Source Reference Ids",
+            "type": "array"
+          },
+          "status": {
+            "enum": [
+              "completed",
+              "needs_attention",
+              "deferred"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "title": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "event_id",
+          "action_code",
+          "title",
+          "description",
+          "status"
+        ],
+        "title": "UserActionEventV1",
+        "type": "object"
+      },
       "VerificationAssertionCreate": {
         "additionalProperties": false,
         "properties": {
@@ -2793,7 +4558,7 @@
   "info": {
     "description": "Internal, text-only workbench. Browser clients call this API only; Agent and Evidence credentials are never exposed.",
     "title": "Customs Review Workbench API",
-    "version": "1.0.0"
+    "version": "2.0.0"
   },
   "openapi": "3.1.0",
   "paths": {
@@ -6654,6 +8419,1556 @@
           }
         ],
         "summary": "Get Uat Evidence Trace Endpoint"
+      }
+    },
+    "/api/v2/assistant/conversations/{conversation_id}/jobs": {
+      "get": {
+        "operationId": "list_assistant_jobs_endpoint_api_v2_assistant_conversations__conversation_id__jobs_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "conversation_id",
+            "required": true,
+            "schema": {
+              "title": "Conversation Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AssistantJobListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetailsV1"
+                }
+              }
+            },
+            "description": "Problem Details V1 fail-closed response."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetailsV1"
+                }
+              }
+            },
+            "description": "Problem Details V1 fail-closed response."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetailsV1"
+                }
+              }
+            },
+            "description": "Problem Details V1 fail-closed response."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetailsV1"
+                }
+              }
+            },
+            "description": "Problem Details V1 fail-closed response."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetailsV1"
+                }
+              }
+            },
+            "description": "Problem Details V1 fail-closed response."
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetailsV1"
+                }
+              }
+            },
+            "description": "Problem Details V1 fail-closed response."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetailsV1"
+                }
+              }
+            },
+            "description": "Problem Details V1 fail-closed response."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetailsV1"
+                }
+              }
+            },
+            "description": "Problem Details V1 fail-closed response."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetailsV1"
+                }
+              }
+            },
+            "description": "Problem Details V1 fail-closed response."
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Assistant Jobs Endpoint"
+      }
+    },
+    "/api/v2/assistant/conversations/{conversation_id}/messages": {
+      "get": {
+        "operationId": "list_assistant_messages_endpoint_api_v2_assistant_conversations__conversation_id__messages_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "conversation_id",
+            "required": true,
+            "schema": {
+              "title": "Conversation Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AssistantMessageListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetailsV1"
+                }
+              }
+            },
+            "description": "Problem Details V1 fail-closed response."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetailsV1"
+                }
+              }
+            },
+            "description": "Problem Details V1 fail-closed response."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetailsV1"
+                }
+              }
+            },
+            "description": "Problem Details V1 fail-closed response."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetailsV1"
+                }
+              }
+            },
+            "description": "Problem Details V1 fail-closed response."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetailsV1"
+                }
+              }
+            },
+            "description": "Problem Details V1 fail-closed response."
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetailsV1"
+                }
+              }
+            },
+            "description": "Problem Details V1 fail-closed response."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetailsV1"
+                }
+              }
+            },
+            "description": "Problem Details V1 fail-closed response."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetailsV1"
+                }
+              }
+            },
+            "description": "Problem Details V1 fail-closed response."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetailsV1"
+                }
+              }
+            },
+            "description": "Problem Details V1 fail-closed response."
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Assistant Messages Endpoint"
+      },
+      "post": {
+        "operationId": "enqueue_assistant_message_endpoint_api_v2_assistant_conversations__conversation_id__messages_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "conversation_id",
+            "required": true,
+            "schema": {
+              "title": "Conversation Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 8,
+              "pattern": "^[A-Za-z0-9._:-]+$",
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AssistantMessageCreateV2"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AssistantJobEnqueueResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetailsV1"
+                }
+              }
+            },
+            "description": "Problem Details V1 fail-closed response."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetailsV1"
+                }
+              }
+            },
+            "description": "Problem Details V1 fail-closed response."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetailsV1"
+                }
+              }
+            },
+            "description": "Problem Details V1 fail-closed response."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetailsV1"
+                }
+              }
+            },
+            "description": "Problem Details V1 fail-closed response."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetailsV1"
+                }
+              }
+            },
+            "description": "Problem Details V1 fail-closed response."
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetailsV1"
+                }
+              }
+            },
+            "description": "Problem Details V1 fail-closed response."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetailsV1"
+                }
+              }
+            },
+            "description": "Problem Details V1 fail-closed response."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetailsV1"
+                }
+              }
+            },
+            "description": "Problem Details V1 fail-closed response."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetailsV1"
+                }
+              }
+            },
+            "description": "Problem Details V1 fail-closed response."
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Enqueue Assistant Message Endpoint"
+      }
+    },
+    "/api/v2/assistant/jobs/{assistant_job_id}": {
+      "get": {
+        "operationId": "get_assistant_job_endpoint_api_v2_assistant_jobs__assistant_job_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "assistant_job_id",
+            "required": true,
+            "schema": {
+              "title": "Assistant Job Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AssistantJobView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetailsV1"
+                }
+              }
+            },
+            "description": "Problem Details V1 fail-closed response."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetailsV1"
+                }
+              }
+            },
+            "description": "Problem Details V1 fail-closed response."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetailsV1"
+                }
+              }
+            },
+            "description": "Problem Details V1 fail-closed response."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetailsV1"
+                }
+              }
+            },
+            "description": "Problem Details V1 fail-closed response."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetailsV1"
+                }
+              }
+            },
+            "description": "Problem Details V1 fail-closed response."
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetailsV1"
+                }
+              }
+            },
+            "description": "Problem Details V1 fail-closed response."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetailsV1"
+                }
+              }
+            },
+            "description": "Problem Details V1 fail-closed response."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetailsV1"
+                }
+              }
+            },
+            "description": "Problem Details V1 fail-closed response."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetailsV1"
+                }
+              }
+            },
+            "description": "Problem Details V1 fail-closed response."
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Assistant Job Endpoint"
+      }
+    },
+    "/api/v2/assistant/jobs/{assistant_job_id}/events/stream": {
+      "get": {
+        "operationId": "stream_assistant_job_events_endpoint_api_v2_assistant_jobs__assistant_job_id__events_stream_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "assistant_job_id",
+            "required": true,
+            "schema": {
+              "title": "Assistant Job Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Last-Event-ID",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Last-Event-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetailsV1"
+                }
+              }
+            },
+            "description": "Problem Details V1 fail-closed response."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetailsV1"
+                }
+              }
+            },
+            "description": "Problem Details V1 fail-closed response."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetailsV1"
+                }
+              }
+            },
+            "description": "Problem Details V1 fail-closed response."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetailsV1"
+                }
+              }
+            },
+            "description": "Problem Details V1 fail-closed response."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetailsV1"
+                }
+              }
+            },
+            "description": "Problem Details V1 fail-closed response."
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetailsV1"
+                }
+              }
+            },
+            "description": "Problem Details V1 fail-closed response."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetailsV1"
+                }
+              }
+            },
+            "description": "Problem Details V1 fail-closed response."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetailsV1"
+                }
+              }
+            },
+            "description": "Problem Details V1 fail-closed response."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetailsV1"
+                }
+              }
+            },
+            "description": "Problem Details V1 fail-closed response."
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Stream Assistant Job Events Endpoint"
+      }
+    },
+    "/api/v2/cases/{case_id}/reviews": {
+      "post": {
+        "operationId": "enqueue_experience_review_endpoint_api_v2_cases__case_id__reviews_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "case_id",
+            "required": true,
+            "schema": {
+              "title": "Case Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 8,
+              "pattern": "^[A-Za-z0-9._:-]+$",
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReviewEnqueueRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobExperienceResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetailsV1"
+                }
+              }
+            },
+            "description": "Problem Details V1 fail-closed response."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetailsV1"
+                }
+              }
+            },
+            "description": "Problem Details V1 fail-closed response."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetailsV1"
+                }
+              }
+            },
+            "description": "Problem Details V1 fail-closed response."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetailsV1"
+                }
+              }
+            },
+            "description": "Problem Details V1 fail-closed response."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetailsV1"
+                }
+              }
+            },
+            "description": "Problem Details V1 fail-closed response."
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetailsV1"
+                }
+              }
+            },
+            "description": "Problem Details V1 fail-closed response."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetailsV1"
+                }
+              }
+            },
+            "description": "Problem Details V1 fail-closed response."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetailsV1"
+                }
+              }
+            },
+            "description": "Problem Details V1 fail-closed response."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetailsV1"
+                }
+              }
+            },
+            "description": "Problem Details V1 fail-closed response."
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Enqueue Experience Review Endpoint"
+      }
+    },
+    "/api/v2/jobs/{job_id}": {
+      "get": {
+        "operationId": "get_experience_job_endpoint_api_v2_jobs__job_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "title": "Job Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobExperienceView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetailsV1"
+                }
+              }
+            },
+            "description": "Problem Details V1 fail-closed response."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetailsV1"
+                }
+              }
+            },
+            "description": "Problem Details V1 fail-closed response."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetailsV1"
+                }
+              }
+            },
+            "description": "Problem Details V1 fail-closed response."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetailsV1"
+                }
+              }
+            },
+            "description": "Problem Details V1 fail-closed response."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetailsV1"
+                }
+              }
+            },
+            "description": "Problem Details V1 fail-closed response."
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetailsV1"
+                }
+              }
+            },
+            "description": "Problem Details V1 fail-closed response."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetailsV1"
+                }
+              }
+            },
+            "description": "Problem Details V1 fail-closed response."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetailsV1"
+                }
+              }
+            },
+            "description": "Problem Details V1 fail-closed response."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetailsV1"
+                }
+              }
+            },
+            "description": "Problem Details V1 fail-closed response."
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Experience Job Endpoint"
+      }
+    },
+    "/api/v2/jobs/{job_id}/events/stream": {
+      "get": {
+        "operationId": "stream_experience_job_events_endpoint_api_v2_jobs__job_id__events_stream_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "title": "Job Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Last-Event-ID",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Last-Event-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetailsV1"
+                }
+              }
+            },
+            "description": "Problem Details V1 fail-closed response."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetailsV1"
+                }
+              }
+            },
+            "description": "Problem Details V1 fail-closed response."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetailsV1"
+                }
+              }
+            },
+            "description": "Problem Details V1 fail-closed response."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetailsV1"
+                }
+              }
+            },
+            "description": "Problem Details V1 fail-closed response."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetailsV1"
+                }
+              }
+            },
+            "description": "Problem Details V1 fail-closed response."
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetailsV1"
+                }
+              }
+            },
+            "description": "Problem Details V1 fail-closed response."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetailsV1"
+                }
+              }
+            },
+            "description": "Problem Details V1 fail-closed response."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetailsV1"
+                }
+              }
+            },
+            "description": "Problem Details V1 fail-closed response."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetailsV1"
+                }
+              }
+            },
+            "description": "Problem Details V1 fail-closed response."
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Stream Experience Job Events Endpoint"
+      }
+    },
+    "/api/v2/review-runs/{review_run_id}/assistant/conversations": {
+      "get": {
+        "operationId": "list_assistant_conversations_endpoint_api_v2_review_runs__review_run_id__assistant_conversations_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "review_run_id",
+            "required": true,
+            "schema": {
+              "title": "Review Run Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AssistantConversationListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetailsV1"
+                }
+              }
+            },
+            "description": "Problem Details V1 fail-closed response."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetailsV1"
+                }
+              }
+            },
+            "description": "Problem Details V1 fail-closed response."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetailsV1"
+                }
+              }
+            },
+            "description": "Problem Details V1 fail-closed response."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetailsV1"
+                }
+              }
+            },
+            "description": "Problem Details V1 fail-closed response."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetailsV1"
+                }
+              }
+            },
+            "description": "Problem Details V1 fail-closed response."
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetailsV1"
+                }
+              }
+            },
+            "description": "Problem Details V1 fail-closed response."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetailsV1"
+                }
+              }
+            },
+            "description": "Problem Details V1 fail-closed response."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetailsV1"
+                }
+              }
+            },
+            "description": "Problem Details V1 fail-closed response."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetailsV1"
+                }
+              }
+            },
+            "description": "Problem Details V1 fail-closed response."
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Assistant Conversations Endpoint"
+      },
+      "post": {
+        "operationId": "create_assistant_conversation_endpoint_api_v2_review_runs__review_run_id__assistant_conversations_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "review_run_id",
+            "required": true,
+            "schema": {
+              "title": "Review Run Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConversationCreateV2"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AssistantConversationRecord"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetailsV1"
+                }
+              }
+            },
+            "description": "Problem Details V1 fail-closed response."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetailsV1"
+                }
+              }
+            },
+            "description": "Problem Details V1 fail-closed response."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetailsV1"
+                }
+              }
+            },
+            "description": "Problem Details V1 fail-closed response."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetailsV1"
+                }
+              }
+            },
+            "description": "Problem Details V1 fail-closed response."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetailsV1"
+                }
+              }
+            },
+            "description": "Problem Details V1 fail-closed response."
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetailsV1"
+                }
+              }
+            },
+            "description": "Problem Details V1 fail-closed response."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetailsV1"
+                }
+              }
+            },
+            "description": "Problem Details V1 fail-closed response."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetailsV1"
+                }
+              }
+            },
+            "description": "Problem Details V1 fail-closed response."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetailsV1"
+                }
+              }
+            },
+            "description": "Problem Details V1 fail-closed response."
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Create Assistant Conversation Endpoint"
+      }
+    },
+    "/api/v2/review-runs/{review_run_id}/experience": {
+      "get": {
+        "operationId": "get_review_experience_endpoint_api_v2_review_runs__review_run_id__experience_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "review_run_id",
+            "required": true,
+            "schema": {
+              "title": "Review Run Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicReviewExperienceV1"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetailsV1"
+                }
+              }
+            },
+            "description": "Problem Details V1 fail-closed response."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetailsV1"
+                }
+              }
+            },
+            "description": "Problem Details V1 fail-closed response."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetailsV1"
+                }
+              }
+            },
+            "description": "Problem Details V1 fail-closed response."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetailsV1"
+                }
+              }
+            },
+            "description": "Problem Details V1 fail-closed response."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetailsV1"
+                }
+              }
+            },
+            "description": "Problem Details V1 fail-closed response."
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetailsV1"
+                }
+              }
+            },
+            "description": "Problem Details V1 fail-closed response."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetailsV1"
+                }
+              }
+            },
+            "description": "Problem Details V1 fail-closed response."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetailsV1"
+                }
+              }
+            },
+            "description": "Problem Details V1 fail-closed response."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetailsV1"
+                }
+              }
+            },
+            "description": "Problem Details V1 fail-closed response."
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Review Experience Endpoint"
+      }
+    },
+    "/api/v2/uat/metadata": {
+      "get": {
+        "operationId": "uat_metadata_v2_api_v2_uat_metadata_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UatMetadataV2Response"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetailsV1"
+                }
+              }
+            },
+            "description": "Problem Details V1 fail-closed response."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetailsV1"
+                }
+              }
+            },
+            "description": "Problem Details V1 fail-closed response."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetailsV1"
+                }
+              }
+            },
+            "description": "Problem Details V1 fail-closed response."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetailsV1"
+                }
+              }
+            },
+            "description": "Problem Details V1 fail-closed response."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetailsV1"
+                }
+              }
+            },
+            "description": "Problem Details V1 fail-closed response."
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetailsV1"
+                }
+              }
+            },
+            "description": "Problem Details V1 fail-closed response."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetailsV1"
+                }
+              }
+            },
+            "description": "Problem Details V1 fail-closed response."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetailsV1"
+                }
+              }
+            },
+            "description": "Problem Details V1 fail-closed response."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetailsV1"
+                }
+              }
+            },
+            "description": "Problem Details V1 fail-closed response."
+          }
+        },
+        "summary": "Uat Metadata V2"
       }
     }
   }

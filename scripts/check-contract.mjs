@@ -13,7 +13,7 @@ if (sha256(snapshot) !== lock.openapi_sha256) failures.push("pinned OpenAPI SHA-
 if (sha256(generated) !== lock.generated_types_sha256) failures.push("generated TypeScript SHA-256 mismatch");
 if (countOperations(document) !== lock.operation_count) failures.push("operation count mismatch");
 for (const path of Object.keys(document.paths ?? {})) {
-  if (!path.startsWith("/api/v1/") && !path.startsWith("/health/")) failures.push(`boundary violation: ${path}`);
+  if (!path.startsWith("/api/v1/") && !path.startsWith("/api/v2/") && !path.startsWith("/health/")) failures.push(`boundary violation: ${path}`);
 }
 
 const externalPath = process.env.BACKEND_OPENAPI_FILE ?? process.argv[2];

@@ -1,40 +1,45 @@
 {
   "action_trace": [],
-  "agent_input_manifest_sha256": "e01b16466e78725dd7e0a30df9f97475ac18cceae1cb29c343aa8b2ad258afd0",
+  "agent_input_manifest_sha256": "352dcfc6127d320a6cc6cfb7a09448d8683784177a213575ba08428e051703b3",
   "assessment": "no_issue_detected",
   "assurance_level": "production_candidate",
+  "attempted_retrieval_methods": [
+    "exact_hs",
+    "dense",
+    "bm25",
+    "graph"
+  ],
   "auto_completion_profile": {
     "approval_digest": null,
     "approved_document_types": [],
     "approved_required_document_codes": [],
     "profile_id": null
   },
-  "case_id": "case_bacb7b3f0f6b4e938dca74482547562e",
+  "case_id": "case_a4868ec8f7dc456598f673c345c3bb13",
   "case_revision": 1,
   "completion_eligibility": {
     "eligible": false,
-    "profile_id": "profile-1",
-    "scope": [
-      "KR/import/0303540000"
-    ],
+    "profile_id": null,
+    "scope": [],
     "unmet_reason_codes": [
-      "backend_auto_completion_kill_switch_or_release_gate",
-      "backend_primary_document_profile_mismatch",
-      "backend_release_pin_missing"
+      "test_fixture_not_released"
     ]
   },
-  "created_at": "2026-07-22T00:35:45.487027Z",
+  "created_at": "2026-07-27T00:57:23.701658Z",
   "created_by": "system:review-worker",
+  "evidence_data_source": "ACTUAL_POSTGRESQL_QDRANT_NEO4J_READ_ONLY",
+  "evidence_profile": "preserved-3law-v3-scenario-eval",
+  "evidence_request_id": "request_5530ff9915a3a349c82809f03f0dcf6ee8141bc68e29c7a4a16335b9bb20d8b9",
   "execution_status": "succeeded",
   "input_document_manifest": [
     {
-      "content_sha256": "d0a93a228cb38b6967b60e0605681d25855f18cbd061edba12882a60cf16b7fe",
-      "document_id": "doc_bf2acb2836244514b7eba8c905568da2",
+      "content_sha256": "ffb32df78f169a7f353a70a5cda9129e0a03fcc8aed752efbc98310be41716b3",
+      "document_id": "doc_87c1b44544044680a40c2bc02a56204b",
       "document_type": "CI"
     }
   ],
-  "input_manifest_digest": "b88e3f3167f69d5673ae6f6f787c0178d14ee666cc621c1291e3f7bd631c6794",
-  "job_id": "job_d05f2db4b3dd4f0b8b31b8beca1a852f",
+  "input_manifest_digest": "b78911061c7baa6575f389ec69b4a917cb440d253655d0c0658c6961e5547cd3",
+  "job_id": "job_ebc904eeb0754c44b02e189be273b67a",
   "narrative_report": {
     "citation_verification": "passed",
     "document_consistency": [
@@ -42,27 +47,32 @@
         "citations": [
           {
             "kind": "outcome",
-            "reference_id": "outcome_7e29d40db58292088d0db7a8eee3d7c349902a467dfd3f76255b6056b480705e"
+            "reference_id": "outcome_ded4ef7a70ed1f7c902850d738e85093e2fd0b196cd1d879c594c1da732834dc"
           }
         ],
-        "claim_id": "claim_955ecebd4700030b5d93fdb75def14f273d8373d07712deaf92b3451237206a3",
+        "claim_id": "claim_0c8f2cb174912085ecc3dd626eb0f57bf004211dfea902afa834b8d38f19a7d5",
         "material": true,
-        "text": "결정론적 심사 결과를 확인했습니다."
+        "text": "문서 검토 결과: 결정론적 문서 교차검증에서 불일치가 확인되지 않았습니다."
       }
     ],
-    "generated_by": "backend_policy_overlay",
+    "generation_mode": "deterministic_fallback",
     "language": "ko-KR",
+    "model_call": null,
     "regulatory_review": [
       {
         "citations": [
           {
+            "kind": "evidence",
+            "reference_id": "ev_71953d066834e97d812941be2f6ed3af552224adc32b2fe6faa41f070bd31b3b"
+          },
+          {
             "kind": "outcome",
-            "reference_id": "outcome_7e29d40db58292088d0db7a8eee3d7c349902a467dfd3f76255b6056b480705e"
+            "reference_id": "outcome_ded4ef7a70ed1f7c902850d738e85093e2fd0b196cd1d879c594c1da732834dc"
           }
         ],
-        "claim_id": "claim_955ecebd4700030b5d93fdb75def14f273d8373d07712deaf92b3451237206a3",
+        "claim_id": "claim_629633bb24ca8d1049bf23be9dd581306a9d364dfd4efd2c5ac4b96e9440cf96",
         "material": true,
-        "text": "결정론적 심사 결과를 확인했습니다."
+        "text": "규정 검토 결과: 실제 조회된 규정 Evidence 범위에서는 별도의 미충족 요건이 확인되지 않았습니다."
       }
     ],
     "required_actions": [
@@ -70,12 +80,12 @@
         "citations": [
           {
             "kind": "outcome",
-            "reference_id": "outcome_7e29d40db58292088d0db7a8eee3d7c349902a467dfd3f76255b6056b480705e"
+            "reference_id": "outcome_ded4ef7a70ed1f7c902850d738e85093e2fd0b196cd1d879c594c1da732834dc"
           }
         ],
-        "claim_id": "claim_7639cabe7b3e9e0dead6ac9a1549cb5ec4d6ce4003b290eb4b13112000216006",
+        "claim_id": "claim_9baf6b0db591f5949b6b104ed9d382d0e51a329016befebf84605bd4410d3a26",
         "material": true,
-        "text": "Backend의 유효한 Release·입력·자동완료 Gate가 충족되지 않아 담당자 검토가 필요합니다."
+        "text": "다음 조치: 현재 결과가 담당자 검토를 요구하므로, 담당자는 관련 원문, 추출값, 규정 Evidence를 확인한 뒤 필요한 수정 또는 승인 결정을 기록해야 합니다."
       }
     ],
     "summary": [
@@ -83,25 +93,28 @@
         "citations": [
           {
             "kind": "outcome",
-            "reference_id": "outcome_7e29d40db58292088d0db7a8eee3d7c349902a467dfd3f76255b6056b480705e"
+            "reference_id": "outcome_ded4ef7a70ed1f7c902850d738e85093e2fd0b196cd1d879c594c1da732834dc"
           }
         ],
-        "claim_id": "claim_955ecebd4700030b5d93fdb75def14f273d8373d07712deaf92b3451237206a3",
+        "claim_id": "claim_55d365b4ba42ce886cdbe8f4ecefd0c90a27e4f76f6b730416d0e27690b48b4c",
         "material": true,
-        "text": "결정론적 심사 결과를 확인했습니다."
+        "text": "사전심사 결론: 현재 검토 범위에서는 문서 불일치나 미충족 규정 요건이 확인되지 않았습니다."
       }
     ]
   },
+  "observed_retrieval_methods": [
+    "exact_hs"
+  ],
   "org_id": "org-a",
   "parent_run_id": null,
-  "provider_result_sha256": "a531cbc69bcf09539fd76632f92a48204e59f3b134e2e17c9df2ad5d1541fe58",
+  "provider_result_sha256": "df5c26473e1d0ca66a16d4feab03cfe6d13b75270e35ea8b24438f4b7bf9d6c8",
   "release_identity": {
     "agent_code_snapshot_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
-    "agent_git_sha": "ffffffffffffffffffffffffffffffffffffffff",
+    "agent_git_sha": "7f85beb3c2b4d91db8adabea188d4ed6ec4f7dae",
     "agent_package_version": "0.3.0",
     "agent_source_snapshot_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
-    "assertion_trust_store_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-    "assertion_trust_store_state": "active",
+    "assertion_trust_store_sha256": "ccad11713d4c18b4f19246f32fc68cbd4faba2d66889f9c037845fdf66db3b13",
+    "assertion_trust_store_state": "unreleased",
     "backend_auto_completion_approval_digest": null,
     "backend_auto_completion_enabled": false,
     "chat_prompt_sha256": "4444444444444444444444444444444444444444444444444444444444444444",
@@ -112,32 +125,34 @@
     "evidence_snapshot_id": "generation-1",
     "extraction_prompt_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
     "extraction_schema_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
-    "kill_switch_active": false,
+    "kill_switch_active": true,
     "model_id": "claude-test",
     "model_revision": "claude-test-revision",
     "narrative_prompt_sha256": "3333333333333333333333333333333333333333333333333333333333333333",
     "narrative_schema_sha256": "6666666666666666666666666666666666666666666666666666666666666666",
     "policy_id": "policy-v3",
-    "release_profile_evaluation_report_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "release_profile_evaluation_report_sha256": null,
     "release_profile_id": "profile-1",
-    "release_profile_sha256": "9999999999999999999999999999999999999999999999999999999999999999",
-    "release_profile_state": "approved",
-    "release_profile_subject_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-    "result_schema_sha256": "72e70f901ef0bc7402159f4a1d1e25043effa02213f450ac017b611aaa37f912",
-    "reviewer_trust_store_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
-    "tool_registry_id": "tools-v1"
+    "release_profile_sha256": null,
+    "release_profile_state": "unreleased",
+    "release_profile_subject_sha256": null,
+    "result_schema_sha256": "7115a2ef8cea88c38974cad58df88c0ec1960a78d99a7f82d683633b29436c20",
+    "reviewer_trust_store_sha256": null,
+    "tool_registry_id": "customs-agent-tools/text-uat-v2"
   },
   "required_actions": [
     {
-      "action_code": "confirm_backend_release_pin",
-      "message": "승인된 Backend-Agent exact release pin이 없어 Production 보증을 적용하지 않았습니다.",
-      "source_reference_ids": []
+      "action_code": "obtain_production_release_approval",
+      "message": "Claude extraction과 법령 범위에 대한 독립 검수 및 Release 승인이 필요합니다.",
+      "source_reference_ids": [
+        "outcome_ded4ef7a70ed1f7c902850d738e85093e2fd0b196cd1d879c594c1da732834dc"
+      ]
     }
   ],
   "result_detail": {
     "document_results": [
       {
-        "document_id": "doc_bf2acb2836244514b7eba8c905568da2",
+        "document_id": "doc_87c1b44544044680a40c2bc02a56204b",
         "document_type": "invoice",
         "extraction_confidence": 1.0,
         "extraction_provider": "deterministic_contract_fixture",
@@ -151,7 +166,7 @@
             "source": {
               "bbox": null,
               "coordinate_space": null,
-              "document_id": "doc_bf2acb2836244514b7eba8c905568da2",
+              "document_id": "doc_87c1b44544044680a40c2bc02a56204b",
               "image_height_px": null,
               "image_sha256": null,
               "image_width_px": null,
@@ -177,7 +192,7 @@
                 "source": {
                   "bbox": null,
                   "coordinate_space": null,
-                  "document_id": "doc_bf2acb2836244514b7eba8c905568da2",
+                  "document_id": "doc_87c1b44544044680a40c2bc02a56204b",
                   "image_height_px": null,
                   "image_sha256": null,
                   "image_width_px": null,
@@ -191,7 +206,7 @@
                 "value": "1"
               }
             ],
-            "item_id": "doc_bf2acb2836244514b7eba8c905568da2-item-0"
+            "item_id": "doc_87c1b44544044680a40c2bc02a56204b-item-0"
           }
         ],
         "model_id": null,
@@ -199,28 +214,83 @@
         "prompt_version": null
       }
     ],
+    "evidence_provenance": {
+      "items": [
+        {
+          "coverage": "complete",
+          "hs_resolution": "exact",
+          "item_id": "doc_87c1b44544044680a40c2bc02a56204b-item-0",
+          "query_description": "Synthetic no-requirement line item",
+          "requested_hs_code": "0303540000",
+          "requirements_found": false,
+          "resolved_hsk10": "0303540000"
+        }
+      ],
+      "query_intent": "required_import_documents",
+      "ranked_evidence": [
+        {
+          "article_no": null,
+          "evidence_id": "ev_71953d066834e97d812941be2f6ed3af552224adc32b2fe6faa41f070bd31b3b",
+          "excerpt": "The synthetic item is bound to HSK 0303540000 for contract testing.",
+          "item_id": "doc_87c1b44544044680a40c2bc02a56204b-item-0",
+          "law_id": null,
+          "law_name": null,
+          "rank": 1,
+          "raw_scores": {
+            "exact_hs": 1.0
+          },
+          "retrieval_methods": [
+            "exact_hs"
+          ],
+          "score": 1.0,
+          "source_type": "hsk_entry",
+          "source_uri": "https://example.invalid/hsk/0303540000",
+          "title": "Synthetic HSK classification evidence",
+          "version_hash": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+        }
+      ],
+      "request_id": "request_5530ff9915a3a349c82809f03f0dcf6ee8141bc68e29c7a4a16335b9bb20d8b9"
+    },
     "fact_ledger": {
       "entries": [
         {
-          "document_id": "doc_bf2acb2836244514b7eba8c905568da2",
-          "fact_id": "fact_9e923789cb3c53a437f0561f1fd8eb32f7c8433dd0b5d0415e5c006f9ead47cf",
+          "document_id": null,
+          "fact_id": "fact_9b51a0f07778a63465f2fc7b95ebe59e2b478439046534b0bcbd8a77b141557c",
+          "kind": "evidence",
+          "label": "Synthetic HSK classification evidence",
+          "reference_id": "ev_71953d066834e97d812941be2f6ed3af552224adc32b2fe6faa41f070bd31b3b",
+          "source_sha256": "9b51a0f07778a63465f2fc7b95ebe59e2b478439046534b0bcbd8a77b141557c",
+          "value": "The synthetic item is bound to HSK 0303540000 for contract testing."
+        },
+        {
+          "document_id": "doc_87c1b44544044680a40c2bc02a56204b",
+          "fact_id": "fact_1130f0a907ad5fb9d345eb04d82da8f6bed30ad4cddf96353504186bbfe31bc3",
           "kind": "field_source",
-          "label": "invoice_number",
-          "reference_id": "field:doc_bf2acb2836244514b7eba8c905568da2:invoice_number",
-          "source_sha256": "9e923789cb3c53a437f0561f1fd8eb32f7c8433dd0b5d0415e5c006f9ead47cf",
+          "label": "doc_87c1b44544044680a40c2bc02a56204b.line_items.doc_87c1b44544044680a40c2bc02a56204b-item-0.quantity",
+          "reference_id": "field_45fd1f07acbbb3654ba97ec34171ddf5c39e85ad021fa35434cdf5b7bdf021ff",
+          "source_sha256": "1130f0a907ad5fb9d345eb04d82da8f6bed30ad4cddf96353504186bbfe31bc3",
+          "value": "1"
+        },
+        {
+          "document_id": "doc_87c1b44544044680a40c2bc02a56204b",
+          "fact_id": "fact_e762c9ce2fc376204d0f6bcd5ee77c3683be55312185c702976a21b22bf4d0fa",
+          "kind": "field_source",
+          "label": "doc_87c1b44544044680a40c2bc02a56204b.fields.invoice_number",
+          "reference_id": "field_aa3f7cc4e21f021487583c4ec5c202b984e0e6cd7921a68fceeecc803ba88a61",
+          "source_sha256": "e762c9ce2fc376204d0f6bcd5ee77c3683be55312185c702976a21b22bf4d0fa",
           "value": "INV-001"
         },
         {
           "document_id": null,
-          "fact_id": "fact_32703165b9858ace551060ca632686d8e77145edb8100cced2452aa4284d9a1c",
+          "fact_id": "fact_a10713830fbea0a359f70ac6ba8f68a0ee5911de675a5e09ac17291234353dfb",
           "kind": "outcome",
           "label": "deterministic_outcome",
-          "reference_id": "outcome_7e29d40db58292088d0db7a8eee3d7c349902a467dfd3f76255b6056b480705e",
-          "source_sha256": "32703165b9858ace551060ca632686d8e77145edb8100cced2452aa4284d9a1c",
-          "value": "{\"requires_human_review\":false,\"retrieval_coverage\":\"complete\",\"retrieval_status\":\"ok\",\"status\":\"completed\"}"
+          "reference_id": "outcome_ded4ef7a70ed1f7c902850d738e85093e2fd0b196cd1d879c594c1da732834dc",
+          "source_sha256": "a10713830fbea0a359f70ac6ba8f68a0ee5911de675a5e09ac17291234353dfb",
+          "value": "{\"requires_human_review\":true,\"retrieval_coverage\":\"complete\",\"retrieval_status\":\"ok\",\"status\":\"needs_review\"}"
         }
       ],
-      "ledger_id": "ledger_629a35b45af00ba8eb7d537014fae89094faab60c0d8ef08843351393d7a5d7e"
+      "ledger_id": "ledger_5cd11013caf3413d0c3140a8463929f6233d33d52e194d6d043d90215b311874"
     },
     "jurisdiction": "KR",
     "knowledge_snapshot_id": "generation-1",
@@ -240,24 +310,24 @@
       ]
     },
     "narrative_execution_summary": {
-      "audit_complete": true,
-      "call_count": 1,
-      "input_tokens_total": 20,
-      "model_id": "claude-test",
-      "output_tokens_total": 10,
-      "prompt_hashes_complete": true,
-      "provider": "anthropic",
-      "runtime_identity_match": true,
-      "schema_hashes_complete": true,
-      "text_only": true,
-      "unmet_reason_codes": []
+      "audit_complete": false,
+      "call_count": 0,
+      "input_tokens_total": 0,
+      "model_id": null,
+      "output_tokens_total": 0,
+      "prompt_hashes_complete": false,
+      "provider": null,
+      "runtime_identity_match": false,
+      "schema_hashes_complete": false,
+      "text_only": false,
+      "unmet_reason_codes": [
+        "no_model_calls"
+      ]
     },
-    "rag_evidence": [],
     "regulatory_findings": [],
     "retrieval_coverage": "complete",
-    "retrieval_results": [],
     "retrieval_status": "ok",
-    "review_as_of": "2026-07-22",
+    "review_as_of": "2026-07-27",
     "review_gaps": [],
     "review_plan": {
       "actions": [],
@@ -266,8 +336,9 @@
       "latency_ms": 0,
       "mode": "shadow",
       "model_id": null,
+      "output_schema_sha256": null,
       "output_tokens": 0,
-      "plan_id": "plan_9d5f6d50e0f020e1b916a7efbcb810dd100b706d6d10fd140879a8eadedeef47",
+      "plan_id": "plan_3020ab0a76c7c95960434aca05a9461f301316d56f8de4cd479d551ebe3b32ff",
       "prompt_sha256": null,
       "provider": "deterministic_policy",
       "tool_call_limit": 6
@@ -343,10 +414,11 @@
     "trade_type": "import",
     "validation_issues": []
   },
-  "result_digest": "edad2747052f14eab5b304dee902bc4f809455b2575b03e1547391a05662ea67",
-  "review_as_of": "2026-07-22",
+  "result_digest": "b1e39f387a671a5ce987af94055ec8103595c6f38496c563b11d9227f79f63c6",
+  "retrieval_execution_attested": true,
+  "review_as_of": "2026-07-27",
   "review_disposition": "human_review_required",
-  "review_run_id": "run_dd808482c097439f9099abc7c2d61f1d",
+  "review_run_id": "run_857cc18f092740558f34d0d7ca8964f7",
   "review_stage_trace": [
     {
       "reason_ids": [],
@@ -414,6 +486,12 @@
       "stage": "redact_sensitive_inputs",
       "status": "completed"
     }
+  ],
+  "successful_retrieval_methods": [
+    "exact_hs",
+    "dense",
+    "bm25",
+    "graph"
   ],
   "trade_type": "import"
 }

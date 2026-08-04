@@ -5,14 +5,9 @@ COPY package.json package-lock.json .npmrc ./
 COPY scripts/patch-redocly-minimatch.mjs ./scripts/patch-redocly-minimatch.mjs
 RUN npm ci --no-audit --no-fund
 COPY tsconfig.json vite.config.ts index.html ./
-COPY Dockerfile ./
-COPY .github/workflows/repository-guard.yml ./.github/workflows/repository-guard.yml
-COPY contracts ./contracts
 COPY scripts ./scripts
-COPY deploy ./deploy
 COPY src ./src
-COPY tests ./tests
-RUN npm run verify
+RUN npm run build
 
 FROM nginxinc/nginx-unprivileged:stable-alpine@sha256:44e36330f74d4f3a1d4e222acca9e23b401fb87811a7597024502bb759c4dd49
 COPY deploy/default.conf.template /etc/nginx/conf.d/default.conf

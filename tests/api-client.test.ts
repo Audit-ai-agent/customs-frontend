@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
 import { ApiClient } from "../src/api/v1/client";
 import { ContractError, decodeReviewRun, decodeStageEvent } from "../src/api/v1/decoders";
-import backendPublicReviewRun from "./fixtures/backend-63079af-public-review-run.json";
+import backendPublicReviewRun from "./fixtures/backend-task0027-public-review-run.json";
 
 const json = (value: unknown, status = 200): Response =>
   new Response(JSON.stringify(value), { status, headers: { "content-type": "application/json" } });
@@ -124,6 +124,13 @@ const backendEffectiveSummary = (value: Record<string, unknown>): Record<string,
     completion_eligibility: value.completion_eligibility,
     required_actions: value.required_actions ?? [],
     review_stage_trace: value.review_stage_trace ?? [],
+    evidence_profile: value.evidence_profile ?? "unknown",
+    evidence_data_source: value.evidence_data_source ?? "UNATTESTED",
+    evidence_request_id: value.evidence_request_id ?? null,
+    observed_retrieval_methods: value.observed_retrieval_methods ?? [],
+    attempted_retrieval_methods: value.attempted_retrieval_methods ?? [],
+    successful_retrieval_methods: value.successful_retrieval_methods ?? [],
+    retrieval_execution_attested: value.retrieval_execution_attested ?? false,
     auto_completion_profile: value.auto_completion_profile ?? {
       profile_id: null,
       approved_document_types: [],
@@ -167,6 +174,13 @@ const reviewRunPayload = (overrides: Record<string, unknown> = {}) => {
     required_actions: [],
     action_trace: [],
     review_stage_trace: [],
+    evidence_profile: "unknown",
+    evidence_data_source: "UNATTESTED",
+    evidence_request_id: null,
+    observed_retrieval_methods: [],
+    attempted_retrieval_methods: [],
+    successful_retrieval_methods: [],
+    retrieval_execution_attested: false,
     auto_completion_profile: {
       profile_id: null,
       approved_document_types: [],
@@ -309,15 +323,14 @@ describe("Backend API v1 client", () => {
 
     expect(Object.keys(detail).sort()).toEqual([
       "document_results",
+      "evidence_provenance",
       "fact_ledger",
       "jurisdiction",
       "knowledge_snapshot_id",
       "model_execution_summary",
       "narrative_execution_summary",
-      "rag_evidence",
       "regulatory_findings",
       "retrieval_coverage",
-      "retrieval_results",
       "retrieval_status",
       "review_as_of",
       "review_gaps",
@@ -333,10 +346,10 @@ describe("Backend API v1 client", () => {
       execution_status: "succeeded",
       review_disposition: "human_review_required",
       assurance_level: "production_candidate",
-      narrative_report: { generated_by: "backend_policy_overlay" },
-      narrative_execution_summary: { provider: "anthropic", audit_complete: true },
+      narrative_report: { generated_by: "deterministic_fallback" },
+      narrative_execution_summary: { provider: null, audit_complete: false },
     });
-    expect(publicPayload.result_digest).toBe("edad2747052f14eab5b304dee902bc4f809455b2575b03e1547391a05662ea67");
+    expect(publicPayload.result_digest).toBe("b1e39f387a671a5ce987af94055ec8103595c6f38496c563b11d9227f79f63c6");
     expect(canonicalSha256(backendEffectiveSummary(publicPayload))).toBe(publicPayload.result_digest);
 
     const forgedDigest = structuredClone(publicPayload);
@@ -349,7 +362,10 @@ describe("Backend API v1 client", () => {
     const attacked = structuredClone(backendPublicReviewRun) as Record<string, unknown>;
     const narrative = attacked.narrative_report as Record<string, unknown>;
     const repeatedClaim = (narrative.document_consistency as Array<Record<string, unknown>>)[0]!;
-    repeatedClaim.text = "같은 claim ID에 다른 의미를 주입했습니다.";
+    (narrative.regulatory_review as Array<Record<string, unknown>>).push({
+      ...repeatedClaim,
+      text: "같은 claim ID에 다른 의미를 주입했습니다.",
+    });
     expect(() => decodeReviewRun(attacked)).toThrow("repeated claim ID has conflicting semantics");
 
     const legacyReport = structuredClone(publicPayload);
@@ -909,6 +925,48 @@ describe("Backend API v1 client", () => {
     expect(forgedTopLevel.evidence_provenance).toBeUndefined();
   });
 
+  it("accepts only a result-digest-bound actual Store execution attestation", () => {
+    const attested = reviewRunPayload({
+      evidence_profile: "preserved-3law-v3-scenario-eval",
+      evidence_data_source: "ACTUAL_POSTGRESQL_QDRANT_NEO4J_READ_ONLY",
+      evidence_request_id: "evidence-request-1",
+      observed_retrieval_methods: ["exact_hs", "dense"],
+      attempted_retrieval_methods: ["exact_hs", "dense", "bm25", "graph"],
+      successful_retrieval_methods: ["exact_hs", "dense", "bm25", "graph"],
+      retrieval_execution_attested: true,
+    });
+    expect(decodeReviewRun(attested)).toMatchObject({
+      evidence_profile: "preserved-3law-v3-scenario-eval",
+      evidence_request_id: "evidence-request-1",
+      retrieval_execution_attested: true,
+      successful_retrieval_methods: ["exact_hs", "dense", "bm25", "graph"],
+    });
+
+    const forgedProfile = structuredClone(attested) as Record<string, unknown>;
+    forgedProfile.evidence_profile = "synthetic-v3";
+    expect(() => decodeReviewRun(forgedProfile)).toThrow(
+      "Backend effective result digest mismatch",
+    );
+
+    const impossibleSuccess = structuredClone(attested) as Record<string, unknown>;
+    impossibleSuccess.attempted_retrieval_methods = ["exact_hs"];
+    impossibleSuccess.successful_retrieval_methods = ["graph"];
+    impossibleSuccess.result_digest = canonicalSha256(
+      backendEffectiveSummary(impossibleSuccess),
+    );
+    expect(() => decodeReviewRun(impossibleSuccess)).toThrow(
+      "method was not attempted",
+    );
+
+    const unattestedClaim = reviewRunPayload({
+      evidence_data_source: "ACTUAL_POSTGRESQL_QDRANT_NEO4J_READ_ONLY",
+      retrieval_execution_attested: false,
+    });
+    expect(() => decodeReviewRun(unattestedClaim)).toThrow(
+      "unattested retrieval advertises Store execution",
+    );
+  });
+
   it("accepts only a bounded Backend-attested actual RAG provenance projection", () => {
     const evidence = {
       evidence_id: "ev-rag-1",
@@ -935,6 +993,8 @@ describe("Backend API v1 client", () => {
         evidence_id: "ev-rag-1",
         item_id: "item-1",
         rank: 1,
+        title: "관세법 제241조",
+        excerpt: "수입하려는 물품은 세관장에게 신고하여야 한다.",
         source_type: "law_article",
         retrieval_methods: ["exact_hs", "dense", "bm25", "graph"],
         score: 0.92,
@@ -1356,6 +1416,13 @@ describe("Backend API v1 client", () => {
       }],
       release_identity: releaseIdentity,
       review_stage_trace: mandatoryStageTrace,
+      evidence_profile: "released-production-generation-v1",
+      evidence_data_source: "ACTUAL_POSTGRESQL_QDRANT_NEO4J_READ_ONLY",
+      evidence_request_id: "run-1-retrieve-0",
+      observed_retrieval_methods: ["exact_hs"],
+      attempted_retrieval_methods: ["exact_hs"],
+      successful_retrieval_methods: ["exact_hs"],
+      retrieval_execution_attested: true,
       result_detail: {
         model_execution_summary: ACTUAL_MODEL_EXECUTION,
         narrative_execution_summary: NARRATIVE_MODEL_EXECUTION,
@@ -1398,6 +1465,8 @@ describe("Backend API v1 client", () => {
             evidence_id: evidenceId,
             item_id: "item-1",
             rank: 1,
+            title: "released import requirement",
+            excerpt: "A verified import permit is required.",
             source_type: "customs_requirement",
             retrieval_methods: ["exact_hs"],
             score: null,
@@ -1669,6 +1738,25 @@ describe("Backend API v1 client", () => {
     });
     expect(created.source_sha256).toBe(record.source_sha256);
     expect(fetcher.mock.calls[0]?.[0]).toBe("/api/v1/cases/case-1/supporting-documents");
+
+    const mismatched = new ApiClient(
+      vi.fn<typeof fetch>().mockResolvedValue(json({
+        ...record,
+        document_number: "SERVER-SUBSTITUTED",
+      }, 201)),
+      () => "token",
+    );
+    await expect(mismatched.addSupportingDocument("case-1", {
+      document_id: record.document_id,
+      document_code: record.document_code,
+      issuer: record.issuer,
+      document_number: record.document_number,
+      issued_on: record.issued_on,
+      valid_until: record.valid_until,
+      subject_item_ids: record.subject_item_ids,
+      hs_codes: record.hs_codes,
+      source_sha256: record.source_sha256,
+    })).rejects.toThrow("does not match");
   });
 
   it("lets Backend derive every human assertion authority field", async () => {
@@ -1796,7 +1884,17 @@ describe("Backend API v1 client", () => {
       parent_result_digest: "a".repeat(64),
       parent_input_manifest_sha256: "b".repeat(64),
       case_revision: 2,
-      actions: [{ decision: "confirm_field" as const, reason: "verified", confirmed_reference_id: "source-1" }],
+      actions: [{
+        decision: "correct_field" as const,
+        reason: "verified",
+        correction: {
+          document_id: "doc-1",
+          field_path: "fields.invoice_no",
+          new_value: "INV-NEW",
+          reason: "verified",
+          confidence: 1,
+        },
+      }],
     };
     const createKey = "proposal-create-1";
     const decisionRequest = {
@@ -1823,17 +1921,9 @@ describe("Backend API v1 client", () => {
         case_id: "case-1",
         supplied_key: createKey,
       })}`,
-      idempotency_request_digest: canonicalSha256({
-        review_run_id: "run-1",
-        proposal: {
-          ...proposalRequest,
-          actions: [{
-            ...proposalRequest.actions[0],
-            correction: null,
-            supporting_document_id: null,
-          }],
-        },
-      }),
+      // Backend canonicalizes the typed float as `1.0`; the Browser treats this
+      // server-owned digest as opaque and validates the complete semantic echo.
+      idempotency_request_digest: "d".repeat(64),
       status: "approved",
       created_by: "reviewer-1",
       created_at: "2026-07-21T00:00:00Z",
@@ -1876,5 +1966,58 @@ describe("Backend API v1 client", () => {
     expect(fetcher.mock.calls[1]?.[0]).toBe("/api/v1/review-runs/run-1/revision-proposals");
     expect(new Headers(fetcher.mock.calls[2]?.[1]?.headers).get("Idempotency-Key")).toBe(decisionKey);
     expect(fetcher.mock.calls[2]?.[0]).toBe("/api/v1/revision-proposals/proposal-1/decisions");
+  });
+
+  it("rejects a typed revision proposal whose semantic echo was changed", async () => {
+    const request = {
+      parent_result_digest: "a".repeat(64),
+      parent_input_manifest_sha256: "b".repeat(64),
+      case_revision: 2,
+      actions: [{
+        decision: "correct_field" as const,
+        reason: "verified",
+        correction: {
+          document_id: "doc-1",
+          field_path: "fields.invoice_no",
+          new_value: "INV-NEW",
+          reason: "verified",
+          confidence: 1,
+        },
+      }],
+    };
+    const suppliedKey = "proposal-semantic-binding";
+    const response = {
+      proposal_id: "proposal-1",
+      org_id: "org-1",
+      case_id: "case-1",
+      review_run_id: "run-1",
+      parent_result_digest: request.parent_result_digest,
+      parent_input_manifest_sha256: request.parent_input_manifest_sha256,
+      case_revision: request.case_revision,
+      corrections: [],
+      actions: [{
+        ...request.actions[0]!,
+        correction: { ...request.actions[0]!.correction, new_value: "FORGED" },
+      }],
+      idempotency_key: `idem_${canonicalSha256({
+        endpoint: "revision-proposal.create/v1",
+        actor_id: "reviewer-1",
+        org_id: "org-1",
+        case_id: "case-1",
+        supplied_key: suppliedKey,
+      })}`,
+      idempotency_request_digest: "e".repeat(64),
+      status: "pending",
+      created_by: "reviewer-1",
+      created_at: "2026-07-21T00:00:00Z",
+    };
+    const fetcher = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(json({ subject: "reviewer-1", org_id: "org-1", roles: ["reviewer"] }))
+      .mockResolvedValueOnce(json(response, 201));
+    const client = new ApiClient(fetcher, () => "token");
+    await client.getSession();
+
+    await expect(client.createRevisionProposal("run-1", request, suppliedKey))
+      .rejects.toThrow("submitted proposal");
   });
 });
