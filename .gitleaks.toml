@@ -1,12 +1,4 @@
-title = "Customs Frontend narrow false-positive policy"
+title = "Customs Frontend secret scan policy"
 
 [extend]
 useDefault = true
-
-[[allowlists]]
-description = "The pinned Backend OpenAPI digest is public provenance, not a credential."
-targetRules = ["generic-api-key"]
-condition = "AND"
-regexTarget = "line"
-paths = ['''(?:^|/)contracts/backend-openapi-v1\.lock\.json$''']
-regexes = ['''^\s*"openapi_sha256":\s*"[a-f0-9]{64}",?\s*$''']

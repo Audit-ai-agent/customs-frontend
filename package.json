@@ -8,56 +8,30 @@
     "node": ">=22.22.0 <23"
   },
   "scripts": {
-    "postinstall": "node scripts/patch-redocly-minimatch.mjs",
     "doctor": "node scripts/doctor.mjs",
-    "dev": "vite --host 127.0.0.1",
-    "build": "vite build && npm run bundle:check",
-    "build:uat": "vite build && npm run bundle:check && npm run uat:export:scenarios -- --profile preserved-3law-v3-scenario-eval --output dist/uat-scenario-export.json",
-    "preview": "vite preview --host 127.0.0.1",
+    "dev": "npm run dev:local",
+    "dev:local": "vite --host 127.0.0.1 --mode local-development",
+    "dev:functional-uat": "vite --host 127.0.0.1 --mode functional-uat",
+    "build": "vite build --mode local-development",
+    "build:functional-uat": "vite build --mode functional-uat",
+    "preview": "vite preview --host 127.0.0.1 --mode local-development",
     "typecheck": "tsc --noEmit",
     "lint": "node scripts/check-static-boundaries.mjs",
     "contract:generate": "node scripts/sync-backend-openapi.mjs",
     "contract:check": "node scripts/check-contract.mjs",
-    "bundle:check": "node scripts/check-enhanced-bundle.mjs",
-    "uat:export:scenarios": "node --experimental-strip-types scripts/export-uat-scenarios.mjs",
-    "uat:evaluate:scenario": "node --experimental-strip-types scripts/evaluate-uat-scenario.mjs",
     "test": "vitest run",
-    "test:e2e": "playwright test --project=candidate-chromium",
-    "test:e2e:functional": "playwright test --project=functional-chromium",
-    "test:coverage": "vitest run --coverage",
-    "security:audit": "npm audit --audit-level=high",
     "check:quick": "npm run lint && npm run typecheck && npm run test",
     "check:contract": "npm run contract:check",
-    "check:candidate": "npm run check:quick && npm run check:contract && npm run build",
-    "verify": "npm run check:candidate"
+    "verify": "npm run check:quick && npm run check:contract && npm run build"
   },
   "devDependencies": {
-    "@playwright/test": "1.62.0",
-    "@testing-library/react": "16.3.2",
-    "@testing-library/user-event": "14.6.1",
     "@types/node": "^22.15.0",
-    "@types/react": "19.2.14",
-    "@types/react-dom": "19.2.3",
-    "@vitejs/plugin-react": "6.0.4",
-    "@vitest/coverage-v8": "4.1.10",
-    "axe-core": "^4.10.3",
     "jsdom": "^26.1.0",
-    "openapi-typescript": "7.13.0",
     "typescript": "^5.8.3",
     "vite": "8.1.5",
     "vitest": "4.1.10"
   },
   "dependencies": {
-    "@noble/hashes": "2.2.0",
-    "oidc-client-ts": "^3.3.0",
-    "react": "19.2.8",
-    "react-dom": "19.2.8",
-    "react-router": "8.3.0"
-  },
-  "overrides": {
-    "@redocly/openapi-core": {
-      "minimatch": "10.2.5"
-    },
-    "js-yaml": "4.3.0"
+    "oidc-client-ts": "^3.3.0"
   }
 }

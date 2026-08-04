@@ -1,28 +1,39 @@
 import { ApiClient } from "./api/v1/client";
 import { userFacingErrorMessage } from "./api/user-facing-errors";
-import { OidcSession } from "./auth";
-import { enhancedExperienceEnabled } from "./experience/feature-flags";
+import {
+  LocalDevelopmentSession,
+  type BrowserSession,
+} from "./auth";
 
 async function bootstrap(): Promise<void> {
   const root = document.querySelector<HTMLElement>("#app");
   if (!root) throw new Error("Application root is missing");
 
-  const oidc = new OidcSession();
   const bootstrapClient = new ApiClient();
   try {
-    oidc.configure(await bootstrapClient.getAuthConfig());
-    const callbackHandled = await oidc.finishCallbackIfPresent();
-    if (!callbackHandled && await oidc.tryCookieSessionRestore()) return;
-    const api = new ApiClient(fetch, oidc.freshAccessToken);
-    if (enhancedExperienceEnabled()) {
-      const { mountCommercialWorkbench } = await import("./experience/bootstrap");
-      mountCommercialWorkbench(root, api, oidc);
+    let session: BrowserSession;
+    if (__CUSTOMS_RUNTIME_MODE__ === "local-development") {
+      const localSession = new LocalDevelopmentSession(
+        () => bootstrapClient.createLocalDevelopmentSession(),
+      );
+      await localSession.start();
+      session = localSession;
     } else {
-      await import("./styles.css");
-      const { createWorkbench } = await import("./app");
-      const app = createWorkbench(root, api, oidc);
-      await app.start();
+      const { OidcSession } = await import("./functional-oidc");
+      const oidc = new OidcSession();
+      oidc.configure(await bootstrapClient.getAuthConfig());
+      const callbackHandled = await oidc.finishCallbackIfPresent();
+      if (!callbackHandled && !oidc.isAuthenticated()) {
+        await oidc.login();
+        return;
+      }
+      session = oidc;
     }
+    const api = new ApiClient(fetch, session.freshAccessToken);
+    await import("./styles.css");
+    const { LightweightWorkbench } = await import("./workbench");
+    const workbench = new LightweightWorkbench(root, api, session, __CUSTOMS_RUNTIME_MODE__);
+    await workbench.start();
   } catch (error) {
     const main = document.createElement("main");
     main.id = "main-content";
