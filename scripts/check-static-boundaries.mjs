@@ -67,7 +67,7 @@ if (!html.includes("Content-Security-Policy")) violations.push("index.html must 
 
 const workflow = await readFile(new URL("../.github/workflows/repository-guard.yml", import.meta.url), "utf8");
 const packageJson = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
-if (packageJson.engines?.node !== "22.23.1") violations.push("Node runtime must be pinned to exact 22.23.1");
+if (packageJson.engines?.node !== ">=22.22.0 <23") violations.push("Node runtime must require supported Node 22.22+ only");
 if (packageJson.packageManager !== "npm@10.9.8") violations.push("npm runtime must be pinned to exact 10.9.8");
 if (packageJson.dependencies?.["react-router"] !== "8.3.0") {
   violations.push("commercial workbench must pin patched React Router 8.3.0; see DL-0008");
@@ -96,7 +96,7 @@ for (const name of ["check:quick", "check:contract", "check:candidate", "verify"
 }
 const npmrc = await readFile(new URL("../.npmrc", import.meta.url), "utf8");
 if (!/^engine-strict=true$/m.test(npmrc)) violations.push("npm must reject an unsupported Node runtime");
-if (!workflow.includes("node-version: 22.23.1")) violations.push("CI Node runtime must match the exact project pin");
+if (!workflow.includes("node-version: 22.23.1")) violations.push("CI Node runtime must retain the reproducible 22.23.1 pin");
 if (!workflow.includes("timeout-minutes:")) violations.push("CI job requires a bounded timeout");
 if (!workflow.includes("cancel-in-progress: true")) violations.push("CI must cancel superseded executions");
 if (workflow.includes("fetch-depth: 0")) violations.push("ordinary PR CI must not fetch complete Git history");

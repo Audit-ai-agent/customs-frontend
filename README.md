@@ -48,7 +48,7 @@ V3 text 입력은 일반 문서 최대 6개, 문서당 200,000자/800,000 UTF-8 
 
 ## 로컬 실행
 
-요구사항: exact Node.js `22.23.1`, exact npm `10.9.8`, `/api/v1`을 제공하는 Backend. `.npmrc`의 `engine-strict=true`와 `npm run doctor`가 다른 runtime을 fail-closed한다.
+요구사항: Node.js `>=22.22.0 <23`, npm `10.9.8`, `/api/v1`을 제공하는 Backend. CI와 Local UAT 이미지는 재현성을 위해 `22.23.1`을 고정하지만, 개발자는 호환되는 Node 22 패치를 사용할 수 있다. `.npmrc`의 `engine-strict=true`와 `npm run doctor`가 지원 범위 밖 runtime을 fail-closed한다.
 
 ```powershell
 npm ci
