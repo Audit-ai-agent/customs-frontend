@@ -18,10 +18,7 @@ const REPOSITORY_ROOT = resolve(SCRIPT_DIRECTORY, "..");
 function workspaceCredentialsFile(): string {
   let candidateRoot = REPOSITORY_ROOT;
   while (true) {
-    if (
-      existsSync(resolve(candidateRoot, "_engineering"))
-      && existsSync(resolve(candidateRoot, "_local"))
-    ) {
+    if (existsSync(resolve(candidateRoot, "_local"))) {
       return resolve(candidateRoot, "_local", "secrets", "uat", "credentials.json");
     }
     const parent = dirname(candidateRoot);

@@ -67,7 +67,7 @@ if (!html.includes("Content-Security-Policy")) violations.push("index.html must 
 
 const workflow = await readFile(new URL("../.github/workflows/repository-guard.yml", import.meta.url), "utf8");
 const packageJson = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
-if (packageJson.engines?.node !== "22.23.1") violations.push("Node runtime must be pinned to exact 22.23.1");
+if (packageJson.engines?.node !== ">=22.22.0 <23") violations.push("Node runtime must require supported Node 22.22+ only");
 if (packageJson.packageManager !== "npm@10.9.8") violations.push("npm runtime must be pinned to exact 10.9.8");
 if (packageJson.dependencies?.["react-router"] !== "8.3.0") {
   violations.push("commercial workbench must pin patched React Router 8.3.0; see DL-0008");
@@ -96,7 +96,7 @@ for (const name of ["check:quick", "check:contract", "check:candidate", "verify"
 }
 const npmrc = await readFile(new URL("../.npmrc", import.meta.url), "utf8");
 if (!/^engine-strict=true$/m.test(npmrc)) violations.push("npm must reject an unsupported Node runtime");
-if (!workflow.includes("node-version: 22.23.1")) violations.push("CI Node runtime must match the exact project pin");
+if (!workflow.includes("node-version: 22.23.1")) violations.push("CI Node runtime must retain the reproducible 22.23.1 pin");
 if (!workflow.includes("timeout-minutes:")) violations.push("CI job requires a bounded timeout");
 if (!workflow.includes("cancel-in-progress: true")) violations.push("CI must cancel superseded executions");
 if (workflow.includes("fetch-depth: 0")) violations.push("ordinary PR CI must not fetch complete Git history");
@@ -111,9 +111,6 @@ for (const forbidden of ["npm run verify", "test:coverage", "npm sbom", "gitleak
 if (!workflow.includes("steps.changes.outputs.dependency") || !workflow.includes("npm run security:audit")) {
   violations.push("dependency audit must run only when the dependency manifest or lock changes");
 }
-if (!workflow.includes("steps.changes.outputs.container") || !workflow.includes("docker build")) {
-  violations.push("container build must run only when its definition changes");
-}
 for (const match of workflow.matchAll(/^\s*-\s+uses:\s*([^\s#]+)/gm)) {
   const action = match[1];
   if (!action.startsWith("./") && !/@[a-f0-9]{40}$/.test(action)) {
@@ -121,22 +118,6 @@ for (const match of workflow.matchAll(/^\s*-\s+uses:\s*([^\s#]+)/gm)) {
   }
 }
 
-const dockerfile = await readFile(new URL("../Dockerfile", import.meta.url), "utf8");
-if (!/^# syntax=docker\/dockerfile:[^@\s]+@sha256:[a-f0-9]{64}$/m.test(dockerfile)) {
-  violations.push("Dockerfile syntax frontend must use an exact sha256 digest");
-}
-for (const match of dockerfile.matchAll(/^FROM\s+([^\s]+)(?:\s+AS\s+\S+)?$/gmi)) {
-  if (!/@sha256:[a-f0-9]{64}$/.test(match[1])) {
-    violations.push(`Docker base image must be pinned to an exact sha256 digest: ${match[1]}`);
-  }
-}
-if (!dockerfile.includes("HEALTHCHECK")) violations.push("Runtime image requires a healthcheck");
-if (!dockerfile.includes("RUN npm run build") || dockerfile.includes("RUN npm run verify")) {
-  violations.push("Runtime image must build the bundle once without running the verification suite");
-}
-for (const excludedCopy of ["COPY tests", "COPY .github", "COPY Dockerfile"] ) {
-  if (dockerfile.includes(excludedCopy)) violations.push(`Runtime build context must not copy ${excludedCopy.slice(5)}`);
-}
 const playwrightConfig = await readFile(new URL("../playwright.config.ts", import.meta.url), "utf8");
 const browserSuite = await readFile(new URL("../e2e/commercial-workbench.spec.ts", import.meta.url), "utf8");
 if (!playwrightConfig.includes('name: "candidate-chromium"') || !playwrightConfig.includes("grep: /@candidate/u")) {
@@ -187,10 +168,6 @@ if (!uatNginx.includes("proxy_pass ${BACKEND_ORIGIN}") || !uatNginx.includes("pr
 if (!uatNginx.includes("style-src 'self'") || uatNginx.includes("'unsafe-inline'")) {
   violations.push("LOCAL UAT Nginx must keep an external-style-only CSP");
 }
-const nginx = await readFile(new URL("../deploy/default.conf.template", import.meta.url), "utf8");
-if (!nginx.includes('Cache-Control "no-store, max-age=0"')) violations.push("SPA shell requires no-store cache policy");
-if (!nginx.includes('Content-Security-Policy "default-src')) violations.push("Runtime Nginx must emit a CSP response header");
-
 if (violations.length) {
   console.error(violations.join("\n"));
   process.exit(1);

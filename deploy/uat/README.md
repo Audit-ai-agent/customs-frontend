@@ -1,7 +1,6 @@
 # Frontend LOCAL USER UAT container
 
-이 경로는 Production `Dockerfile`과 의도적으로 분리된 개발자·사용자 UAT 전용
-정적 실행 경계다. Vite 개발 모드의 inline style 주입을 사용하지 않고, build 단계가
+이 경로는 개발자·사용자 UAT 전용 정적 실행 경계다. Vite 개발 모드의 inline style 주입을 사용하지 않고, build 단계가
 만든 hashed JavaScript·외부 CSS를 Nginx가 엄격한 CSP 아래에서 제공한다.
 
 - Node `22.23.1`, npm `10.9.8` exact build image에서 두 Enhanced 기능 스위치를
@@ -28,14 +27,7 @@ frontend-uat:
     - "127.0.0.1:18088:5173"
 ```
 
-두 origin은 credential·path·query·fragment가 없는 HTTP(S) origin이어야 한다. 실제 조합과 network는 개인 `_engineering` UAT harness가 소유한다.
-
-Browser E2E는 workspace의 Git 밖 `_local/secrets/uat/credentials.json` 또는 명시적인 외부
-`CUSTOMS_E2E_CREDENTIALS_FILE`에서 reviewer 계정을 읽어 실제 Keycloak
-Authorization Code + PKCE 흐름을 통과한다. Token은 계속 Browser 메모리에만
-존재하므로 `storageState`로 우회하지 않으며, credential 입력이 증거에 남지
-않도록 Playwright 자동 trace·video·screenshot을 비활성화한다. 현재 Harness
-실행의 exact 9개 Case·Review Run·결과를 묶은
-`CUSTOMS_E2E_SCENARIO_BINDINGS_FILE`과 그 파일의
-`CUSTOMS_E2E_SCENARIO_BINDINGS_SHA256`도 필수다. 성공 증거용 명시적 화면
-캡처는 질문·답변·보고서 본문·입력란·기술 상세를 마스킹한 뒤에만 첨부한다.
+두 origin은 credential·path·query·fragment가 없는 HTTP(S) origin이어야 한다. 실제 Compose,
+network, 승인자 입력은 Git 밖의 수동 전달 operator bundle이 소유한다. 이 저장소에는 Compose,
+비밀, 계정, 시나리오 바인딩, 실행 결과를 넣지 않는다. 팀의 일상 개발·검증에는 공용 harness를
+사용하며 이 UAT container는 승인된 로컬 smoke에만 사용한다.

@@ -48,7 +48,7 @@ V3 text 입력은 일반 문서 최대 6개, 문서당 200,000자/800,000 UTF-8 
 
 ## 로컬 실행
 
-요구사항: exact Node.js `22.23.1`, exact npm `10.9.8`, `/api/v1`을 제공하는 Backend. `.npmrc`의 `engine-strict=true`와 `npm run doctor`가 다른 runtime을 fail-closed한다.
+요구사항: Node.js `>=22.22.0 <23`, npm `10.9.8`, `/api/v1`을 제공하는 Backend. CI와 Local UAT 이미지는 재현성을 위해 `22.23.1`을 고정하지만, 개발자는 호환되는 Node 22 패치를 사용할 수 있다. `.npmrc`의 `engine-strict=true`와 `npm run doctor`가 지원 범위 밖 runtime을 fail-closed한다.
 
 ```powershell
 npm ci
@@ -102,15 +102,6 @@ $env:CUSTOMS_E2E_CASE_EXTERNAL_REFERENCE='UAT2:<scenario>:EVAL:<manifest-sha256>
 npm run test:e2e
 ```
 
-`check:quick`은 변경 중에 실행하는 기본 검사이며 coverage나 Docker image를 만들지 않습니다. `check:candidate`는 typecheck을 중복하지 않고 계약 검사와 production bundle을 한 번만 추가합니다. Browser E2E는 실제 Backend·Agent·Data가 실행 중인 literal loopback UAT에서만 실행되며, Chromium 1440×900의 대표 여정 한 건만 확인합니다. 9개 시나리오·다중 Browser·coverage·SBOM·전체 Git 이력 검사는 일상 PR이나 기능 후보 확인에서 반복하지 않습니다. Dependency audit은 manifest·lockfile이 바뀌 PR에서만, container build는 Dockerfile·deploy 경계가 바뀌 PR에서만 실행합니다.
+`check:quick`은 변경 중에 실행하는 기본 검사이며 coverage나 Docker image를 만들지 않습니다. `check:candidate`는 typecheck을 중복하지 않고 계약 검사와 bundle을 한 번만 추가합니다. Browser E2E는 실제 Backend·Agent·Data가 실행 중인 literal loopback UAT에서만 실행되며, Chromium 1440×900의 대표 여정 한 건만 확인합니다. 9개 시나리오·다중 Browser·coverage·SBOM·전체 Git 이력 검사는 일상 PR이나 기능 후보 확인에서 반복하지 않습니다. Dependency audit은 manifest·lockfile이 바뀐 PR에서만 실행합니다.
 
 `tests/fixtures/backend-task0027-public-review-run.json`은 실제 Backend serializer에서 시작해 현재 안전 공개 projection과 result-digest-bound 실제 Store 실행 증명을 고정한 회귀 fixture다. Frontend는 이 형식만 소비하며 provider 전용 raw 필드나 legacy V2 보고서를 다시 주입하지 않는다. Backend와 동일한 effective-summary canonical JSON SHA-256을 다시 계산해 `result_digest`를 검증하며, 추출·설명·검색 실행 여부는 원문과 credential이 제거된 공개 audit projection만 strict decode한다. 자동완료에서는 Retrieval item의 exact HSK resolution·complete coverage·빈 오류·item-bound 법령 근거와 실행 identity까지 일관되어야 한다. Gate가 충족되지 않은 설명은 검증된 결정론적 fallback으로 명확히 구분하며, 사용자 화면의 결과를 임의로 상향하지 않는다.
-
-## Production container
-
-```powershell
-docker build -t customs-frontend:task-0020 .
-docker run --rm -p 8081:8080 customs-frontend:task-0020
-```
-
-Nginx는 `/api/v1/`과 `/api/v2/`를 `backend:8080`, `/oidc/`를 `keycloak:8080`에 proxy합니다. Browser는 자체 origin 밖으로 제품 API·token 요청을 보내지 않습니다. 자세한 절차는 `docs/runbook/internal-docker.md`를 따릅니다.
