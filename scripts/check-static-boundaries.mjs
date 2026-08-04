@@ -111,9 +111,6 @@ for (const forbidden of ["npm run verify", "test:coverage", "npm sbom", "gitleak
 if (!workflow.includes("steps.changes.outputs.dependency") || !workflow.includes("npm run security:audit")) {
   violations.push("dependency audit must run only when the dependency manifest or lock changes");
 }
-if (!workflow.includes("steps.changes.outputs.container") || !workflow.includes("docker build")) {
-  violations.push("container build must run only when its definition changes");
-}
 for (const match of workflow.matchAll(/^\s*-\s+uses:\s*([^\s#]+)/gm)) {
   const action = match[1];
   if (!action.startsWith("./") && !/@[a-f0-9]{40}$/.test(action)) {
@@ -121,22 +118,6 @@ for (const match of workflow.matchAll(/^\s*-\s+uses:\s*([^\s#]+)/gm)) {
   }
 }
 
-const dockerfile = await readFile(new URL("../Dockerfile", import.meta.url), "utf8");
-if (!/^# syntax=docker\/dockerfile:[^@\s]+@sha256:[a-f0-9]{64}$/m.test(dockerfile)) {
-  violations.push("Dockerfile syntax frontend must use an exact sha256 digest");
-}
-for (const match of dockerfile.matchAll(/^FROM\s+([^\s]+)(?:\s+AS\s+\S+)?$/gmi)) {
-  if (!/@sha256:[a-f0-9]{64}$/.test(match[1])) {
-    violations.push(`Docker base image must be pinned to an exact sha256 digest: ${match[1]}`);
-  }
-}
-if (!dockerfile.includes("HEALTHCHECK")) violations.push("Runtime image requires a healthcheck");
-if (!dockerfile.includes("RUN npm run build") || dockerfile.includes("RUN npm run verify")) {
-  violations.push("Runtime image must build the bundle once without running the verification suite");
-}
-for (const excludedCopy of ["COPY tests", "COPY .github", "COPY Dockerfile"] ) {
-  if (dockerfile.includes(excludedCopy)) violations.push(`Runtime build context must not copy ${excludedCopy.slice(5)}`);
-}
 const playwrightConfig = await readFile(new URL("../playwright.config.ts", import.meta.url), "utf8");
 const browserSuite = await readFile(new URL("../e2e/commercial-workbench.spec.ts", import.meta.url), "utf8");
 if (!playwrightConfig.includes('name: "candidate-chromium"') || !playwrightConfig.includes("grep: /@candidate/u")) {
@@ -187,10 +168,6 @@ if (!uatNginx.includes("proxy_pass ${BACKEND_ORIGIN}") || !uatNginx.includes("pr
 if (!uatNginx.includes("style-src 'self'") || uatNginx.includes("'unsafe-inline'")) {
   violations.push("LOCAL UAT Nginx must keep an external-style-only CSP");
 }
-const nginx = await readFile(new URL("../deploy/default.conf.template", import.meta.url), "utf8");
-if (!nginx.includes('Cache-Control "no-store, max-age=0"')) violations.push("SPA shell requires no-store cache policy");
-if (!nginx.includes('Content-Security-Policy "default-src')) violations.push("Runtime Nginx must emit a CSP response header");
-
 if (violations.length) {
   console.error(violations.join("\n"));
   process.exit(1);

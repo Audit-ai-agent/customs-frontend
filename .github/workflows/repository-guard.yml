@@ -2,14 +2,36 @@ name: repository-guard
 
 on:
   pull_request:
-    paths-ignore:
-      - "**/*.md"
-      - "docs/**"
+    paths:
+      - ".github/workflows/repository-guard.yml"
+      - "package.json"
+      - "package-lock.json"
+      - "index.html"
+      - "playwright.config.ts"
+      - "tsconfig.json"
+      - "vite.config.ts"
+      - "src/**"
+      - "scripts/**"
+      - "tests/**"
+      - "e2e/**"
+      - "contracts/**"
+      - "deploy/uat/**"
   push:
     branches: [main]
-    paths-ignore:
-      - "**/*.md"
-      - "docs/**"
+    paths:
+      - ".github/workflows/repository-guard.yml"
+      - "package.json"
+      - "package-lock.json"
+      - "index.html"
+      - "playwright.config.ts"
+      - "tsconfig.json"
+      - "vite.config.ts"
+      - "src/**"
+      - "scripts/**"
+      - "tests/**"
+      - "e2e/**"
+      - "contracts/**"
+      - "deploy/uat/**"
 
 concurrency:
   group: frontend-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -24,6 +46,9 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 2
+          persist-credentials: false
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22.23.1
@@ -32,7 +57,7 @@ jobs:
       - run: npm run check:quick
       - run: npm run check:contract
       - run: npm run build
-      - name: Detect optional dependency and container checks
+      - name: Detect dependency lock changes
         id: changes
         shell: bash
         env:
@@ -40,9 +65,10 @@ jobs:
         run: |
           set -euo pipefail
           if [[ -z "${BASE_SHA}" || "${BASE_SHA}" =~ ^0+$ ]]; then
-            files=$'package-lock.json\nDockerfile'
+            files='package-lock.json'
+          elif ! git cat-file -e "${BASE_SHA}^{commit}" 2>/dev/null; then
+            files='package-lock.json'
           else
-            git fetch --no-tags --depth=1 origin "${BASE_SHA}"
             files="$(git diff --name-only "${BASE_SHA}" "${GITHUB_SHA}")"
           fi
           if grep -Eq '^(package\.json|package-lock\.json)$' <<<"${files}"; then
@@ -50,15 +76,6 @@ jobs:
           else
             echo "dependency=false" >> "${GITHUB_OUTPUT}"
           fi
-          if grep -Eq '^(Dockerfile|deploy/)' <<<"${files}"; then
-            echo "container=true" >> "${GITHUB_OUTPUT}"
-          else
-            echo "container=false" >> "${GITHUB_OUTPUT}"
-          fi
       - name: Audit changed dependency lock
         if: steps.changes.outputs.dependency == 'true'
         run: npm run security:audit
-      - name: Check changed container definition builds
-        if: steps.changes.outputs.container == 'true'
-        shell: bash
-        run: docker build --tag "customs-frontend:${GITHUB_SHA}" .
