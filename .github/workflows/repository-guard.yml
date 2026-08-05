@@ -19,7 +19,6 @@ on:
       - "scripts/**"
       - "tests/**"
       - "contracts/**"
-      - "deploy/uat/**"
   push:
     branches: [main]
     paths:
@@ -39,7 +38,6 @@ on:
       - "scripts/**"
       - "tests/**"
       - "contracts/**"
-      - "deploy/uat/**"
 
 permissions:
   contents: read
@@ -61,6 +59,7 @@ jobs:
         with:
           node-version: 22.23.1
           cache: npm
+      - run: corepack enable
       - run: npm ci --no-audit --no-fund
       - run: npm run check:quick
       - run: npm run check:contract

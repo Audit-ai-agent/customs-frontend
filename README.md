@@ -8,8 +8,8 @@ Browser에 전달하지 않습니다.
 
 | 명령 | 용도 | 필요한 입력 |
 | --- | --- | --- |
-| npm run dev:local | 기본 팀 개발 | 없음 |
-| npm run dev:functional-uat | 실제 기능 UAT 화면 | Backend Functional-UAT와 OIDC 설정 |
+| corepack npm run dev:local | 기본 팀 개발 | 없음 |
+| corepack npm run dev:functional-uat | 실제 기능 UAT 화면 | Backend Functional-UAT와 OIDC 설정 |
 
 기본 개발은 Backend의 loopback 전용 development session을 메모리에만
 보관합니다. 공용 키, OIDC, Docker, 모델 cache, Law API 또는 Claude 키가
@@ -21,21 +21,24 @@ Browser에 전달하지 않습니다.
 
 ## 실행
 
-Node.js 22.22.x 이상 23 미만과 npm 10.9.8이 필요합니다.
+Node.js 22.12.x 이상 23 미만이 필요합니다. npm은 전역 설치하지 말고 Corepack이
+`packageManager` pin에 따라 정확히 10.9.8을 사용하게 합니다. 아래 명령은 모두
+`corepack npm`으로 실행합니다. 원하면 한 번 `corepack enable`을 실행한 뒤 같은 pin의
+`npm` shim을 사용할 수도 있습니다.
 
     # customs-engineering-harness에서 한 번만 실행
     .\harness\eng.ps1 setup --repo frontend
 
 그 다음 Frontend 저장소에서 실행합니다.
 
-    npm run dev:local
+    corepack npm run dev:local
 
 Backend가 기본 loopback 주소가 아닐 때만 같은 PowerShell 창에서
 BACKEND_ORIGIN을 지정합니다.
 
 Functional UAT는 네 서비스가 문서의 순서대로 실행된 뒤에만 시작합니다.
 
-    npm run dev:functional-uat
+    corepack npm run dev:functional-uat
 
 Browser가 local Keycloak 로그인 화면으로 이동하면 사용자 이름
 `local-functional-reviewer`를 입력합니다. 비밀번호는 본인 PC의 Backend profile에서만
@@ -56,10 +59,17 @@ Agent/Data/DB 값으로 Browser를 설정하지 마십시오.
 한 번입니다. Browser는 심사 기준일을 보내지 않습니다. Backend가 개발 모드의
 로컬 날짜를 정하거나 Functional UAT의 2026-08-05를 강제합니다.
 
+## 선택적 정적 Docker smoke
+
+`deploy/uat`의 Dockerfile은 Vite 개발 서버 대신 빌드된 정적 화면과 Nginx proxy를
+확인할 때만 사용하는 선택 기능입니다. 기본 개발, 대표 Functional UAT, CI의 필수
+단계나 배포 산출물이 아닙니다. 필요할 때만 `deploy/uat/README.md`의 build/run 절차를
+따릅니다.
+
 ## 검사
 
-    npm run check:quick
-    npm run check:contract
+    corepack npm run check:quick
+    corepack npm run check:contract
 
 check:contract는 이 저장소가 보관한 Backend OpenAPI 문서의 형식과, 필요할 때
 지정한 Backend 원본과의 정확한 bytes 일치를 확인합니다. Backend API를 바꾼 경우에만

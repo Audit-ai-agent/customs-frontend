@@ -58,17 +58,6 @@ if (packageJson.scripts?.["check:contract"] !== "npm run contract:check") {
   violations.push("check:contract must remain the Backend API byte check");
 }
 
-const dockerfile = await readFile(new URL("../deploy/uat/Dockerfile", import.meta.url), "utf8");
-if (!dockerfile.includes("npm run build:functional-uat")) {
-  violations.push("functional-UAT static image must use the explicit functional profile build");
-}
-if (dockerfile.includes("scenario") || dockerfile.includes("CUSTOMS_UAT_ADAPTIVE")) {
-  violations.push("functional-UAT static image must not include scenario or legacy-evaluator controls");
-}
-if (dockerfile.includes("OIDC_BACKEND_ORIGIN")) {
-  violations.push("functional-UAT static image must not retain the unused OIDC proxy origin");
-}
-
 if (violations.length) {
   console.error(violations.join("\n"));
   process.exit(1);

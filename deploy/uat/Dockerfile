@@ -5,6 +5,7 @@ WORKDIR /workspace
 RUN chown node:node /workspace
 
 COPY --chown=node:node package.json package-lock.json .npmrc ./
+RUN corepack enable
 USER node
 RUN npm ci --no-audit --no-fund
 
