@@ -1,33 +1,28 @@
-# Frontend LOCAL USER UAT container
+# Functional-UAT static frontend
 
-이 경로는 개발자·사용자 UAT 전용 정적 실행 경계다. Vite 개발 모드의 inline style 주입을 사용하지 않고, build 단계가
-만든 hashed JavaScript·외부 CSS를 Nginx가 엄격한 CSP 아래에서 제공한다.
+이 Dockerfile은 Vite 개발 서버 대신 이미 빌드한 화면을 loopback Functional
+UAT에서 확인할 때만 쓰는 선택적 정적 화면 smoke입니다. 배포 이미지나 릴리스
+산출물이 아니며, 전체 UAT Compose는 존재하지 않습니다.
 
-- Node `22.23.1`, npm `10.9.8` exact build image에서 두 Enhanced 기능 스위치를
-  활성화하고 `npm run build:uat`를 실행한다.
-- runtime은 digest로 고정한 unprivileged Nginx이며 컨테이너 내부 `5173`에만 bind한다.
-- 전체 UAT Compose만 `127.0.0.1:18088:5173`으로 publish한다. 이 Dockerfile 자체는 host port를 결정하지 않는다.
-- `/api/v1`, `/api/v2`와 `/oidc`는 각각 필수 `BACKEND_ORIGIN`,
-  `OIDC_BACKEND_ORIGIN`으로 proxy한다.
-- Browser에 Backend 외의 Agent·Data URL이나 credential을 전달하지 않는다.
-- `style-src 'self'`를 유지하며 `unsafe-inline`로 CSP를 약화하지 않는다.
-- `com.customs.production=false`, `com.customs.auto-completion=off` label을 갖고 Production image 또는 Release 근거로 사용할 수 없다.
+- npm run build:functional-uat로 빌드합니다.
+- 컨테이너 내부 포트는 5173뿐이며, 실행자가 `127.0.0.1:5173`로 명시해
+  publish합니다.
+- API v1만 loopback Backend로 proxy합니다. Keycloak은 Backend가 반환하는
+  `127.0.0.1:18088` OIDC endpoint를 Browser가 직접 사용합니다.
+- Agent·Data URL, Law API credential, Claude key, 모델 cache를 포함하지
+  않습니다.
+- 결과는 항상 사람 검토용입니다.
 
-Compose service의 최소 결박 예시는 다음과 같다.
+일상 개발에는 Docker가 필요 없습니다. `npm run dev:local`을 사용하십시오.
+기능 UAT에서 Vite 대신 이 화면을 확인할 때만 다음처럼 실행합니다(Docker
+Desktop 기준).
 
-```yaml
-frontend-uat:
-  build:
-    context: <customs-frontend-root>
-    dockerfile: deploy/uat/Dockerfile
-  environment:
-    BACKEND_ORIGIN: http://backend-uat:8080
-    OIDC_BACKEND_ORIGIN: http://keycloak-uat:8080
-  ports:
-    - "127.0.0.1:18088:5173"
+```powershell
+docker build -f deploy/uat/Dockerfile -t customs-frontend-functional-uat:local .
+docker run --rm --name customs-frontend-functional-uat -p 127.0.0.1:5173:5173 `
+  -e BACKEND_ORIGIN=http://host.docker.internal:8080 customs-frontend-functional-uat:local
 ```
 
-두 origin은 credential·path·query·fragment가 없는 HTTP(S) origin이어야 한다. 실제 Compose,
-network, 승인자 입력은 Git 밖의 수동 전달 operator bundle이 소유한다. 이 저장소에는 Compose,
-비밀, 계정, 시나리오 바인딩, 실행 결과를 넣지 않는다. 팀의 일상 개발·검증에는 공용 harness를
-사용하며 이 UAT container는 승인된 로컬 smoke에만 사용한다.
+Backend·Agent·Data와 local Keycloak은 먼저 각 저장소의 Functional UAT 순서대로
+준비해야 합니다. 이 컨테이너에는 비밀, 모델, 원문, Docker volume이 들어가지
+않습니다.

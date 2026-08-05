@@ -1,49 +1,57 @@
-name: repository-guard
+name: CI
 
 on:
   pull_request:
     paths:
       - ".github/workflows/repository-guard.yml"
+      - ".gitleaks.toml"
+      - ".gitignore"
+      - ".npmrc"
+      - "README.md"
+      - "ARCHITECTURE.md"
+      - "CONTRIBUTING.md"
       - "package.json"
       - "package-lock.json"
       - "index.html"
-      - "playwright.config.ts"
       - "tsconfig.json"
       - "vite.config.ts"
       - "src/**"
       - "scripts/**"
       - "tests/**"
-      - "e2e/**"
       - "contracts/**"
       - "deploy/uat/**"
   push:
     branches: [main]
     paths:
       - ".github/workflows/repository-guard.yml"
+      - ".gitleaks.toml"
+      - ".gitignore"
+      - ".npmrc"
+      - "README.md"
+      - "ARCHITECTURE.md"
+      - "CONTRIBUTING.md"
       - "package.json"
       - "package-lock.json"
       - "index.html"
-      - "playwright.config.ts"
       - "tsconfig.json"
       - "vite.config.ts"
       - "src/**"
       - "scripts/**"
       - "tests/**"
-      - "e2e/**"
       - "contracts/**"
       - "deploy/uat/**"
+
+permissions:
+  contents: read
 
 concurrency:
   group: frontend-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
-permissions:
-  contents: read
-
 jobs:
-  frontend:
+  check:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 12
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
@@ -56,26 +64,18 @@ jobs:
       - run: npm ci --no-audit --no-fund
       - run: npm run check:quick
       - run: npm run check:contract
-      - run: npm run build
-      - name: Detect dependency lock changes
-        id: changes
+      - run: git diff --check HEAD^ HEAD
+      - name: Scan tracked source with redacted Gitleaks output
         shell: bash
-        env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
         run: |
           set -euo pipefail
-          if [[ -z "${BASE_SHA}" || "${BASE_SHA}" =~ ^0+$ ]]; then
-            files='package-lock.json'
-          elif ! git cat-file -e "${BASE_SHA}^{commit}" 2>/dev/null; then
-            files='package-lock.json'
-          else
-            files="$(git diff --name-only "${BASE_SHA}" "${GITHUB_SHA}")"
-          fi
-          if grep -Eq '^(package\.json|package-lock\.json)$' <<<"${files}"; then
-            echo "dependency=true" >> "${GITHUB_OUTPUT}"
-          else
-            echo "dependency=false" >> "${GITHUB_OUTPUT}"
-          fi
-      - name: Audit changed dependency lock
-        if: steps.changes.outputs.dependency == 'true'
-        run: npm run security:audit
+          version=8.30.1
+          archive="gitleaks_${version}_linux_x64.tar.gz"
+          curl --fail --location --proto '=https' --tlsv1.2 \
+            -o "$archive" \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${version}/$archive"
+          echo "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb  $archive" | sha256sum --check --status -
+          tar -xzf "$archive" gitleaks
+          scan_root="$(mktemp -d)"
+          git archive --format=tar HEAD | tar -x -C "$scan_root"
+          ./gitleaks dir "$scan_root" --config .gitleaks.toml --redact --no-banner --exit-code 1

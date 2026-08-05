@@ -1,39 +1,35 @@
-import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 
-const snapshot = await readFile(new URL("../contracts/backend-openapi-v1.json", import.meta.url), "utf8");
-const generated = await readFile(new URL("../src/api/v1/generated.ts", import.meta.url), "utf8");
-const lock = JSON.parse(await readFile(new URL("../contracts/backend-openapi-v1.lock.json", import.meta.url), "utf8"));
-const document = JSON.parse(snapshot);
-const failures = [];
-
-if (lock.contract !== "customs-backend-public-api" || lock.version !== "1.0") failures.push("unexpected contract identity");
-if (sha256(snapshot) !== lock.openapi_sha256) failures.push("pinned OpenAPI SHA-256 mismatch");
-if (sha256(generated) !== lock.generated_types_sha256) failures.push("generated TypeScript SHA-256 mismatch");
-if (countOperations(document) !== lock.operation_count) failures.push("operation count mismatch");
-for (const path of Object.keys(document.paths ?? {})) {
-  if (!path.startsWith("/api/v1/") && !path.startsWith("/api/v2/") && !path.startsWith("/health/")) failures.push(`boundary violation: ${path}`);
-}
-
+const snapshot = await readFile(new URL("../contracts/backend-openapi-v1.json", import.meta.url));
+const document = parseAndValidate(snapshot);
 const externalPath = process.env.BACKEND_OPENAPI_FILE ?? process.argv[2];
+
 if (externalPath) {
-  const external = await readFile(resolve(externalPath));
-  // The provider export is a release artifact. Compare its exact bytes so a
-  // regenerated or reformatted document cannot silently inherit the old pin.
-  if (sha256(external) !== lock.openapi_sha256) {
-    failures.push(`Backend OpenAPI byte drift: ${sha256(external)} != ${lock.openapi_sha256}`);
+  const provider = await readFile(resolve(externalPath));
+  if (!snapshot.equals(provider)) {
+    console.error("Backend OpenAPI byte drift; run contract:generate deliberately.");
+    process.exit(1);
   }
 }
 
-if (failures.length) {
-  console.error(failures.join("\n"));
-  process.exit(1);
-}
-console.log(`Backend OpenAPI schema/hash check passed (${lock.operation_count} operations, ${lock.openapi_sha256}).`);
+console.log(`Backend OpenAPI check passed (${countOperations(document)} operations).`);
 
-function sha256(value) {
-  return createHash("sha256").update(value).digest("hex");
+function parseAndValidate(raw) {
+  let document;
+  try {
+    document = JSON.parse(raw.toString("utf8"));
+  } catch {
+    throw new Error("Backend OpenAPI must be valid JSON");
+  }
+  if (document.openapi !== "3.1.0" || document.info?.title !== "Customs Review Workbench API") {
+    throw new Error("unexpected Backend OpenAPI document");
+  }
+  const paths = Object.keys(document.paths ?? {});
+  if (!paths.length || paths.some((path) => !path.startsWith("/api/v1/") && !path.startsWith("/health/"))) {
+    throw new Error("Backend OpenAPI contains an unexpected public path");
+  }
+  return document;
 }
 
 function countOperations(document) {

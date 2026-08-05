@@ -8,12 +8,6 @@ export function stableApiErrorMessage(
     return "다른 담당자의 변경이 먼저 반영되었습니다. 최신 내용을 다시 불러온 뒤 시도해 주십시오.";
   }
   if (
-    normalizedCode.includes("delivery_uncertain")
-    || normalizedCode.includes("persistence_uncertain")
-  ) {
-    return "요청 결과의 저장 여부를 확정할 수 없습니다. 같은 작업을 다시 실행하지 말고 이력을 확인해 주십시오.";
-  }
-  if (
     normalizedCode.includes("response_rejected")
     || normalizedCode.includes("validation")
     || normalizedCode.includes("contract")
@@ -59,15 +53,15 @@ export function technicalApiErrorDetail({
 
 /**
  * Keeps transport/contract diagnostics out of the normal user surface.
- * ApiError and ExperienceApiError already carry a stable Korean message while
- * preserving their raw diagnostic in `technicalDetail`. Locally authored
- * Korean validation errors may be shown as-is; every other Error is reduced to
- * the action-specific fallback.
+ * ApiError already carries a stable Korean message while preserving its raw
+ * diagnostic in `technicalDetail`. Locally authored Korean validation errors
+ * may be shown as-is; every other Error is reduced to the action-specific
+ * fallback.
  */
 export function userFacingErrorMessage(error: unknown, fallback: string): string {
   if (!(error instanceof Error)) return fallback;
   if (
-    (error.name === "ApiError" || error.name === "ExperienceApiError")
+    error.name === "ApiError"
     && /[가-힣]/u.test(error.message)
   ) {
     return error.message;
