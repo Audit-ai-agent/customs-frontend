@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 
-const supportedNodeRange = ">=22.22.0 <23";
-const minimumNode = [22, 22, 0];
+const supportedNodeRange = ">=22.12.0 <23";
+const minimumNode = [22, 12, 0];
 const expectedNpm = "10.9.8";
 const problems = [];
 const packageJson = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
@@ -19,6 +19,9 @@ const npmUserAgent = process.env.npm_config_user_agent ?? "";
 const npmMatch = /^npm\/([^\s]+)/.exec(npmUserAgent);
 if (npmMatch?.[1] !== expectedNpm) {
   problems.push(`npm ${expectedNpm} is required; found ${npmMatch?.[1] ?? "unknown"}`);
+}
+if (!process.env.COREPACK_ROOT) {
+  problems.push("Corepack must select the pinned npm version; run through corepack npm");
 }
 if (packageJson.engines?.node !== supportedNodeRange) problems.push("package.json engines.node does not match the supported range");
 if (packageJson.packageManager !== `npm@${expectedNpm}`) problems.push("package.json packageManager does not match the npm pin");
