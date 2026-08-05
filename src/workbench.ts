@@ -162,8 +162,12 @@ export class LightweightWorkbench {
       } as EnqueueReviewRequest;
       const job = await this.api.enqueueReview(current.case_id, request, crypto.randomUUID());
       this.state.activeJob = job;
-      this.state.notice = "심사를 시작했습니다. 현재 Job 상태를 확인하고 있습니다.";
-      this.scheduleJobPoll(job);
+      if (job.status === "succeeded" && job.review_run_id) {
+        await this.showSucceededReview(job);
+      } else {
+        this.state.notice = "심사를 시작했습니다. 현재 Job 상태를 확인하고 있습니다.";
+        this.scheduleJobPoll(job);
+      }
     });
   }
 
@@ -183,9 +187,7 @@ export class LightweightWorkbench {
       if (ACTIVE_JOB_STATES.has(job.status)) {
         this.scheduleJobPoll(job);
       } else if (job.status === "succeeded" && job.review_run_id) {
-        await this.loadCase(job.case_id);
-        await this.openRun(job.review_run_id);
-        this.state.notice = "심사가 완료되었습니다. 결과는 항상 사람 검토 대상으로 표시됩니다.";
+        await this.showSucceededReview(job);
       } else {
         this.state.error = "심사가 완료되지 않았습니다. Job 상태와 서비스 로그를 확인하십시오.";
       }
@@ -194,6 +196,14 @@ export class LightweightWorkbench {
     } finally {
       this.render();
     }
+  }
+
+  private async showSucceededReview(job: JobRecord): Promise<void> {
+    await this.loadCase(job.case_id);
+    if (this.state.selectedRun?.review_run_id !== job.review_run_id) {
+      await this.openRun(job.review_run_id);
+    }
+    this.state.notice = "심사가 완료되었습니다. 결과는 항상 사람 검토 대상으로 표시됩니다.";
   }
 
   private async withBusy(action: () => Promise<void>): Promise<void> {
