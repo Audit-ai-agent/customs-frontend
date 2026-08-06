@@ -42,10 +42,15 @@ function reviewRun() {
       classification_source: { source_kind: "document" as const, document_id: "document-1", quote: "INVOICE", occurrence: 0 }, extraction_status: "complete" as const,
       facts: [{ fact_id: "fact-1", name: "quantity", raw_value: "10", normalized_value: "10", unit: "EA", source: { source_kind: "document" as const, document_id: "document-1", quote: "10", occurrence: 0 } }],
       line_items: [], warnings: [],
+    }, {
+      document_id: "document-2", filename: "packing.txt", declared_type: "packing_list", document_type: "packing_list" as const,
+      classification_source: { source_kind: "document" as const, document_id: "document-2", quote: "PACKING LIST", occurrence: 0 }, extraction_status: "complete" as const,
+      facts: [{ fact_id: "fact-2", name: "invoice_number", raw_value: "INV-001", normalized_value: "INV-001", unit: null, source: { source_kind: "document" as const, document_id: "document-2", quote: "INV-001", occurrence: 0 } }],
+      line_items: [], warnings: [],
     }],
     comparisons: [{ comparison_id: "comparison-1", rule_code: "QTY_MISMATCH_INVOICE_PACKING", status: "mismatch" as const, left: { document_id: "document-1", item_id: null, fact_ids: ["fact-1"], display_value: "10" }, right: { document_id: "document-1", item_id: null, fact_ids: [], display_value: "12" }, expected_value: "10", observed_value: "12", unit: "EA", message: "수량이 일치하지 않습니다." }],
     evidence: [{ evidence_id: "evidence-1", item_id: "item-1", title: "관세법", text: "근거 조문", source_uri: "https://example.test/law", source_type: "law", source_hash: "a".repeat(64), law_id: "law-1", law_name: "관세법" }],
-    findings: [{ finding_id: "finding-1", code: "QTY_MISMATCH_INVOICE_PACKING", message: "수량이 일치하지 않습니다.", kind: "validation_issue" as const, severity: "high" as const, comparison_id: "comparison-1", document_ids: ["document-1"], fact_ids: ["fact-1"], evidence_ids: ["evidence-1"] }],
+    findings: [{ finding_id: "finding-1", code: "QTY_MISMATCH_INVOICE_PACKING", message: "수량이 일치하지 않습니다.", kind: "validation_issue" as const, severity: "high" as const, comparison_id: "comparison-1", document_ids: ["document-1", "document-2"], fact_ids: ["fact-2", "fact-1"], evidence_ids: ["evidence-1"] }],
     required_actions: [{ action_code: "inspect_quantity", message: "수량을 확인하십시오.", finding_ids: ["finding-1"] }, { action_code: "human_review_required", message: "자동 승인하지 않습니다.", finding_ids: [] }],
     reviewer_decisions: [], created_by: "local-reviewer", created_at: "2026-08-05T00:00:00Z",
   };
@@ -93,6 +98,12 @@ describe("commercial review workspace", () => {
     expect(root.querySelector('[data-e2e="finding-card"]')).not.toBeNull();
     expect(root.textContent).toContain("문서 간 비교");
     expect(root.textContent).toContain("담당자 판단 기록");
+    const correctionForm = root.querySelector<HTMLFormElement>('[data-e2e="correction-proposal"]');
+    expect(correctionForm?.querySelector<HTMLInputElement>('input[name="document_id"]')?.value).toBe("document-1");
+    expect(correctionForm?.querySelector<HTMLInputElement>('input[name="fact_id"]')?.value).toBe("fact-1");
+    const correctionField = correctionForm?.querySelector<HTMLInputElement>('input[name="field_name"]');
+    expect(correctionField?.value).toBe("quantity");
+    expect(correctionField?.readOnly).toBe(true);
     expect(root.querySelectorAll("[data-report-section]")).toHaveLength(8);
     expect(root.querySelector("[data-planner-trace]")?.textContent).toContain("제한형 계획");
     const comparisonCitation = Array.from(root.querySelectorAll<HTMLButtonElement>('[data-report-claim-id="claim-3"] .citation-chip'))
