@@ -152,8 +152,15 @@ const contents: Record<string, string> = {
   "doc-2": "PACKING LIST\n\nInvoice No: CI-2026-0001\nQuantity: 100 EA\nGross Weight: 480 KG\nCartons: 10",
 };
 
+// The role switch is live so the approver-only affordances can be reviewed too.
+let actor: "reviewer" | "approver" = "reviewer";
+
 const api = {
-  getSession: async () => ({ subject: "local-reviewer", org_id: "local-org", roles: ["reviewer"] }),
+  getSession: async () => ({
+    subject: actor === "approver" ? "local-approver" : "local-reviewer",
+    org_id: "local-org",
+    roles: [actor],
+  }),
   listCases: async () => ({ items: cases }),
   getCase: async (caseId: string) => cases.find((item) => item.case_id === caseId) ?? cases[0],
   // case-2 is deliberately empty so the empty states can be reviewed too.
@@ -183,7 +190,7 @@ const auth = {
   isAuthenticated: () => true,
   freshAccessToken: async () => "preview-token",
   logout: async () => undefined,
-  switchActor: async () => undefined,
+  switchActor: async (next: "reviewer" | "approver") => { actor = next; },
 };
 
 const root = document.querySelector<HTMLElement>("#app");

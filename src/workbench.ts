@@ -255,6 +255,9 @@ export class CommercialReviewWorkspace {
       const currentCaseId = this.state.selectedCase?.case_id;
       await this.refreshCases();
       if (currentCaseId) await this.loadCase(currentCaseId);
+      // loadCase drops the per-run attachments, so the current view must reload its own.
+      if (this.state.activeView === "assistant") await this.ensureAssistantLoaded();
+      if (this.state.activeView === "history") await this.ensureCorrectionProposalsLoaded();
       this.state.notice = actor === "approver"
         ? "로컬 승인자 세션으로 전환했습니다. 제안 승인·반려와 자식 심사만 수행할 수 있습니다."
         : "로컬 심사자 세션으로 전환했습니다. 문서·심사·판단·정정 제안을 기록할 수 있습니다.";
