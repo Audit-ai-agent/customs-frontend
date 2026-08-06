@@ -73,6 +73,13 @@ interface WorkbenchState {
   error: string | null;
 }
 
+interface CorrectionFactTarget {
+  documentId: string;
+  factId: string;
+  itemId: string | null;
+  fieldName: string;
+}
+
 const DOCUMENT_TYPES: readonly DocumentType[] = ["CI", "PL", "BL", "CO", "UNKNOWN"];
 const ACTIVE_JOB_STATES = new Set(["queued", "running"]);
 const TABS: readonly { id: WorkspaceTab; label: string }[] = [
@@ -1279,19 +1286,25 @@ export class CommercialReviewWorkspace {
     const matchesDraft = draft !== null && (!source || draft.document_id === source.document_id) &&
       (!source || !draft.fact_id || finding.fact_ids.includes(draft.fact_id));
     const target = matchesDraft ? draft : null;
-    const documentId = target?.document_id ?? source?.document_id;
+    const factTarget = correctionFactTargetForFinding(this.requireRun(), finding);
+    const documentId = target?.document_id ?? factTarget?.documentId ?? source?.document_id;
     if (!documentId) {
       return element("p", { className: "muted", text: "이 확인 사항에는 정정할 문서 사실이 연결되어 있지 않습니다. 문서 원문을 보완하거나 AI 도우미의 근거 있는 정정 제안을 사용하십시오." });
     }
+    const factId = target?.fact_id ?? factTarget?.factId ?? "";
+    const itemId = target?.item_id ?? factTarget?.itemId ?? "";
+    const fieldName = target?.field_name ?? factTarget?.fieldName ?? "";
+    const fieldIsBound = Boolean(factId && fieldName);
     const form = element("form", {
       className: "correction-proposal-form", attributes: { "data-e2e": "correction-proposal" },
       on: { submit: (event) => { event.preventDefault(); void this.createCorrectionProposal(event.currentTarget as HTMLFormElement); } },
     },
     input("document_id", { type: "hidden", value: documentId }),
     input("finding_id", { type: "hidden", value: finding.finding_id }),
-    input("fact_id", { type: "hidden", value: target?.fact_id ?? finding.fact_ids[0] ?? "" }),
-    input("item_id", { type: "hidden", value: target?.item_id ?? "" }),
-    field("정정할 필드", input("field_name", { required: true, maxLength: 64, value: target?.field_name ?? "", placeholder: "예: quantity" })),
+    input("fact_id", { type: "hidden", value: factId }),
+    input("item_id", { type: "hidden", value: itemId }),
+    field("정정할 필드", input("field_name", { required: true, maxLength: 64, value: fieldName, placeholder: "예: quantity", readOnly: fieldIsBound })),
+    fieldIsBound ? element("p", { className: "form-hint", text: "이 확인 사항과 연결된 문서 사실의 필드를 사용합니다." }) : null,
     field("제안 값", textarea("new_value", { required: true, maxLength: 2_000, value: target?.new_value ?? "", placeholder: "문서 원문을 기준으로 제안 값을 입력하십시오." })),
     field("단위", input("unit", { maxLength: 64, value: target?.unit ?? "", placeholder: "선택 입력" })),
     field("제안 근거", textarea("reason", { required: true, maxLength: 2_000, value: target?.reason ?? "", placeholder: "왜 이 값으로 정정해야 하는지 문서 근거를 적으십시오." })),
@@ -1672,6 +1685,22 @@ function sourceForFinding(run: ReviewRun, finding: ReviewFinding): SourceReferen
   return null;
 }
 
+function correctionFactTargetForFinding(run: ReviewRun, finding: ReviewFinding): CorrectionFactTarget | null {
+  for (const analysis of run.document_analyses) {
+    const directFact = analysis.facts.find((fact) => finding.fact_ids.includes(fact.fact_id) && isDocumentSource(fact.source));
+    if (directFact) {
+      return { documentId: analysis.document_id, factId: directFact.fact_id, itemId: null, fieldName: directFact.name };
+    }
+    for (const item of analysis.line_items) {
+      const itemFact = item.facts.find((fact) => finding.fact_ids.includes(fact.fact_id) && isDocumentSource(fact.source));
+      if (itemFact) {
+        return { documentId: analysis.document_id, factId: itemFact.fact_id, itemId: item.item_id, fieldName: itemFact.name };
+      }
+    }
+  }
+  return null;
+}
+
 function sourceForOperand(run: ReviewRun, operand: ReviewComparison["left"]): SourceReference | null {
   if (operand.document_id === null) return null;
   for (const analysis of run.document_analyses) {
@@ -1924,13 +1953,13 @@ function element<K extends keyof HTMLElementTagNameMap>(
 
 function input(
   name: string,
-  options: { type?: string; required?: boolean; maxLength?: number; placeholder?: string; value?: string; accept?: string; ariaLabel?: string; onInput?: EventListener } = {},
+  options: { type?: string; required?: boolean; maxLength?: number; placeholder?: string; value?: string; accept?: string; ariaLabel?: string; readOnly?: boolean; onInput?: EventListener } = {},
 ): HTMLInputElement {
   return element("input", {
     attributes: {
       name, type: options.type ?? "text", required: options.required ? "" : undefined,
       maxlength: options.maxLength === undefined ? undefined : String(options.maxLength), placeholder: options.placeholder,
-      value: options.value, accept: options.accept, "aria-label": options.ariaLabel,
+      value: options.value, accept: options.accept, "aria-label": options.ariaLabel, readonly: options.readOnly ? "" : undefined,
     },
     ...(options.onInput ? { on: { input: options.onInput } } : {}),
   });
