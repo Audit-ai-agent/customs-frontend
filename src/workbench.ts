@@ -1437,19 +1437,31 @@ export class CommercialReviewWorkspace {
         sectionHeading("법령 Evidence", "Agent가 Data Evidence API에서 받은 근거입니다."),
         this.createEvidenceList(run),
       ),
-      ...sections,
-      element("section", { className: "surface report-supporting-data" },
-        sectionHeading("심사 근거 상세", "보고서의 각 근거 참조를 더 자세히 확인할 수 있습니다."),
-        element("div", { className: "review-metrics" },
-          metric("확인 사항", String(run.findings.length)),
-          metric("문서 비교", String(run.comparisons.length)),
-          metric("법령 근거", String(run.evidence.length)),
-          metric("담당자 판단", String(run.reviewer_decisions.length)),
-        ),
-        this.createReportDocuments(run),
-        this.createReportFacts(run),
-        this.createReportEvidence(run),
+      element("section", { className: "surface" },
+        sectionHeading("이어서 할 일", "이번 실행이 담당자에게 남긴 조치입니다."),
         this.createNextSteps(run),
+      ),
+      // The agent narrative and the raw references are reference material: reachable,
+      // but not stacked on top of the judgement work by default.
+      collapsibleSection(
+        `Agent 보고서 전문 · ${run.report.sections.length}개 구역`,
+        "Agent가 이 실행에서 반환한 주장과 근거 참조를 그대로 표시합니다. 근거 버튼을 누르면 해당 문서 사실, 비교 결과, Evidence로 이동합니다.",
+        element("div", { className: "report-section-stack" }, ...sections),
+      ),
+      collapsibleSection(
+        "심사 근거 상세",
+        "보고서의 각 근거 참조를 더 자세히 확인할 수 있습니다.",
+        element("div", { className: "report-supporting-data" },
+          element("div", { className: "review-metrics" },
+            metric("확인 사항", String(run.findings.length)),
+            metric("문서 비교", String(run.comparisons.length)),
+            metric("법령 근거", String(run.evidence.length)),
+            metric("담당자 판단", String(run.reviewer_decisions.length)),
+          ),
+          this.createReportDocuments(run),
+          this.createReportFacts(run),
+          this.createReportEvidence(run),
+        ),
       ),
     );
   }
@@ -2163,6 +2175,17 @@ function roleLabel(value: string): string {
 
 function sectionHeading(title: string, description: string): HTMLElement {
   return element("header", { className: "section-heading" }, element("h2", { text: title }), element("p", { text: description }));
+}
+
+/** A card that starts collapsed, for reference material that would otherwise bury the task. */
+function collapsibleSection(title: string, description: string, content: HTMLElement): HTMLElement {
+  return element("details", { className: "surface collapsible" },
+    element("summary", { className: "collapsible__summary" },
+      element("span", { className: "collapsible__title", text: title }),
+      element("span", { className: "collapsible__hint", text: description }),
+    ),
+    element("div", { className: "collapsible__body" }, content),
+  );
 }
 
 function reportSection(

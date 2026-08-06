@@ -542,6 +542,31 @@ textarea { min-height: 7rem; resize: vertical; line-height: 1.6; }
 .verdict-panel h2 { margin-bottom: .55rem; font-size: 1.3rem; }
 .verdict-panel .summary-copy { max-width: 58rem; margin: 0 0 .8rem; color: var(--krds-ink-2); font-size: .95rem; font-weight: 500; }
 .report-source-note { max-width: 58rem; margin: .75rem 0 0; color: var(--krds-muted); font-size: .83rem; line-height: 1.6; }
+.collapsible { padding: 0; }
+.collapsible__summary {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: .2rem 1rem;
+  padding: 1.1rem clamp(1.1rem, 2vw, 1.5rem); list-style: none;
+}
+.collapsible__summary::-webkit-details-marker { display: none; }
+.collapsible__summary::marker { content: ""; }
+.collapsible__title { grid-area: 1 / 1; }
+.collapsible__hint { grid-area: 2 / 1; }
+.collapsible__summary::after {
+  grid-area: 1 / 2 / span 2; align-self: center; color: var(--krds-muted);
+  font-size: .9rem; content: "▾"; transition: transform .15s;
+}
+.collapsible[open] .collapsible__summary::after { transform: rotate(180deg); }
+.collapsible__summary:hover .collapsible__title { color: var(--krds-primary-strong); }
+.collapsible__title { display: flex; align-items: center; gap: .55rem; font-size: 1.05rem; font-weight: 700; }
+.collapsible__title::before {
+  width: .25rem; height: 1.05rem; flex: none;
+  background: linear-gradient(180deg, #4a8af6, var(--krds-primary-strong)); border-radius: .125rem; content: "";
+}
+.collapsible__hint { color: var(--krds-muted); font-size: .82rem; line-height: 1.5; }
+.collapsible__body { padding: 0 clamp(1.1rem, 2vw, 1.5rem) 1.25rem; }
+.report-section-stack { display: grid; gap: .8rem; }
+.report-section-stack .report-section { padding: 1rem 1.1rem; background: var(--krds-surface-2); border: 1px solid var(--krds-line); border-radius: .625rem; box-shadow: none; }
+.report-supporting-data { display: grid; gap: .9rem; }
 .report-section { display: grid; gap: .9rem; }
 .report-section__heading {
   display: grid; grid-template-columns: 2.6rem minmax(0, 1fr); gap: .7rem; align-items: start;
@@ -708,7 +733,8 @@ textarea { min-height: 7rem; resize: vertical; line-height: 1.6; }
 .decision-history-list li small { grid-column: 1 / -1; }
 .decision-empty { margin: 0 0 .6rem; color: var(--krds-muted); font-size: .84rem; }
 .decision-form { display: grid; grid-template-columns: minmax(9rem, .35fr) minmax(0, 1fr) auto; gap: .5rem; align-items: start; }
-.decision-form textarea { min-height: 2.5rem; }
+/* The shared textarea helper carries rows="8"; inline reason fields stay one line tall. */
+.decision-form textarea, .correction-decision-form textarea { height: 2.6rem; min-height: 2.6rem; }
 
 /* ── AI 도우미 ────────────────────────────────────────────────── */
 .assistant-layout { display: grid; grid-template-columns: minmax(14rem, .34fr) minmax(0, 1fr); gap: 1rem; align-items: stretch; min-height: 36rem; }
@@ -817,7 +843,6 @@ textarea { min-height: 7rem; resize: vertical; line-height: 1.6; }
 }
 .correction-history-list li small { grid-column: 1 / -1; }
 .correction-decision-form { display: grid; grid-template-columns: 8rem 1fr auto; gap: .45rem; align-items: start; }
-.correction-decision-form textarea { min-height: 2.5rem; }
 .correction-proposal-select {
   display: inline-flex; align-items: center; gap: .5rem; width: fit-content; padding: .5rem .65rem;
   color: var(--krds-success-strong); background: var(--krds-success-bg); border-radius: .5rem;
