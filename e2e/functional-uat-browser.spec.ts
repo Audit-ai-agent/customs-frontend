@@ -284,7 +284,8 @@ async function recordCorrectionProposal(finding: ReturnType<Page["locator"]>): P
   await form.locator('textarea[name="new_value"]').fill("INV-BROWSER-E2E-CORRECTED");
   await form.locator('textarea[name="reason"]').fill("Browser Functional-UAT 독립 승인 흐름 확인용 구조화 정정 제안입니다.");
   await form.getByRole("button", { name: "정정 제안 기록" }).click();
-  await expect(form.locator('input[name="field_name"]')).toHaveValue("");
+  await expect(form.locator('textarea[name="new_value"]')).toHaveValue("");
+  await expect(form.locator('textarea[name="reason"]')).toHaveValue("");
 }
 
 async function decideCorrectionProposal(proposal: ReturnType<Page["locator"]>): Promise<void> {
