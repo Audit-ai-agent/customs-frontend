@@ -14,7 +14,7 @@ async function bootstrap(): Promise<void> {
     let session: BrowserSession;
     if (__CUSTOMS_RUNTIME_MODE__ === "local-development") {
       const localSession = new LocalDevelopmentSession(
-        () => bootstrapClient.createLocalDevelopmentSession(),
+        (actor) => bootstrapClient.createLocalDevelopmentSession(actor),
       );
       await localSession.start();
       session = localSession;

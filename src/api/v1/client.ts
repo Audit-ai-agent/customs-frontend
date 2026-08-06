@@ -1,7 +1,11 @@
 import {
   ContractError,
   decodeAuthConfig,
+  decodeAssistantConversation,
+  decodeAssistantMessage,
+  decodeAssistantMessageExchange,
   decodeCaseSummary,
+  decodeCorrectionProposal,
   decodeDocumentListItem,
   decodeDocumentView,
   decodeJob,
@@ -13,17 +17,26 @@ import {
 } from "./decoders";
 import type {
   AddDocumentRequest,
+  AssistantConversation,
+  AssistantMessage,
+  AssistantMessageExchange,
   AuthConfig,
   CaseDetail,
   CaseDocument,
   CaseSummary,
   CreateCaseRequest,
+  CreateAssistantConversationRequest,
+  CreateCorrectionProposalRequest,
+  CorrectionDecisionRequest,
+  CorrectionProposal,
+  CreateRevisionRequest,
   EnqueueReviewRequest,
   FindingDecisionRequest,
   JobRecord,
   ReviewerDecision,
   ReviewRun,
   ReviewRunSummary,
+  SendAssistantMessageRequest,
   Session,
 } from "./types";
 import type { LocalDevelopmentSessionResponse } from "../../auth";
@@ -60,8 +73,12 @@ export class ApiClient {
     return this.request("/auth/config", { method: "GET" }, decodeAuthConfig, false);
   }
 
-  createLocalDevelopmentSession(): Promise<LocalDevelopmentSessionResponse> {
-    return this.request("/dev/session", { method: "POST" }, decodeLocalDevelopmentSession, false);
+  createLocalDevelopmentSession(actor?: "reviewer" | "approver"): Promise<LocalDevelopmentSessionResponse> {
+    // Omitted remains the Backend's explicit reviewer default.  The approver
+    // identity is requested only when a local developer deliberately switches
+    // to the independent approval role.
+    const init = actor === undefined ? { method: "POST" as const } : this.json("POST", { actor });
+    return this.request("/dev/session", init, decodeLocalDevelopmentSession, false);
   }
 
   async getSession(): Promise<Session> {
@@ -195,6 +212,149 @@ export class ApiClient {
     );
   }
 
+  listAssistantConversations(reviewRunId: string): Promise<AssistantConversation[]> {
+    return this.request(
+      `/review-runs/${segment(reviewRunId)}/assistant/conversations`,
+      { method: "GET" },
+      (value) => {
+        const conversations = itemsFrom(value, "Assistant conversation list").map(decodeAssistantConversation);
+        conversations.forEach((item, index) => {
+          this.assertIdentity(item.review_run_id, reviewRunId, `assistant conversations[${index}] review run`);
+        });
+        return conversations;
+      },
+    );
+  }
+
+  createAssistantConversation(
+    reviewRunId: string,
+    payload: CreateAssistantConversationRequest = {},
+  ): Promise<AssistantConversation> {
+    const title = payload.title?.trim();
+    if (title !== undefined && (!title || title.length > 200)) {
+      throw new ContractError("assistant conversation title is invalid");
+    }
+    return this.request(
+      `/review-runs/${segment(reviewRunId)}/assistant/conversations`,
+      this.json("POST", title ? { title } : {}),
+      (value) => {
+        const conversation = decodeAssistantConversation(value);
+        this.assertIdentity(conversation.review_run_id, reviewRunId, "Assistant conversation review run");
+        return conversation;
+      },
+    );
+  }
+
+  listAssistantMessages(conversationId: string): Promise<AssistantMessage[]> {
+    return this.request(
+      `/assistant/conversations/${segment(conversationId)}/messages`,
+      { method: "GET" },
+      (value) => {
+        const messages = itemsFrom(value, "Assistant message list").map((item) => decodeAssistantMessage(item));
+        messages.forEach((item, index) => {
+          this.assertIdentity(item.conversation_id, conversationId, `assistant messages[${index}] conversation`);
+        });
+        return messages;
+      },
+    );
+  }
+
+  sendAssistantMessage(
+    conversationId: string,
+    payload: SendAssistantMessageRequest,
+    idempotencyKey: string,
+  ): Promise<AssistantMessageExchange> {
+    const content = payload.content.trim();
+    if (!content || content.length > 4_000) throw new ContractError("assistant message content is invalid");
+    if (!isSafeIdempotencyKey(idempotencyKey)) throw new ContractError("assistant message Idempotency-Key is invalid");
+    const init = this.json("POST", { content });
+    const headers = new Headers(init.headers);
+    headers.set("Idempotency-Key", idempotencyKey);
+    return this.request(
+      `/assistant/conversations/${segment(conversationId)}/messages`,
+      { ...init, headers },
+      (value) => {
+        const exchange = decodeAssistantMessageExchange(value);
+        this.assertIdentity(exchange.user_message.conversation_id, conversationId, "Assistant user message conversation");
+        this.assertIdentity(exchange.assistant_message.conversation_id, conversationId, "Assistant answer conversation");
+        return exchange;
+      },
+    );
+  }
+
+  listCorrectionProposals(reviewRunId: string): Promise<CorrectionProposal[]> {
+    return this.request(
+      `/review-runs/${segment(reviewRunId)}/correction-proposals`,
+      { method: "GET" },
+      (value) => {
+        const proposals = itemsFrom(value, "Correction proposal list").map(decodeCorrectionProposal);
+        proposals.forEach((item, index) => {
+          this.assertIdentity(item.review_run_id, reviewRunId, `correction proposals[${index}] review run`);
+        });
+        return proposals;
+      },
+    );
+  }
+
+  createCorrectionProposal(
+    reviewRunId: string,
+    payload: CreateCorrectionProposalRequest,
+  ): Promise<CorrectionProposal> {
+    const canonical = validateCorrectionProposal(payload);
+    return this.request(
+      `/review-runs/${segment(reviewRunId)}/correction-proposals`,
+      this.json("POST", canonical),
+      (value) => {
+        const proposal = decodeCorrectionProposal(value);
+        this.assertIdentity(proposal.review_run_id, reviewRunId, "Correction proposal review run");
+        return proposal;
+      },
+    );
+  }
+
+  decideCorrectionProposal(
+    proposalId: string,
+    payload: CorrectionDecisionRequest,
+  ): Promise<CorrectionProposal> {
+    const reason = payload.reason.trim();
+    if (!reason || reason.length > 2_000) throw new ContractError("correction decision reason is invalid");
+    if (payload.status !== "approved" && payload.status !== "rejected") {
+      throw new ContractError("correction decision status is invalid");
+    }
+    return this.request(
+      `/correction-proposals/${segment(proposalId)}/decision`,
+      this.json("PUT", { status: payload.status, reason }),
+      (value) => {
+        const proposal = decodeCorrectionProposal(value);
+        this.assertIdentity(proposal.correction_proposal_id, proposalId, "Correction proposal");
+        return proposal;
+      },
+    );
+  }
+
+  enqueueRevision(
+    reviewRunId: string,
+    payload: CreateRevisionRequest,
+    idempotencyKey: string,
+  ): Promise<JobRecord> {
+    if (!isSafeIdempotencyKey(idempotencyKey)) throw new ContractError("revision Idempotency-Key is invalid");
+    if (!payload.proposal_ids.length || payload.proposal_ids.length > 50) {
+      throw new ContractError("revision proposal IDs are invalid");
+    }
+    const proposalIds = [...new Set(payload.proposal_ids.map((item) => item.trim()))];
+    if (proposalIds.some((item) => !item || item.length > 256 || /[\r\n\0]/u.test(item))) {
+      throw new ContractError("revision proposal IDs are invalid");
+    }
+    const init = this.json("POST", { proposal_ids: proposalIds });
+    const headers = new Headers(init.headers);
+    headers.set("Idempotency-Key", idempotencyKey);
+    return this.request(
+      `/review-runs/${segment(reviewRunId)}/revisions`,
+      { ...init, headers },
+      decodeJobEnvelope,
+    );
+  }
+
   private json(method: "POST" | "PUT", payload: object): RequestInit {
     return {
       method,
@@ -277,6 +437,9 @@ function decodeLocalDevelopmentSession(value: unknown): LocalDevelopmentSessionR
   const expiresIn = integer(raw.expires_in, "development session.expires_in");
   const roles = array(session.roles, "development session.session.roles")
     .map((item, index) => string(item, "development session.session.roles[" + index + "]"));
+  if (!roles.length || roles.some((role) => role !== "reviewer" && role !== "approver")) {
+    throw new ContractError("development session role is unsupported");
+  }
   if (raw.token_type !== undefined && raw.token_type !== "Bearer") {
     throw new ContractError("development session token type is unsupported");
   }
@@ -339,6 +502,44 @@ function isIsoDate(value: string): boolean {
   if (!/^\d{4}-\d{2}-\d{2}$/u.test(value)) return false;
   const date = new Date(value + "T00:00:00.000Z");
   return Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === value;
+}
+
+function validateCorrectionProposal(payload: CreateCorrectionProposalRequest): CreateCorrectionProposalRequest {
+  const documentId = payload.document_id.trim();
+  const fieldName = payload.field_name.trim();
+  const newValue = payload.new_value.trim();
+  const reason = payload.reason.trim();
+  if (
+    !documentId || documentId.length > 128 || /[\r\n\0]/u.test(documentId) ||
+    !fieldName || fieldName.length > 64 || !/^[a-z][a-z0-9_]{0,63}$/u.test(fieldName)
+  ) {
+    throw new ContractError("correction proposal target is invalid");
+  }
+  if (!newValue || newValue.length > 2_000 || !reason || reason.length > 2_000) {
+    throw new ContractError("correction proposal content is invalid");
+  }
+  const optional = (value: string | null | undefined, label: string, maximum = 256): string | undefined => {
+    if (value === undefined || value === null) return undefined;
+    const trimmed = value.trim();
+    if (!trimmed || trimmed.length > maximum || /[\r\n\0]/u.test(trimmed)) {
+      throw new ContractError(`${label} is invalid`);
+    }
+    return trimmed;
+  };
+  const itemId = optional(payload.item_id, "correction proposal item ID");
+  const factId = optional(payload.fact_id, "correction proposal fact ID");
+  const unit = optional(payload.unit, "correction proposal unit", 64);
+  const findingId = optional(payload.finding_id, "correction proposal finding ID");
+  return {
+    document_id: documentId,
+    field_name: fieldName,
+    new_value: newValue,
+    reason,
+    ...(itemId === undefined ? {} : { item_id: itemId }),
+    ...(factId === undefined ? {} : { fact_id: factId }),
+    ...(unit === undefined ? {} : { unit }),
+    ...(findingId === undefined ? {} : { finding_id: findingId }),
+  };
 }
 
 function object(value: unknown, label: string): Record<string, unknown> {

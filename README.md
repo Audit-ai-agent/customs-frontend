@@ -1,7 +1,7 @@
 # Customs Frontend
 
 팀 개발과 실제 기능 UAT를 위한 사건 중심 Browser 심사 작업대입니다. 사건 목록,
-문서 등록, 심사·근거·이력 탭은 하나의 Case 안에서 연결됩니다. Browser는 Backend
+문서 등록, 심사·AI 도우미·근거·이력 탭은 하나의 Case 안에서 연결됩니다. Browser는 Backend
 API v1만 호출합니다. Agent, Data, PostgreSQL, Qdrant, Neo4j 주소나 비밀값을
 Browser에 전달하지 않습니다.
 
@@ -14,7 +14,11 @@ Browser에 전달하지 않습니다.
 
 기본 개발은 Backend의 loopback 전용 development session을 메모리에만
 보관합니다. 공용 키, OIDC, Docker, 모델 cache, Law API 또는 Claude 키가
-필요하지 않습니다.
+필요하지 않습니다. 기본은 `reviewer` 세션으로 시작합니다. 상단의 **개발 역할**에서
+명시적으로 `approver` 세션으로 바꾸면 Browser는 `POST /api/v1/dev/session`에
+`{"actor":"approver"}`만 보내고 새 토큰도 메모리에만 보관합니다. reviewer는 Case·문서·심사·
+finding 판단·정정 제안을 기록하고, approver는 다른 사람이 만든 제안을 승인 또는 반려한 뒤
+자식 심사를 시작합니다. 제안자는 자신의 제안을 결정할 수 없습니다.
 
 실제 기능 UAT는 Backend가 제공하는 OIDC 로그인만 사용합니다. 실제 관세
 3법·Data 저장소·Claude가 동작하지만 결과는 항상 human review only이며,
@@ -42,22 +46,27 @@ Functional UAT는 네 서비스가 문서의 순서대로 실행된 뒤에만 �
     corepack npm run dev:functional-uat
 
 Browser가 local Keycloak 로그인 화면으로 이동하면 사용자 이름
-`local-functional-reviewer`를 입력합니다. 비밀번호는 본인 PC의 Backend profile에서만
-클립보드로 복사하고, 붙여넣은 뒤 바로 비웁니다.
+`local-functional-reviewer` 또는 `local-functional-approver`를 입력합니다. 역할에 맞는
+비밀번호는 본인 PC의 Backend profile에서만 클립보드로 복사하고, 붙여넣은 뒤 바로 비웁니다.
 
 ```powershell
 Set-Location ..\customs-backend
+# reviewer 로그인용 (기본)
 .\tools\Copy-FunctionalUatPassword.ps1
+# approver 로그인용
+.\tools\Copy-FunctionalUatPassword.ps1 -Actor approver
 # Browser의 local Keycloak form에 붙여넣은 뒤
 Set-Clipboard -Value ''
 ```
 
-이 명령은 reviewer 비밀번호 하나만 현재 사용자 clipboard에 넣고 화면·로그에는 값을
+이 명령은 선택한 역할의 비밀번호 하나만 현재 사용자 clipboard에 넣고 화면·로그에는 값을
 출력하지 않습니다. `_local/profiles/functional-uat/backend.env` 전체를 공유하거나
 Agent/Data/DB 값으로 Browser를 설정하지 마십시오.
 
 대표 여정은 Case 생성 → .txt 문서 등록 → 심사 시작 → 사람 검토 결과 확인
-한 번입니다. Browser는 심사 기준일을 보내지 않습니다. Backend가 개발 모드의
+한 번입니다. 필요하면 AI 도우미 탭에서 결과에 연결된 문서 사실·비교·Evidence를
+질문하고, 정정 제안을 독립된 approver가 승인한 뒤 자식 심사를 요청할 수 있습니다. 이 과정도
+자동 승인이나 원문 변경으로 이어지지 않습니다. Browser는 심사 기준일을 보내지 않습니다. Backend가 개발 모드의
 로컬 날짜를 정하거나 Functional UAT의 2026-08-05를 강제합니다.
 
 ## 선택적 정적 Docker smoke

@@ -1,13 +1,24 @@
 import { ApiClient } from "./api/v1/client";
+import { isDocumentSource } from "./api/v1/types";
 import { userFacingErrorMessage } from "./api/user-facing-errors";
 import type {
+  AssistantCitation,
+  AssistantConversation,
+  AssistantCorrectionDraft,
+  AssistantMessage,
   CaseDetail,
   CaseDocument,
   CaseSummary,
+  CorrectionDecision,
+  CorrectionProposal,
+  CreateCorrectionProposalRequest,
   DocumentType,
+  DocumentFact,
   FindingDecisionRequest,
   JobRecord,
   ReviewComparison,
+  ReportClaim,
+  ReportSection,
   ReviewerDecision,
   ReviewFinding,
   ReviewRun,
@@ -15,10 +26,14 @@ import type {
   SourceReference,
   Session,
 } from "./api/v1/types";
-import type { BrowserSession } from "./auth";
+import {
+  supportsDevelopmentRoleSwitch,
+  type BrowserSession,
+  type LocalDevelopmentActor,
+} from "./auth";
 
 export type FrontendRuntimeMode = "local-development" | "functional-uat";
-type WorkspaceTab = "documents" | "analysis" | "evidence" | "history";
+type WorkspaceTab = "documents" | "analysis" | "assistant" | "evidence" | "history";
 type CaseFilter = "all" | "open" | "in_review" | "closed";
 
 interface WorkbenchState {
@@ -30,8 +45,27 @@ interface WorkbenchState {
   selectedRun: ReviewRun | null;
   selectedDocument: (CaseDocument & { content_text: string }) | null;
   sourceFocus: SourceReference | null;
+  factFocusId: string | null;
   activeJob: JobRecord | null;
   activeTab: WorkspaceTab;
+  comparisonFocusId: string | null;
+  evidenceFocusId: string | null;
+  assistantConversations: AssistantConversation[];
+  selectedConversation: AssistantConversation | null;
+  assistantMessages: AssistantMessage[];
+  assistantLoadedRunId: string | null;
+  assistantLoading: boolean;
+  assistantSending: boolean;
+  assistantDraft: string;
+  assistantRetryContent: string | null;
+  assistantRetryIdempotencyKey: string | null;
+  assistantError: string | null;
+  correctionProposals: CorrectionProposal[];
+  correctionLoadedRunId: string | null;
+  correctionLoading: boolean;
+  correctionError: string | null;
+  correctionDraft: AssistantCorrectionDraft | null;
+  selectedCorrectionProposalIds: Set<string>;
   caseFilter: CaseFilter;
   query: string;
   busy: boolean;
@@ -44,6 +78,7 @@ const ACTIVE_JOB_STATES = new Set(["queued", "running"]);
 const TABS: readonly { id: WorkspaceTab; label: string }[] = [
   { id: "documents", label: "문서" },
   { id: "analysis", label: "AI 심사" },
+  { id: "assistant", label: "AI 도우미" },
   { id: "evidence", label: "근거" },
   { id: "history", label: "이력" },
 ];
@@ -62,8 +97,27 @@ export class CommercialReviewWorkspace {
     selectedRun: null,
     selectedDocument: null,
     sourceFocus: null,
+    factFocusId: null,
     activeJob: null,
     activeTab: "documents",
+    comparisonFocusId: null,
+    evidenceFocusId: null,
+    assistantConversations: [],
+    selectedConversation: null,
+    assistantMessages: [],
+    assistantLoadedRunId: null,
+    assistantLoading: false,
+    assistantSending: false,
+    assistantDraft: "",
+    assistantRetryContent: null,
+    assistantRetryIdempotencyKey: null,
+    assistantError: null,
+    correctionProposals: [],
+    correctionLoadedRunId: null,
+    correctionLoading: false,
+    correctionError: null,
+    correctionDraft: null,
+    selectedCorrectionProposalIds: new Set(),
     caseFilter: "all",
     query: "",
     busy: false,
@@ -98,6 +152,26 @@ export class CommercialReviewWorkspace {
     this.jobTimer = null;
   }
 
+  private hasRole(role: "reviewer" | "approver"): boolean {
+    return this.state.session?.roles.includes(role) ?? false;
+  }
+
+  private async switchDevelopmentActor(actor: LocalDevelopmentActor): Promise<void> {
+    const session = this.auth;
+    if (this.mode !== "local-development" || !supportsDevelopmentRoleSwitch(session)) return;
+    if (this.hasRole(actor)) return;
+    await this.withBusy(async () => {
+      await session.switchActor(actor);
+      this.state.session = await this.api.getSession();
+      const currentCaseId = this.state.selectedCase?.case_id;
+      await this.refreshCases();
+      if (currentCaseId) await this.loadCase(currentCaseId);
+      this.state.notice = actor === "approver"
+        ? "로컬 승인자 세션으로 전환했습니다. 제안 승인·반려와 자식 심사만 수행할 수 있습니다."
+        : "로컬 심사자 세션으로 전환했습니다. 문서·심사·판단·정정 제안을 기록할 수 있습니다.";
+    });
+  }
+
   private async refreshCases(): Promise<void> {
     this.state.cases = (await this.api.listCases()).items;
   }
@@ -111,11 +185,15 @@ export class CommercialReviewWorkspace {
       this.state.selectedRun = null;
       this.state.selectedDocument = null;
       this.state.sourceFocus = null;
+      this.state.factFocusId = null;
+      this.resetRunAttachments();
       if (render) this.render();
       return;
     }
     this.state.activeTab = route.tab;
     if (this.state.selectedCase?.case_id !== route.caseId) await this.loadCase(route.caseId);
+    if (route.tab === "assistant") await this.ensureAssistantLoaded();
+    if (route.tab === "history") await this.ensureCorrectionProposalsLoaded();
     if (render) this.render();
   }
 
@@ -148,16 +226,277 @@ export class CommercialReviewWorkspace {
     this.state.selectedRun = null;
     this.state.selectedDocument = null;
     this.state.sourceFocus = null;
+    this.state.factFocusId = null;
     this.state.activeJob = null;
+    this.resetRunAttachments();
     if (runSummaries[0]) await this.openRun(runSummaries[0].review_run_id);
   }
 
   private async openRun(runId: string): Promise<void> {
+    if (this.state.selectedRun?.review_run_id !== runId) this.resetRunAttachments();
     const run = await this.api.getReviewRun(runId);
     if (run.case_id !== this.state.selectedCase?.case_id) {
       throw new Error("심사 결과가 현재 Case에 속하지 않습니다.");
     }
     this.state.selectedRun = run;
+  }
+
+  private resetRunAttachments(): void {
+    this.state.comparisonFocusId = null;
+    this.state.evidenceFocusId = null;
+    this.state.assistantConversations = [];
+    this.state.selectedConversation = null;
+    this.state.assistantMessages = [];
+    this.state.assistantLoadedRunId = null;
+    this.state.assistantLoading = false;
+    this.state.assistantSending = false;
+    this.state.assistantDraft = "";
+    this.state.assistantRetryContent = null;
+    this.state.assistantRetryIdempotencyKey = null;
+    this.state.assistantError = null;
+    this.state.correctionProposals = [];
+    this.state.correctionLoadedRunId = null;
+    this.state.correctionLoading = false;
+    this.state.correctionError = null;
+    this.state.correctionDraft = null;
+    this.state.selectedCorrectionProposalIds.clear();
+  }
+
+  private async ensureAssistantLoaded(): Promise<void> {
+    const run = this.state.selectedRun;
+    if (!run || this.state.assistantLoadedRunId === run.review_run_id || this.state.assistantLoading) return;
+    this.state.assistantLoading = true;
+    this.state.assistantError = null;
+    this.render();
+    try {
+      const conversations = await this.api.listAssistantConversations(run.review_run_id);
+      this.state.assistantConversations = conversations;
+      this.state.selectedConversation = conversations[0] ?? null;
+      this.state.assistantMessages = this.state.selectedConversation
+        ? await this.api.listAssistantMessages(this.state.selectedConversation.conversation_id)
+        : [];
+      this.state.assistantLoadedRunId = run.review_run_id;
+    } catch (error) {
+      this.state.assistantError = userMessage(error, "AI 도우미 대화를 불러오지 못했습니다.");
+    } finally {
+      this.state.assistantLoading = false;
+      this.render();
+    }
+  }
+
+  private async selectAssistantConversation(conversation: AssistantConversation): Promise<void> {
+    if (this.state.assistantLoading || this.state.assistantSending) return;
+    this.state.assistantLoading = true;
+    this.state.assistantError = null;
+    this.render();
+    try {
+      const messages = await this.api.listAssistantMessages(conversation.conversation_id);
+      this.state.selectedConversation = conversation;
+      this.state.assistantMessages = messages;
+    } catch (error) {
+      this.state.assistantError = userMessage(error, "선택한 대화를 열지 못했습니다.");
+    } finally {
+      this.state.assistantLoading = false;
+      this.render();
+    }
+  }
+
+  private async createAssistantConversation(): Promise<void> {
+    const run = this.requireRun();
+    if (this.state.assistantLoading || this.state.assistantSending) return;
+    this.state.assistantLoading = true;
+    this.state.assistantError = null;
+    this.render();
+    try {
+      const conversation = await this.api.createAssistantConversation(run.review_run_id);
+      this.state.assistantConversations = [conversation, ...this.state.assistantConversations];
+      this.state.selectedConversation = conversation;
+      this.state.assistantMessages = [];
+      this.state.assistantLoadedRunId = run.review_run_id;
+      this.state.assistantDraft = "";
+      this.state.assistantRetryContent = null;
+      this.state.assistantRetryIdempotencyKey = null;
+    } catch (error) {
+      this.state.assistantError = userMessage(error, "새 AI 도우미 대화를 만들지 못했습니다.");
+    } finally {
+      this.state.assistantLoading = false;
+      this.render();
+    }
+  }
+
+  private async sendAssistantMessage(content: string, idempotencyKey: string = crypto.randomUUID()): Promise<void> {
+    const text = content.trim();
+    if (!text || this.state.assistantSending || this.state.assistantLoading) return;
+    const run = this.requireRun();
+    this.state.assistantSending = true;
+    this.state.assistantError = null;
+    this.render();
+    try {
+      let conversation = this.state.selectedConversation;
+      if (!conversation) {
+        conversation = await this.api.createAssistantConversation(run.review_run_id, {
+          title: text.slice(0, 80),
+        });
+        this.state.assistantConversations = [conversation, ...this.state.assistantConversations];
+        this.state.selectedConversation = conversation;
+      }
+      const exchange = await this.api.sendAssistantMessage(
+        conversation.conversation_id,
+        { content: text },
+        idempotencyKey,
+      );
+      this.state.assistantMessages = mergeAssistantMessages(
+        this.state.assistantMessages,
+        exchange.user_message,
+        exchange.assistant_message,
+      );
+      this.state.assistantDraft = "";
+      this.state.assistantRetryContent = null;
+      this.state.assistantRetryIdempotencyKey = null;
+    } catch (error) {
+      this.state.assistantDraft = text;
+      this.state.assistantRetryContent = text;
+      this.state.assistantRetryIdempotencyKey = idempotencyKey;
+      this.state.assistantError = userMessage(error, "AI 도우미 답변을 받지 못했습니다. 질문은 그대로 보존했습니다.");
+    } finally {
+      this.state.assistantSending = false;
+      this.render();
+    }
+  }
+
+  private retryAssistantMessage(): void {
+    const retry = this.state.assistantRetryContent;
+    const idempotencyKey = this.state.assistantRetryIdempotencyKey;
+    if (retry && idempotencyKey) void this.sendAssistantMessage(retry, idempotencyKey);
+  }
+
+  private updateAssistantDraft(value: string): void {
+    this.state.assistantDraft = value.slice(0, 4_000);
+  }
+
+  private handleAssistantKeydown(event: KeyboardEvent): void {
+    if (event.key !== "Enter" || event.shiftKey || event.isComposing) return;
+    event.preventDefault();
+    const input = event.currentTarget;
+    if (input instanceof HTMLTextAreaElement) void this.sendAssistantMessage(input.value);
+  }
+
+  private async ensureCorrectionProposalsLoaded(): Promise<void> {
+    const run = this.state.selectedRun;
+    if (!run || this.state.correctionLoadedRunId === run.review_run_id || this.state.correctionLoading) return;
+    this.state.correctionLoading = true;
+    this.state.correctionError = null;
+    this.render();
+    try {
+      this.state.correctionProposals = await this.api.listCorrectionProposals(run.review_run_id);
+      this.reconcileCorrectionProposalSelection();
+      this.state.correctionLoadedRunId = run.review_run_id;
+    } catch (error) {
+      this.state.correctionError = userMessage(error, "정정 제안을 불러오지 못했습니다.");
+    } finally {
+      this.state.correctionLoading = false;
+      this.render();
+    }
+  }
+
+  private async createCorrectionProposal(form: HTMLFormElement): Promise<void> {
+    if (!this.hasRole("reviewer")) throw new Error("정정 제안은 심사자 역할에서만 기록할 수 있습니다.");
+    const run = this.requireRun();
+    const data = new FormData(form);
+    const payload: CreateCorrectionProposalRequest = {
+      document_id: stringValue(data, "document_id"),
+      field_name: stringValue(data, "field_name"),
+      new_value: stringValue(data, "new_value"),
+      reason: stringValue(data, "reason"),
+      ...(stringValue(data, "item_id") ? { item_id: stringValue(data, "item_id") } : {}),
+      ...(stringValue(data, "fact_id") ? { fact_id: stringValue(data, "fact_id") } : {}),
+      ...(stringValue(data, "unit") ? { unit: stringValue(data, "unit") } : {}),
+      ...(stringValue(data, "finding_id") ? { finding_id: stringValue(data, "finding_id") } : {}),
+    };
+    await this.withBusy(async () => {
+      const proposal = await this.api.createCorrectionProposal(run.review_run_id, payload);
+      const wasLoaded = this.state.correctionLoadedRunId === run.review_run_id;
+      this.state.correctionProposals = [proposal, ...this.state.correctionProposals];
+      if (!wasLoaded) this.state.correctionLoadedRunId = null;
+      this.state.correctionDraft = null;
+      this.state.notice = "정정 제안을 기록했습니다. 승인 전에는 원래 심사 결과가 바뀌지 않습니다.";
+      form.reset();
+    });
+  }
+
+  private async decideCorrectionProposal(
+    proposal: CorrectionProposal,
+    form: HTMLFormElement,
+  ): Promise<void> {
+    if (!this.hasRole("approver")) throw new Error("정정 제안의 승인·반려는 승인자 역할에서만 할 수 있습니다.");
+    if (proposal.created_by === this.state.session?.subject) {
+      throw new Error("제안자는 자신의 정정 제안을 승인하거나 반려할 수 없습니다.");
+    }
+    const data = new FormData(form);
+    const status = stringValue(data, "status") as "approved" | "rejected";
+    const reason = stringValue(data, "reason");
+    await this.withBusy(async () => {
+      const updated = await this.api.decideCorrectionProposal(proposal.correction_proposal_id, { status, reason });
+      this.state.correctionProposals = this.state.correctionProposals.map((item) =>
+        item.correction_proposal_id === updated.correction_proposal_id ? updated : item,
+      );
+      this.reconcileCorrectionProposalSelection();
+      this.state.notice = status === "approved"
+        ? "정정 제안을 승인했습니다. 아래에서 승인된 제안으로 재심사를 시작할 수 있습니다."
+        : "정정 제안을 반려했습니다. 원래 심사 결과는 유지됩니다.";
+    });
+  }
+
+  private async startRevision(): Promise<void> {
+    if (!this.hasRole("approver")) throw new Error("승인된 정정으로 재심사하는 작업은 승인자 역할에서만 할 수 있습니다.");
+    const run = this.requireRun();
+    const proposalIds = this.selectedEligibleCorrectionProposalIds();
+    if (!proposalIds.length) throw new Error("재심사에 반영할 승인된 정정 제안을 한 건 이상 선택하십시오.");
+    await this.withBusy(async () => {
+      const job = await this.api.enqueueRevision(run.review_run_id, { proposal_ids: proposalIds }, crypto.randomUUID());
+      this.state.selectedCorrectionProposalIds.clear();
+      this.state.activeJob = job;
+      if (job.status === "succeeded") await this.showSucceededReview(job);
+      else {
+        this.state.notice = "승인된 정정 제안을 반영하는 자식 심사를 요청했습니다. 완료되면 새 심사 이력으로 이동합니다.";
+        this.scheduleJobPoll(job);
+      }
+    });
+  }
+
+  private eligibleCorrectionProposals(): CorrectionProposal[] {
+    return this.state.correctionProposals.filter((proposal) => proposal.status === "approved" && !proposal.applied_review_run_id);
+  }
+
+  private selectedEligibleCorrectionProposalIds(): string[] {
+    const eligible = new Set(this.eligibleCorrectionProposals().map((proposal) => proposal.correction_proposal_id));
+    return [...this.state.selectedCorrectionProposalIds].filter((proposalId) => eligible.has(proposalId));
+  }
+
+  private reconcileCorrectionProposalSelection(): void {
+    const eligible = new Set(this.eligibleCorrectionProposals().map((proposal) => proposal.correction_proposal_id));
+    for (const proposalId of this.state.selectedCorrectionProposalIds) {
+      if (!eligible.has(proposalId)) this.state.selectedCorrectionProposalIds.delete(proposalId);
+    }
+  }
+
+  private setCorrectionProposalSelected(proposalId: string, selected: boolean): void {
+    const eligible = this.eligibleCorrectionProposals().some((proposal) => proposal.correction_proposal_id === proposalId);
+    if (!eligible) return;
+    if (selected) this.state.selectedCorrectionProposalIds.add(proposalId);
+    else this.state.selectedCorrectionProposalIds.delete(proposalId);
+    this.render();
+  }
+
+  private useCorrectionDraft(draft: AssistantCorrectionDraft): void {
+    if (!this.hasRole("reviewer")) {
+      this.state.notice = "AI 도우미의 수정 초안은 심사자 역할에서만 정정 제안으로 기록할 수 있습니다.";
+      this.render();
+      return;
+    }
+    this.state.correctionDraft = draft;
+    this.state.notice = "AI 도우미의 정정 제안을 심사 결과의 정정 양식에 채웠습니다. 내용을 확인한 뒤에만 기록하십시오.";
+    this.setRoute(this.requireCase().case_id, "analysis");
   }
 
   private async openDocument(documentId: string, source: SourceReference | null = null): Promise<void> {
@@ -168,6 +507,7 @@ export class CommercialReviewWorkspace {
   }
 
   private async createCase(form: HTMLFormElement): Promise<void> {
+    if (!this.hasRole("reviewer")) throw new Error("Case 등록은 심사자 역할에서만 할 수 있습니다.");
     const data = new FormData(form);
     const title = stringValue(data, "title");
     if (!title) throw new Error("Case 제목을 입력해 주십시오.");
@@ -184,6 +524,7 @@ export class CommercialReviewWorkspace {
   }
 
   private async addDocument(form: HTMLFormElement): Promise<void> {
+    if (!this.hasRole("reviewer")) throw new Error("문서 등록과 보완은 심사자 역할에서만 할 수 있습니다.");
     const current = this.requireCase();
     const data = new FormData(form);
     const documentType = stringValue(data, "document_type") as DocumentType;
@@ -217,6 +558,7 @@ export class CommercialReviewWorkspace {
   }
 
   private async startReview(): Promise<void> {
+    if (!this.hasRole("reviewer")) throw new Error("AI 심사 실행은 심사자 역할에서만 할 수 있습니다.");
     const current = this.requireCase();
     if (!this.activeDocuments().length) throw new Error("심사를 시작하려면 활성 텍스트 문서를 하나 이상 등록해야 합니다.");
     await this.withBusy(async () => {
@@ -261,6 +603,7 @@ export class CommercialReviewWorkspace {
   }
 
   private async decideFinding(form: HTMLFormElement, findingId: string): Promise<void> {
+    if (!this.hasRole("reviewer")) throw new Error("확인 사항 판단은 심사자 역할에서만 기록할 수 있습니다.");
     const run = this.requireRun();
     const data = new FormData(form);
     const status = stringValue(data, "status") as FindingDecisionRequest["status"];
@@ -315,7 +658,15 @@ export class CommercialReviewWorkspace {
   private render(): void {
     if (this.destroyed) return;
     const children = [
-      createHeader(this.state.session, this.mode, () => void this.auth.logout()),
+      createHeader(
+        this.state.session,
+        this.mode,
+        () => void this.auth.logout(),
+        this.mode === "local-development" && supportsDevelopmentRoleSwitch(this.auth)
+          ? (actor) => void this.switchDevelopmentActor(actor)
+          : undefined,
+        this.state.busy,
+      ),
       createRuntimeNotice(this.mode),
       this.state.error ? message("error", this.state.error) : null,
       this.state.notice ? message("notice", this.state.notice) : null,
@@ -367,8 +718,10 @@ export class CommercialReviewWorkspace {
       ),
       filters,
       list,
-      element("details", { className: "new-case-panel", attributes: { open: this.state.cases.length === 0 ? "" : undefined } },
-        element("summary", { text: "새 Case 등록" }), form),
+      this.hasRole("reviewer")
+        ? element("details", { className: "new-case-panel", attributes: { open: this.state.cases.length === 0 ? "" : undefined } },
+          element("summary", { text: "새 Case 등록" }), form)
+        : element("p", { className: "role-boundary-note", text: "승인자 역할은 Case를 읽고 정정 제안을 독립적으로 승인·반려할 수 있습니다. 새 Case 등록은 심사자 역할에서만 가능합니다." }),
     );
   }
 
@@ -411,10 +764,15 @@ export class CommercialReviewWorkspace {
 
   private createReviewButton(): HTMLElement {
     const running = this.state.activeJob !== null && ACTIVE_JOB_STATES.has(this.state.activeJob.status);
+    const canReview = this.hasRole("reviewer");
     return element("button", {
       className: "button button--primary",
-      text: running ? "심사 진행 중" : "AI 심사 시작",
-      attributes: { type: "button", disabled: this.state.busy || !this.activeDocuments().length || running ? "" : undefined },
+      text: running ? "심사 진행 중" : canReview ? "AI 심사 시작" : "심사자 역할에서 실행",
+      attributes: {
+        type: "button",
+        disabled: this.state.busy || !this.activeDocuments().length || running || !canReview ? "" : undefined,
+        title: canReview ? undefined : "AI 심사 실행은 심사자 역할에서만 가능합니다.",
+      },
       on: { click: () => void this.startReview() },
     });
   }
@@ -436,6 +794,7 @@ export class CommercialReviewWorkspace {
   private createActiveTab(): HTMLElement {
     switch (this.state.activeTab) {
       case "analysis": return this.createAnalysisTab();
+      case "assistant": return this.createAssistantTab();
       case "evidence": return this.createEvidenceTab();
       case "history": return this.createHistoryTab();
       default: return this.createDocumentsTab();
@@ -475,7 +834,9 @@ export class CommercialReviewWorkspace {
       element("section", { className: "surface document-panel" },
         sectionHeading("문서", "활성 문서는 다음 심사 입력에 포함됩니다."),
         documents,
-        element("details", { className: "document-add-panel" }, element("summary", { text: "문서 등록 또는 보완" }), form),
+        this.hasRole("reviewer")
+          ? element("details", { className: "document-add-panel" }, element("summary", { text: "문서 등록 또는 보완" }), form)
+          : element("p", { className: "role-boundary-note", text: "승인자 역할은 원문과 심사 이력을 읽을 수 있지만 문서를 등록하거나 보완할 수는 없습니다." }),
       ),
       element("section", { className: "surface document-preview" }, this.createDocumentPreview()),
     );
@@ -493,23 +854,312 @@ export class CommercialReviewWorkspace {
   private createAnalysisTab(): HTMLElement {
     const run = this.state.selectedRun;
     if (!run) return emptyState("아직 심사 결과가 없습니다.", "활성 텍스트 문서를 등록한 뒤 AI 심사를 시작하십시오.");
-    const orderedFindings = [...run.findings].sort((left, right) => severityWeight(right.severity) - severityWeight(left.severity));
-    return element("section", { className: "analysis-stack" },
-      element("section", { className: "surface review-summary" },
-        sectionHeading("심사 요약", `${formatDate(run.created_at)} · ${display(run.assessment)}`),
+    const sections = run.report.sections.map((section, index) =>
+      this.createAgentReportSection(run, section, index),
+    );
+    return element("section", { className: "analysis-stack grounded-report" },
+      element("header", { className: "surface report-intro" },
+        element("p", { className: "eyebrow", text: "GROUNDED REVIEW REPORT" }),
+        element("h2", { text: "근거 기반 심사 보고서" }),
         element("p", { className: "summary-copy", text: run.report.summary }),
         element("p", { className: "disclaimer", text: run.report.disclaimer }),
+        element("p", { className: "report-source-note", text: "아래 8개 구역은 Agent가 이 심사 실행에서 반환한 주장과 근거 참조를 그대로 표시합니다. 근거 버튼을 누르면 해당 문서 사실, 비교 결과, Evidence로 이동합니다." }),
+      ),
+      ...sections,
+      element("section", { className: "surface report-supporting-data" },
+        sectionHeading("심사 근거 상세", "보고서의 각 근거 참조를 더 자세히 확인할 수 있습니다."),
         element("div", { className: "review-metrics" },
           metric("확인 사항", String(run.findings.length)),
           metric("문서 비교", String(run.comparisons.length)),
           metric("법령 근거", String(run.evidence.length)),
           metric("담당자 판단", String(run.reviewer_decisions.length)),
         ),
+        this.createReportDocuments(run),
+        this.createReportFacts(run),
+        this.createComparisons(run.comparisons),
+        this.createReportEvidence(run),
+        this.createFindings([...run.findings].sort((left, right) => severityWeight(right.severity) - severityWeight(left.severity))),
+        this.createWorkflow(run),
+        this.createNextSteps(run),
       ),
-      element("section", { className: "surface" }, sectionHeading("Agent 워크플로우", "완료된 실제 심사 단계만 표시합니다."), this.createWorkflow(run)),
-      element("section", { className: "surface" }, sectionHeading("우선 확인 사항", "불일치·누락·모호성은 담당자가 판단해야 합니다."), this.createFindings(orderedFindings)),
-      element("section", { className: "surface" }, sectionHeading("문서 간 비교", "일치 결과도 함께 남겨 비교 근거를 확인할 수 있습니다."), this.createComparisons(run.comparisons)),
     );
+  }
+
+  private createAgentReportSection(run: ReviewRun, section: ReportSection, index: number): HTMLElement {
+    const claims = element("ol", { className: "report-claim-list", attributes: { "data-report-claim-section": section.section } });
+    for (const claim of section.claims) claims.append(this.createReportClaim(claim));
+    return reportSection(
+      String(index + 1).padStart(2, "0"),
+      section.title,
+      reportSectionDescription(section.section),
+      claims,
+      section.section,
+    );
+  }
+
+  private createReportClaim(claim: ReportClaim): HTMLElement {
+    const citations = groundedCitations(claim);
+    const citationControls = element("div", { className: "report-claim-citations", attributes: { "aria-label": "보고서 주장 근거" } },
+      element("span", { text: "근거" }),
+      ...citations.map((citation) => element("button", {
+        className: "citation-chip",
+        text: citationLabel(citation),
+        attributes: { type: "button" },
+        on: { click: () => void this.openGroundedCitation(citation).catch((error) => this.showError(error)) },
+      })),
+    );
+    return element("li", { className: "report-claim", attributes: { "data-report-claim-id": claim.claim_id } },
+      element("p", { text: claim.text }),
+      citationControls,
+    );
+  }
+
+  private createReportDocuments(run: ReviewRun): HTMLElement {
+    if (!run.document_analyses.length) return element("p", { className: "empty-copy", text: "분석 결과에 문서 정보가 없습니다." });
+    const list = element("div", { className: "report-document-list" });
+    for (const analysis of run.document_analyses) {
+      list.append(element("button", {
+        className: "report-document-row",
+        attributes: { type: "button" },
+        on: { click: () => void this.focusSource({ source_kind: "document", document_id: analysis.document_id, quote: "", occurrence: 0 }) },
+      },
+      element("strong", { text: analysis.filename }),
+      element("span", { text: `${documentAnalysisLabel(analysis.document_type)} · ${analysis.extraction_status === "complete" ? "사실 추출 완료" : "추가 확인 필요"}` }),
+      element("small", { text: analysis.declared_type ? `등록 유형: ${analysis.declared_type}` : "등록 유형 없음" })));
+    }
+    return list;
+  }
+
+  private createReportFacts(run: ReviewRun): HTMLElement {
+    const facts = run.document_analyses.flatMap((analysis) => [
+      ...analysis.facts.map((fact) => ({ filename: analysis.filename, fact })),
+      ...analysis.line_items.flatMap((item) => item.facts.map((fact) => ({ filename: analysis.filename, fact }))),
+    ]);
+    if (!facts.length) return element("p", { className: "empty-copy", text: "이번 실행에서는 화면에 표시할 추출 사실이 없습니다. 문서 원문과 확인 사항을 직접 검토하십시오." });
+    const list = element("dl", { className: "report-fact-list" });
+    for (const { filename, fact } of facts) {
+      const source = fact.source;
+      const item = element("div", { className: "report-fact" },
+        element("dt", { text: `${filename} · ${fact.name}` }),
+        element("dd", { text: `${fact.raw_value}${fact.normalized_value && fact.normalized_value !== fact.raw_value ? ` → ${fact.normalized_value}` : ""}${fact.unit ? ` ${fact.unit}` : ""}` }),
+        isDocumentSource(source)
+          ? element("button", { className: "text-link", text: "원문 인용 보기", attributes: { type: "button" }, on: { click: () => void this.focusSource(source) } })
+          : element("small", { className: "human-provided-fact", text: `사람 제공 값 · 정정 제안 ${source.correction_proposal_id} · ${source.reason}` }),
+      );
+      item.dataset.factId = fact.fact_id;
+      if (this.state.factFocusId === fact.fact_id) item.classList.add("is-focused");
+      list.append(item);
+    }
+    if (this.state.factFocusId) {
+      const focusedFactId = this.state.factFocusId;
+      queueMicrotask(() => scrollIntoViewIfAvailable(Array.from(this.root.querySelectorAll<HTMLElement>("[data-fact-id]")).find(
+        (item) => item.dataset.factId === focusedFactId,
+      )));
+    }
+    return list;
+  }
+
+  private createReportEvidence(run: ReviewRun): HTMLElement {
+    if (!run.evidence.length) return element("p", { className: "empty-copy", text: "이번 실행에서 연결된 법령 Evidence가 없습니다." });
+    const list = element("div", { className: "report-evidence-list" });
+    for (const evidence of run.evidence) {
+      list.append(element("button", {
+        className: "report-evidence-row",
+        attributes: { type: "button" },
+        on: { click: () => this.focusEvidence(evidence.evidence_id) },
+      },
+      element("strong", { text: evidence.title }),
+      element("span", { text: evidence.law_name ?? evidence.source_type }),
+      element("small", { text: `source hash ${evidence.source_hash.slice(0, 12)}…` })));
+    }
+    return list;
+  }
+
+  private createNextSteps(run: ReviewRun): HTMLElement {
+    const list = element("ol", { className: "next-step-list" });
+    const actions = run.required_actions.length
+      ? run.required_actions
+      : [{ action_code: "human_review_required", message: "자동 완료하지 않습니다. 담당자가 문서와 Evidence를 확인하십시오.", finding_ids: [] }];
+    for (const action of actions) {
+      list.append(element("li", {}, element("strong", { text: action.action_code }), element("span", { text: action.message })));
+    }
+    const assist = element("button", {
+      className: "button button--secondary",
+      text: "AI 도우미에게 근거 질문하기",
+      attributes: { type: "button" },
+      on: { click: () => this.setRoute(this.requireCase().case_id, "assistant") },
+    });
+    return element("div", { className: "next-step-stack" }, list, assist);
+  }
+
+  private createAssistantTab(): HTMLElement {
+    const run = this.state.selectedRun;
+    if (!run) return emptyState("아직 질문할 심사 결과가 없습니다.", "심사를 실행한 뒤 문서·비교·Evidence에 대해 질문할 수 있습니다.");
+    const loading = this.state.assistantLoading;
+    const conversations = element("nav", { className: "assistant-conversations", attributes: { "aria-label": "AI 도우미 대화 목록" } });
+    for (const conversation of this.state.assistantConversations) {
+      conversations.append(element("button", {
+        className: `assistant-conversation${this.state.selectedConversation?.conversation_id === conversation.conversation_id ? " is-selected" : ""}`,
+        attributes: {
+          type: "button",
+          "aria-current": this.state.selectedConversation?.conversation_id === conversation.conversation_id ? "page" : undefined,
+          disabled: loading || this.state.assistantSending ? "" : undefined,
+        },
+        on: { click: () => void this.selectAssistantConversation(conversation) },
+      },
+      element("strong", { text: conversation.title ?? "제목 없는 대화" }),
+      element("small", { text: formatDate(conversation.updated_at) })));
+    }
+    if (!this.state.assistantConversations.length && !loading) {
+      conversations.append(element("p", { className: "empty-copy", text: "아직 만든 대화가 없습니다." }));
+    }
+
+    const sidebar = element("aside", { className: "surface assistant-sidebar" },
+      sectionHeading("AI 도우미", "사건 답변은 이 심사 실행의 문서·비교·Evidence만 사용합니다. 일반 통관 안내는 허용된 주제의 일반 설명이며 사건별 판단이 아닙니다."),
+      element("button", {
+        className: "button button--secondary",
+        text: "새 대화",
+        attributes: { type: "button", disabled: loading || this.state.assistantSending ? "" : undefined },
+        on: { click: () => void this.createAssistantConversation() },
+      }),
+      conversations,
+    );
+    const panel = element("section", { className: "surface assistant-panel" },
+      sectionHeading("심사 결과에 질문하기", "사건 답변의 인용을 누르면 문서 원문, 비교 결과, Evidence로 바로 이동합니다. 일반 안내에는 사건별 결론을 넣지 않습니다."),
+      this.state.assistantError ? element("div", { className: "assistant-error", attributes: { role: "alert" } },
+        element("p", { text: this.state.assistantError }),
+        this.state.assistantRetryContent ? element("button", { className: "text-link", text: "같은 질문 다시 보내기", attributes: { type: "button" }, on: { click: () => this.retryAssistantMessage() } }) : null,
+        !this.state.assistantLoadedRunId ? element("button", { className: "text-link", text: "대화 다시 불러오기", attributes: { type: "button" }, on: { click: () => { this.state.assistantLoadedRunId = null; void this.ensureAssistantLoaded(); } } }) : null,
+      ) : null,
+      loading ? assistantLoadingState("AI 도우미 대화 준비 중") : this.createAssistantConversationPanel(run),
+    );
+    return element("section", { className: "assistant-layout" }, sidebar, panel);
+  }
+
+  private createAssistantConversationPanel(run: ReviewRun): HTMLElement {
+    const conversation = this.state.selectedConversation;
+    if (!conversation) {
+      return element("div", { className: "assistant-empty" },
+        element("h3", { text: "새 대화를 시작해 보십시오." }),
+        element("p", { text: "예: ‘수량 불일치가 나온 문서와 실제 값을 알려줘’처럼 현재 심사 결과에 대해 질문할 수 있습니다." }),
+        element("button", { className: "button button--primary", text: "첫 대화 만들기", attributes: { type: "button" }, on: { click: () => void this.createAssistantConversation() } }),
+      );
+    }
+    const messageList = element("ol", { className: "assistant-message-list", attributes: { "aria-live": "polite", "aria-label": "AI 도우미 메시지" } });
+    for (const item of this.state.assistantMessages) messageList.append(this.createAssistantMessage(item));
+    if (!this.state.assistantMessages.length) {
+      messageList.append(element("li", { className: "assistant-empty-message" },
+        element("strong", { text: "이 대화에는 아직 메시지가 없습니다." }),
+        element("span", { text: "아래에 질문을 입력하면 심사 실행 ID와 연결된 근거로 답합니다." }),
+      ));
+    }
+    if (this.state.assistantSending) {
+      messageList.append(element("li", { className: "assistant-message assistant-message--assistant assistant-message--loading", attributes: { role: "status" } },
+        element("strong", { text: "AI 도우미" }), element("span", { text: "근거를 확인해 답변을 준비하고 있습니다…" }),
+      ));
+    }
+    const form = element("form", {
+      className: "assistant-composer",
+      on: { submit: (event) => { event.preventDefault(); const formData = new FormData(event.currentTarget as HTMLFormElement); void this.sendAssistantMessage(stringValue(formData, "assistant_message")); } },
+    },
+    field("질문", textarea("assistant_message", {
+      value: this.state.assistantDraft,
+      maxLength: 4_000,
+      placeholder: "현재 심사 결과·문서 사실·비교 결과·Evidence 또는 제한된 일반 통관 안내에 관해 질문하십시오.",
+      onInput: (event) => this.updateAssistantDraft((event.currentTarget as HTMLTextAreaElement).value),
+      onKeydown: (event) => this.handleAssistantKeydown(event as KeyboardEvent),
+    })),
+    element("div", { className: "assistant-composer__hint" },
+      element("span", { text: "Enter 전송 · Shift+Enter 줄바꿈" }),
+      submit(this.state.assistantSending ? "답변 준비 중" : "질문 보내기", this.state.assistantSending),
+    ));
+    const suggestions = assistantSuggestions(run, this.state.assistantMessages);
+    return element("div", { className: "assistant-conversation-panel" },
+      messageList,
+      suggestions.length ? element("div", { className: "assistant-suggestions", attributes: { "aria-label": "추천 질문" } },
+        element("span", { text: "추천 질문" }),
+        ...suggestions.map((question) => element("button", {
+          className: "text-link", text: question, attributes: { type: "button", disabled: this.state.assistantSending ? "" : undefined },
+          on: { click: () => void this.sendAssistantMessage(question) },
+        })),
+      ) : null,
+      form,
+    );
+  }
+
+  private createAssistantMessage(item: AssistantMessage): HTMLElement {
+    const label = item.role === "user" ? "나" : "AI 도우미";
+    const metadata = item.role === "assistant" && item.answer_scope
+      ? element("span", { className: "assistant-scope", text: assistantScopeLabel(item.answer_scope) })
+      : null;
+    const citations = item.role === "assistant" && item.citations.length
+      ? element("div", { className: "assistant-citations", attributes: { "aria-label": "답변 근거" } },
+        element("span", { text: "근거" }),
+        ...item.citations.map((citation) => element("button", {
+          className: "citation-chip", text: citationLabel(citation), attributes: { type: "button" },
+          on: { click: () => void this.openAssistantCitation(citation).catch((error) => this.showError(error)) },
+        })),
+      ) : null;
+    const suggestions = item.role === "assistant" && item.suggested_questions.length
+      ? element("div", { className: "assistant-message-suggestions" },
+        ...item.suggested_questions.map((question) => element("button", {
+          className: "text-link", text: question, attributes: { type: "button", disabled: this.state.assistantSending ? "" : undefined },
+          on: { click: () => void this.sendAssistantMessage(question) },
+        })),
+      ) : null;
+    const correction = item.role === "assistant" && item.correction_draft
+      ? this.hasRole("reviewer")
+        ? element("button", {
+          className: "button button--secondary assistant-correction-import",
+          text: "수정 제안으로 가져오기",
+          attributes: { type: "button" },
+          on: { click: () => this.useCorrectionDraft(item.correction_draft as AssistantCorrectionDraft) },
+        })
+        : element("small", { className: "role-boundary-note", text: "정정 제안 초안은 심사자 역할에서만 기록할 수 있습니다." })
+      : null;
+    return element("li", { className: `assistant-message assistant-message--${item.role}` },
+      element("header", {}, element("strong", { text: label }), metadata, element("small", { text: formatDate(item.created_at) })),
+      element("p", { className: "assistant-message__content", text: item.content }),
+      citations,
+      suggestions,
+      correction,
+    );
+  }
+
+  private async openAssistantCitation(citation: AssistantCitation): Promise<void> {
+    await this.openGroundedCitation(citation);
+  }
+
+  private async openGroundedCitation(citation: AssistantCitation): Promise<void> {
+    const run = this.requireRun();
+    if (citation.kind === "fact") {
+      const fact = findFact(run, citation.reference_id);
+      if (!fact) throw new Error("이 답변의 문서 사실을 찾지 못했습니다.");
+      if (isDocumentSource(fact.source)) await this.focusSource(fact.source);
+      else this.focusFact(fact.fact_id);
+      return;
+    }
+    if (citation.kind === "comparison") {
+      const comparison = run.comparisons.find((item) => item.comparison_id === citation.reference_id);
+      if (!comparison) throw new Error("이 답변의 문서 비교 결과를 찾지 못했습니다.");
+      this.state.comparisonFocusId = comparison.comparison_id;
+      this.setRoute(this.requireCase().case_id, "analysis");
+      return;
+    }
+    if (!run.evidence.some((item) => item.evidence_id === citation.reference_id)) {
+      throw new Error("이 답변의 Evidence를 찾지 못했습니다.");
+    }
+    this.focusEvidence(citation.reference_id);
+  }
+
+  private focusFact(factId: string): void {
+    this.state.factFocusId = factId;
+    this.setRoute(this.requireCase().case_id, "analysis");
+  }
+
+  private focusEvidence(evidenceId: string): void {
+    this.state.evidenceFocusId = evidenceId;
+    this.setRoute(this.requireCase().case_id, "evidence");
   }
 
   private createWorkflow(run: ReviewRun): HTMLElement {
@@ -524,6 +1174,19 @@ export class CommercialReviewWorkspace {
         ),
       ));
     }
+    list.append(element("li", { className: "workflow-planner", attributes: { "data-planner-trace": "true" } },
+      element("strong", { text: `제한형 계획 · ${run.workflow.planner.cycle_count}회 cycle` }),
+      element("ol", { className: "planner-action-list" }, ...run.workflow.planner.actions.map((action) =>
+        element("li", { className: `planner-action planner-action--${action.status}` },
+          element("span", { text: `${action.cycle}차` }),
+          element("strong", { text: plannerActionLabel(action.action) }),
+          element("span", { text: action.summary }),
+          action.correction_proposal_ids.length
+            ? element("small", { text: `반영한 정정 제안 ${action.correction_proposal_ids.length}건` })
+            : null,
+        ),
+      )),
+    ));
     if (run.workflow.reextractions.length) {
       list.append(element("li", { className: "workflow-retry" },
         element("strong", { text: "제한 재추출" }),
@@ -556,6 +1219,7 @@ export class CommercialReviewWorkspace {
           on: { click: () => this.setRoute(this.requireCase().case_id, "evidence") },
         }) : null,
         this.createDecisionPanel(finding, decision),
+        this.createCorrectionProposalPanel(finding, source),
       );
       list.append(card);
     }
@@ -585,13 +1249,51 @@ export class CommercialReviewWorkspace {
         element("li", {}, element("strong", { text: decisionStatusLabel(entry.status) }), element("span", { text: entry.reason }), element("small", { text: `${entry.decided_by} · ${formatDate(entry.decided_at)}` })),
       )) : null,
     ) : element("p", { className: "decision-empty", text: "아직 담당자 판단이 기록되지 않았습니다." });
-    const form = element("form", { className: "decision-form", on: { submit: (event) => { event.preventDefault(); void this.decideFinding(event.currentTarget as HTMLFormElement, finding.finding_id); } } },
-      select("status", [["confirmed", "확인함"], ["needs_information", "추가자료 요청"], ["resolved", "해결됨"]]),
-      textarea("reason", { required: true, maxLength: 4_000, placeholder: "판단 사유를 기록하십시오." }),
-      submit(decision ? "판단 수정" : "판단 기록", this.state.busy),
-    );
+    const form = this.hasRole("reviewer")
+      ? element("form", { className: "decision-form", on: { submit: (event) => { event.preventDefault(); void this.decideFinding(event.currentTarget as HTMLFormElement, finding.finding_id); } } },
+        select("status", [["confirmed", "확인함"], ["needs_information", "추가자료 요청"], ["resolved", "해결됨"]]),
+        textarea("reason", { required: true, maxLength: 4_000, placeholder: "판단 사유를 기록하십시오." }),
+        submit(decision ? "판단 수정" : "판단 기록", this.state.busy),
+      )
+      : element("p", { className: "role-boundary-note", text: "확인 사항 판단은 심사자 역할에서만 기록할 수 있습니다." });
     return element("details", { className: "decision-panel", attributes: { open: decision ? undefined : "" } },
       element("summary", { text: decision ? "담당자 판단 보기·수정" : "담당자 판단 기록" }), history, form,
+    );
+  }
+
+  private createCorrectionProposalPanel(
+    finding: ReviewFinding,
+    source: SourceReference | null,
+  ): HTMLElement | null {
+    if (!this.hasRole("reviewer")) {
+      return element("p", { className: "role-boundary-note", text: "정정 제안은 심사자 역할에서만 만들 수 있습니다. 승인자 역할에서는 이력 탭에서 다른 사람이 만든 제안을 독립적으로 결정할 수 있습니다." });
+    }
+    const draft = this.state.correctionDraft;
+    const matchesDraft = draft !== null && (!source || draft.document_id === source.document_id) &&
+      (!source || !draft.fact_id || finding.fact_ids.includes(draft.fact_id));
+    const target = matchesDraft ? draft : null;
+    const documentId = target?.document_id ?? source?.document_id;
+    if (!documentId) {
+      return element("p", { className: "muted", text: "이 확인 사항에는 정정할 문서 사실이 연결되어 있지 않습니다. 문서 원문을 보완하거나 AI 도우미의 근거 있는 정정 제안을 사용하십시오." });
+    }
+    const form = element("form", {
+      className: "correction-proposal-form",
+      on: { submit: (event) => { event.preventDefault(); void this.createCorrectionProposal(event.currentTarget as HTMLFormElement); } },
+    },
+    input("document_id", { type: "hidden", value: documentId }),
+    input("finding_id", { type: "hidden", value: finding.finding_id }),
+    input("fact_id", { type: "hidden", value: target?.fact_id ?? finding.fact_ids[0] ?? "" }),
+    input("item_id", { type: "hidden", value: target?.item_id ?? "" }),
+    field("정정할 필드", input("field_name", { required: true, maxLength: 64, value: target?.field_name ?? "", placeholder: "예: quantity" })),
+    field("제안 값", textarea("new_value", { required: true, maxLength: 2_000, value: target?.new_value ?? "", placeholder: "문서 원문을 기준으로 제안 값을 입력하십시오." })),
+    field("단위", input("unit", { maxLength: 64, value: target?.unit ?? "", placeholder: "선택 입력" })),
+    field("제안 근거", textarea("reason", { required: true, maxLength: 2_000, value: target?.reason ?? "", placeholder: "왜 이 값으로 정정해야 하는지 문서 근거를 적으십시오." })),
+    submit("정정 제안 기록", this.state.busy),
+    );
+    return element("details", { className: "correction-proposal-panel", attributes: { open: matchesDraft ? "" : undefined } },
+      element("summary", { text: matchesDraft ? "AI 도우미 제안 검토·기록" : "정정 제안 만들기" }),
+      element("p", { className: "form-hint", text: "이 제안은 원문이나 기존 결과를 바꾸지 않습니다. 담당자 승인 후에만 자식 심사 실행에 반영할 수 있습니다." }),
+      form,
     );
   }
 
@@ -603,14 +1305,20 @@ export class CommercialReviewWorkspace {
     ));
     for (const comparison of comparisons) {
       table.append(element("button", {
-        className: `comparison-row comparison-row--${comparison.status}`,
-        attributes: { type: "button", role: "row" },
+        className: `comparison-row comparison-row--${comparison.status}${this.state.comparisonFocusId === comparison.comparison_id ? " is-focused" : ""}`,
+        attributes: { type: "button", role: "row", "data-comparison-id": comparison.comparison_id },
         on: { click: () => void this.focusComparison(comparison) },
       },
       element("span", { text: comparison.rule_code }),
       element("span", { text: comparisonStatusLabel(comparison.status) }),
       element("span", { text: `${displayValue(comparison.left.display_value)} ↔ ${displayValue(comparison.right.display_value)}` }),
       element("span", { text: comparison.message })));
+    }
+    if (this.state.comparisonFocusId) {
+      const focusedId = this.state.comparisonFocusId;
+      queueMicrotask(() => scrollIntoViewIfAvailable(Array.from(this.root.querySelectorAll<HTMLElement>("[data-comparison-id]")).find(
+        (item) => item.dataset.comparisonId === focusedId,
+      )));
     }
     return table;
   }
@@ -622,6 +1330,7 @@ export class CommercialReviewWorkspace {
 
   private async focusSource(source: SourceReference): Promise<void> {
     await this.withBusy(async () => {
+      this.state.factFocusId = null;
       await this.openDocument(source.document_id, source);
       this.state.activeTab = "documents";
       this.setRoute(this.requireCase().case_id, "documents");
@@ -635,7 +1344,10 @@ export class CommercialReviewWorkspace {
     const evidence = element("div", { className: "evidence-list" });
     for (const item of run.evidence) {
       const linked = run.findings.filter((finding) => finding.evidence_ids.includes(item.evidence_id));
-      evidence.append(element("article", { className: "evidence-card" },
+      evidence.append(element("article", {
+        className: `evidence-card${this.state.evidenceFocusId === item.evidence_id ? " is-focused" : ""}`,
+        attributes: { "data-evidence-id": item.evidence_id },
+      },
         element("header", {}, element("span", { className: "evidence-type", text: item.source_type }), element("h3", { text: item.title })),
         item.law_name ? element("p", { className: "evidence-law", text: item.law_name }) : null,
         element("p", { text: item.text }),
@@ -645,31 +1357,167 @@ export class CommercialReviewWorkspace {
         ),
       ));
     }
+    if (this.state.evidenceFocusId) {
+      const focusedId = this.state.evidenceFocusId;
+      queueMicrotask(() => scrollIntoViewIfAvailable(Array.from(this.root.querySelectorAll<HTMLElement>("[data-evidence-id]")).find(
+        (item) => item.dataset.evidenceId === focusedId,
+      )));
+    }
     return element("section", { className: "surface evidence-surface" }, sectionHeading("법령 Evidence", "Agent가 Data Evidence API에서 받은 근거입니다."), evidence);
   }
 
   private createHistoryTab(): HTMLElement {
     const current = this.requireCase();
+    const selectedRun = this.state.selectedRun;
     const timeline = element("ol", { className: "history-timeline" });
     for (const run of this.state.runs) {
+      const relation = run.parent_review_run_id
+        ? `정정 반영 자식 실행 · 부모 ${run.parent_review_run_id.slice(0, 10)}`
+        : "기준 심사 실행";
       timeline.append(element("li", { className: `history-item${this.state.selectedRun?.review_run_id === run.review_run_id ? " is-selected" : ""}` },
         element("button", {
           className: "history-button", attributes: { type: "button" },
-          on: { click: () => void this.withBusy(async () => { await this.openRun(run.review_run_id); this.render(); }) },
+          on: { click: () => void this.withBusy(async () => { await this.openRun(run.review_run_id); await this.ensureCorrectionProposalsLoaded(); }) },
         },
         element("strong", { text: formatDate(run.created_at) }),
         element("span", { text: `${display(run.assessment)} · 확인 사항 ${run.finding_count}건` }),
-        element("small", { text: `담당자 판단 ${run.reviewer_decision_count}건 · revision ${run.review_as_of}` })),
+        element("small", { text: `${relation} · 담당자 판단 ${run.reviewer_decision_count}건` })),
       ));
     }
     if (!this.state.runs.length) timeline.append(element("li", { className: "empty-copy", text: "아직 심사 이력이 없습니다." }));
+    const lineage = selectedRun ? this.createRunLineage(selectedRun) : null;
+    const corrections = this.createCorrectionProposalHistory();
+    const approvedCorrectionCount = this.eligibleCorrectionProposals().length;
+    const selectedCorrectionCount = this.selectedEligibleCorrectionProposalIds().length;
+    const canRevise = this.hasRole("approver");
     return element("section", { className: "history-layout" },
-      element("section", { className: "surface" }, sectionHeading("심사 이력", "보완 문서로 재심사하면 이전 결과는 그대로 남습니다."), timeline),
-      element("section", { className: "surface history-next" },
-        sectionHeading("다음 작업", "문서를 보완한 뒤 새 심사를 실행할 수 있습니다."),
-        element("p", { text: "대체 문서는 문서 탭에서 등록하십시오. 새 심사는 대체된 문서를 제외한 활성 문서만 사용합니다." }),
-        element("button", { className: "button button--secondary", text: "문서 탭으로 이동", attributes: { type: "button" }, on: { click: () => this.setRoute(current.case_id, "documents") } }),
+      element("section", { className: "surface history-main" },
+        sectionHeading("심사 이력", "원래 심사 결과를 덮어쓰지 않고, 승인된 정정 제안은 자식 심사 실행으로 남깁니다."),
+        lineage,
+        timeline,
+        corrections,
       ),
+      element("section", { className: "surface history-next" },
+        sectionHeading("다음 작업", "문서 보완 또는 선택한 승인 정정 제안을 반영한 재심사를 진행할 수 있습니다."),
+        element("p", { text: "대체 문서는 문서 탭에서 등록하십시오. 정정 제안은 승인돼도 원래 실행을 바꾸지 않으며, 선택한 항목만 새 자식 심사에 반영됩니다." }),
+        element("button", { className: "button button--secondary", text: "문서 탭으로 이동", attributes: { type: "button" }, on: { click: () => this.setRoute(current.case_id, "documents") } }),
+        canRevise && approvedCorrectionCount
+          ? element("p", { className: "correction-selection-summary", text: `재심사에 반영할 승인된 제안을 선택하십시오. 선택 ${selectedCorrectionCount}건 / 승인 ${approvedCorrectionCount}건` })
+          : null,
+        element("button", {
+          className: "button button--primary",
+          text: canRevise ? "선택한 정정으로 재심사" : "승인자 역할에서 재심사",
+          attributes: {
+            type: "button",
+            disabled: !selectedCorrectionCount || this.state.busy || !canRevise ? "" : undefined,
+            title: canRevise ? undefined : "자식 심사 실행은 승인자 역할에서만 가능합니다.",
+          },
+          on: { click: () => void this.startRevision().catch((error) => this.showError(error)) },
+        }),
+        !canRevise ? element("p", { className: "role-boundary-note", text: "승인자 역할에서 승인된 제안을 선택해 자식 심사를 실행할 수 있습니다." }) : null,
+      ),
+    );
+  }
+
+  private createRunLineage(run: ReviewRun): HTMLElement {
+    const lines = element("ul", { className: "run-lineage" });
+    if (run.parent_review_run_id) {
+      lines.append(element("li", {},
+        element("strong", { text: "부모 심사" }),
+        element("button", { className: "text-link", text: run.parent_review_run_id, attributes: { type: "button" }, on: { click: () => void this.withBusy(async () => { await this.openRun(run.parent_review_run_id as string); await this.ensureCorrectionProposalsLoaded(); }) } }),
+      ));
+    } else {
+      lines.append(element("li", {}, element("strong", { text: "기준 심사" }), element("span", { text: "이 실행은 이전 정정 제안을 반영한 자식 실행이 아닙니다." })));
+    }
+    if (run.applied_correction_proposal_ids?.length) {
+      lines.append(element("li", {}, element("strong", { text: "반영된 정정 제안" }), element("span", { text: `${run.applied_correction_proposal_ids.length}건` })));
+    }
+    const childCount = this.state.runs.filter((item) => item.parent_review_run_id === run.review_run_id).length;
+    if (childCount) lines.append(element("li", {}, element("strong", { text: "후속 자식 실행" }), element("span", { text: `${childCount}건` })));
+    return element("section", { className: "run-lineage-panel" }, element("h3", { text: "정정 반영 계보" }), lines);
+  }
+
+  private createCorrectionProposalHistory(): HTMLElement {
+    if (this.state.correctionLoading) return assistantLoadingState("정정 제안 불러오는 중");
+    if (this.state.correctionError) {
+      return element("section", { className: "correction-history" },
+        element("h3", { text: "정정 제안" }),
+        element("p", { className: "assistant-error", text: this.state.correctionError }),
+        element("button", { className: "text-link", text: "다시 불러오기", attributes: { type: "button" }, on: { click: () => { this.state.correctionLoadedRunId = null; void this.ensureCorrectionProposalsLoaded(); } } }),
+      );
+    }
+    const list = element("div", { className: "correction-proposal-list" });
+    for (const proposal of this.state.correctionProposals) list.append(this.createCorrectionProposalCard(proposal));
+    if (!this.state.correctionProposals.length) list.append(element("p", { className: "empty-copy", text: "이 심사 실행에는 기록된 정정 제안이 없습니다." }));
+    return element("section", { className: "correction-history" },
+      sectionHeading("정정 제안", this.hasRole("approver")
+        ? "제안 → 담당자 승인 또는 반려 → 승인된 항목 선택 → 자식 심사 실행의 순서로 진행됩니다."
+        : "제안 → 담당자 승인 또는 반려 → 선택된 항목의 자식 심사 실행 순서로 진행됩니다."),
+      list,
+    );
+  }
+
+  private createCorrectionProposalCard(proposal: CorrectionProposal): HTMLElement {
+    const selfProposed = proposal.created_by === this.state.session?.subject;
+    const canDecide = proposal.status === "proposed" && this.hasRole("approver") && !selfProposed;
+    const decisionForm = canDecide
+      ? element("form", { className: "correction-decision-form", on: { submit: (event) => { event.preventDefault(); void this.decideCorrectionProposal(proposal, event.currentTarget as HTMLFormElement); } } },
+        select("status", [["approved", "승인"], ["rejected", "반려"]]),
+        textarea("reason", { required: true, maxLength: 2_000, placeholder: "승인 또는 반려 사유를 기록하십시오." }),
+        submit("결정 기록", this.state.busy),
+      )
+      : null;
+    const decisionBoundary = proposal.status === "proposed" && !canDecide
+      ? element("p", { className: "role-boundary-note", text: selfProposed
+        ? "제안자는 자신의 제안을 승인하거나 반려할 수 없습니다. 다른 승인자가 결정해야 합니다."
+        : "제안의 승인·반려는 승인자 역할에서만 기록할 수 있습니다." })
+      : null;
+    const childLink = proposal.applied_review_run_id
+      ? element("button", { className: "text-link", text: "반영된 자식 심사 열기", attributes: { type: "button" }, on: { click: () => void this.withBusy(async () => { await this.openRun(proposal.applied_review_run_id as string); this.setRoute(this.requireCase().case_id, "analysis"); }) } })
+      : null;
+    const canSelectForRevision = this.hasRole("approver") && proposal.status === "approved" && !proposal.applied_review_run_id;
+    const selectedForRevision = this.state.selectedCorrectionProposalIds.has(proposal.correction_proposal_id);
+    const revisionSelection = canSelectForRevision
+      ? this.createCorrectionProposalSelection(proposal, selectedForRevision)
+      : null;
+    return element("article", { className: `correction-proposal-card correction-proposal-card--${proposal.status}` },
+      element("header", {}, element("span", { className: "correction-status", text: correctionStatusLabel(proposal.status) }), element("small", { text: formatDate(proposal.created_at) })),
+      element("h4", { text: `${proposal.field_name}: ${proposal.new_value}${proposal.unit ? ` ${proposal.unit}` : ""}` }),
+      element("p", { text: proposal.reason }),
+      element("small", { text: `문서 ${proposal.document_id}${proposal.fact_id ? ` · 사실 ${proposal.fact_id}` : ""}` }),
+      proposal.decision ? element("div", { className: "correction-decision" }, element("strong", { text: correctionStatusLabel(proposal.decision.status) }), element("p", { text: proposal.decision.reason }), proposal.decision.decided_at ? element("small", { text: formatDate(proposal.decision.decided_at) }) : null) : null,
+      proposal.history.length ? element("ol", { className: "correction-history-list" }, ...proposal.history.map((entry) =>
+        element("li", {},
+          element("strong", { text: correctionHistoryLabel(entry.event) }),
+          element("span", { text: entry.reason }),
+          element("small", { text: `${entry.actor} · ${formatDate(entry.occurred_at)}` }),
+        ),
+      )) : null,
+      decisionForm,
+      decisionBoundary,
+      revisionSelection,
+      childLink,
+    );
+  }
+
+  private createCorrectionProposalSelection(proposal: CorrectionProposal, selected: boolean): HTMLElement {
+    const checkbox = element("input", {
+      attributes: {
+        type: "checkbox",
+        "data-correction-proposal-id": proposal.correction_proposal_id,
+        "aria-label": `${proposal.field_name} 정정을 자식 심사에 반영`,
+      },
+      on: {
+        change: (event) => {
+          const target = event.currentTarget;
+          if (target instanceof HTMLInputElement) this.setCorrectionProposalSelected(proposal.correction_proposal_id, target.checked);
+        },
+      },
+    });
+    checkbox.checked = selected;
+    return element("label", { className: "correction-proposal-select" },
+      checkbox,
+      element("span", { text: "이 정정을 자식 심사에 반영" }),
     );
   }
 
@@ -690,7 +1538,30 @@ export class CommercialReviewWorkspace {
 // Kept as the public bootstrap/test name while the UI is now a full workspace.
 export const LightweightWorkbench = CommercialReviewWorkspace;
 
-function createHeader(session: Session | null, mode: FrontendRuntimeMode, onLogout: () => void): HTMLElement {
+function createHeader(
+  session: Session | null,
+  mode: FrontendRuntimeMode,
+  onLogout: () => void,
+  onSwitchActor?: (actor: LocalDevelopmentActor) => void,
+  busy = false,
+): HTMLElement {
+  const roleSwitch = onSwitchActor
+    ? element("div", { className: "local-role-switch", attributes: { "aria-label": "로컬 개발 역할 전환" } },
+      element("span", { text: "개발 역할" }),
+      element("button", {
+        className: `button button--quiet${session?.roles.includes("reviewer") ? " is-selected" : ""}`,
+        text: "심사자",
+        attributes: { type: "button", disabled: busy || session?.roles.includes("reviewer") ? "" : undefined },
+        on: { click: () => onSwitchActor("reviewer") },
+      }),
+      element("button", {
+        className: `button button--quiet${session?.roles.includes("approver") ? " is-selected" : ""}`,
+        text: "승인자",
+        attributes: { type: "button", disabled: busy || session?.roles.includes("approver") ? "" : undefined },
+        on: { click: () => onSwitchActor("approver") },
+      }),
+    )
+    : null;
   return element("header", { className: "topbar" },
     element("a", { className: "brand-lockup", attributes: { href: "#/cases", "aria-label": "통관 AI 사전심사 Case 목록" } },
       element("span", { className: "brand-mark", text: "CA" }),
@@ -698,7 +1569,8 @@ function createHeader(session: Session | null, mode: FrontendRuntimeMode, onLogo
     ),
     element("div", { className: "user-block" },
       element("span", { text: session?.subject ?? "세션 확인 중" }),
-      element("small", { text: session?.org_id ?? "" }),
+      element("small", { text: `${session?.org_id ?? ""}${session?.roles.length ? ` · ${session.roles.join(", ")}` : ""}` }),
+      roleSwitch,
       element("button", { className: "button button--quiet", text: "로그아웃", attributes: { type: "button" }, on: { click: onLogout } }),
     ),
   );
@@ -716,6 +1588,29 @@ function createRuntimeNotice(mode: FrontendRuntimeMode): HTMLElement {
 
 function sectionHeading(title: string, description: string): HTMLElement {
   return element("header", { className: "section-heading" }, element("h2", { text: title }), element("p", { text: description }));
+}
+
+function reportSection(
+  index: string,
+  title: string,
+  description: string,
+  content: HTMLElement,
+  sectionName?: string,
+): HTMLElement {
+  return element("section", { className: "surface report-section", attributes: { "data-report-section": sectionName ?? index } },
+    element("header", { className: "report-section__heading" },
+      element("span", { className: "report-section__index", text: index }),
+      element("div", {}, element("h3", { text: title }), element("p", { text: description })),
+    ),
+    content,
+  );
+}
+
+function assistantLoadingState(label: string): HTMLElement {
+  return element("div", { className: "assistant-loading", attributes: { role: "status" } },
+    element("span", { className: "assistant-loading__dot", attributes: { "aria-hidden": "true" } }),
+    element("span", { text: label }),
+  );
 }
 
 function metric(label: string, value: string): HTMLElement {
@@ -748,18 +1643,17 @@ function renderDocumentText(content: string, source: SourceReference | null): HT
   pre.append(document.createTextNode(content.slice(0, index)));
   pre.append(element("mark", { text: content.slice(index, index + source.quote.length), attributes: { "data-source-focus": "true" } }));
   pre.append(document.createTextNode(content.slice(index + source.quote.length)));
-  queueMicrotask(() => pre.querySelector("mark")?.scrollIntoView({ block: "center" }));
+  queueMicrotask(() => scrollIntoViewIfAvailable(pre.querySelector("mark")));
   return pre;
 }
 
 function sourceForFinding(run: ReviewRun, finding: ReviewFinding): SourceReference | null {
   for (const analysis of run.document_analyses) {
     for (const fact of [...analysis.facts, ...analysis.line_items.flatMap((item) => item.facts)]) {
-      if (finding.fact_ids.includes(fact.fact_id)) return fact.source;
+      if (finding.fact_ids.includes(fact.fact_id) && isDocumentSource(fact.source)) return fact.source;
     }
   }
-  const documentId = finding.document_ids[0];
-  return documentId ? { document_id: documentId, quote: "", occurrence: 1 } : null;
+  return null;
 }
 
 function sourceForOperand(run: ReviewRun, operand: ReviewComparison["left"]): SourceReference | null {
@@ -767,10 +1661,30 @@ function sourceForOperand(run: ReviewRun, operand: ReviewComparison["left"]): So
   for (const analysis of run.document_analyses) {
     if (analysis.document_id !== operand.document_id) continue;
     for (const fact of [...analysis.facts, ...analysis.line_items.flatMap((item) => item.facts)]) {
-      if (operand.fact_ids.includes(fact.fact_id)) return fact.source;
+      if (operand.fact_ids.includes(fact.fact_id) && isDocumentSource(fact.source)) return fact.source;
     }
   }
   return null;
+}
+
+function findFact(run: ReviewRun, factId: string): DocumentFact | null {
+  for (const analysis of run.document_analyses) {
+    for (const fact of [...analysis.facts, ...analysis.line_items.flatMap((item) => item.facts)]) {
+      if (fact.fact_id === factId) return fact;
+    }
+  }
+  return null;
+}
+
+function mergeAssistantMessages(
+  current: AssistantMessage[],
+  userMessage: AssistantMessage,
+  assistantMessage: AssistantMessage,
+): AssistantMessage[] {
+  const byId = new Map(current.map((item) => [item.message_id, item]));
+  byId.set(userMessage.message_id, userMessage);
+  byId.set(assistantMessage.message_id, assistantMessage);
+  return [...byId.values()].sort((left, right) => left.created_at.localeCompare(right.created_at));
 }
 
 function safeExternalLink(value: string): HTMLElement {
@@ -784,7 +1698,7 @@ function safeExternalLink(value: string): HTMLElement {
 }
 
 function parseRoute(hash: string): { caseId: string | null; tab: WorkspaceTab } {
-  const match = /^#\/cases\/([^/]+)(?:\/(documents|analysis|evidence|history))?$/u.exec(hash);
+  const match = /^#\/cases\/([^/]+)(?:\/(documents|analysis|assistant|evidence|history))?$/u.exec(hash);
   if (!match) return { caseId: null, tab: "documents" };
   try {
     const caseId = decodeURIComponent(match[1] ?? "");
@@ -803,6 +1717,11 @@ function occurrenceIndex(content: string, quote: string, occurrence: number): nu
   return offset;
 }
 
+function scrollIntoViewIfAvailable(element: Element | null | undefined): void {
+  const target = element as (Element & { scrollIntoView?: (options?: ScrollIntoViewOptions) => void }) | null | undefined;
+  if (typeof target?.scrollIntoView === "function") target.scrollIntoView({ block: "center" });
+}
+
 function display(value: string): string {
   const labels: Record<string, string> = {
     open: "진행 전", in_review: "사람 검토 중", closed: "종료", queued: "대기", running: "처리 중", succeeded: "완료", failed: "실패",
@@ -818,6 +1737,89 @@ function workflowLabel(value: string): string {
     validate_documents: "정합성 검사", reextract_documents: "제한 재추출", retrieve_evidence: "법령 Evidence 조회", generate_result: "검토 결과 생성",
   };
   return labels[value] ?? value;
+}
+
+function plannerActionLabel(value: string): string {
+  const labels: Record<string, string> = {
+    analyze_documents: "문서 분석",
+    apply_human_corrections: "승인된 사람 수정 반영",
+    compare_documents: "문서·품목 비교",
+    reextract_documents: "제한 재추출",
+    retrieve_evidence: "Evidence 일괄 조회",
+    generate_report: "근거 기반 보고서 생성",
+  };
+  return labels[value] ?? value;
+}
+
+function reportSectionDescription(section: ReportSection["section"]): string {
+  const labels: Record<ReportSection["section"], string> = {
+    conclusion: "현재 심사 실행의 결론과 사람 검토 경계를 설명합니다.",
+    execution_process: "실제로 수행한 제한형 Agent workflow를 설명합니다.",
+    document_comparison: "문서·품목 대응과 코드 기반 비교 결과를 설명합니다.",
+    issues_and_causes: "확인 사항과 판단 보류가 필요한 원인을 설명합니다.",
+    legal_evidence: "연결된 Evidence가 어떤 근거인지 설명합니다.",
+    impact: "현재 결과가 업무 검토에 미치는 영향을 설명합니다.",
+    next_actions: "사람이 이어서 수행할 조치를 설명합니다.",
+    limitations: "입력·근거·텍스트 범위의 한계를 설명합니다.",
+  };
+  return labels[section];
+}
+
+function groundedCitations(claim: ReportClaim): AssistantCitation[] {
+  const citations: AssistantCitation[] = [
+    ...claim.fact_ids.map((reference_id): AssistantCitation => ({ kind: "fact", reference_id })),
+    ...claim.comparison_ids.map((reference_id): AssistantCitation => ({ kind: "comparison", reference_id })),
+    ...claim.evidence_ids.map((reference_id): AssistantCitation => ({ kind: "evidence", reference_id })),
+  ];
+  const seen = new Set<string>();
+  return citations.filter((citation) => {
+    const key = `${citation.kind}:${citation.reference_id}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function documentAnalysisLabel(value: string): string {
+  const labels: Record<string, string> = {
+    invoice: "Commercial Invoice",
+    packing_list: "Packing List",
+    bill_of_lading: "Bill of Lading",
+    certificate_of_origin: "Certificate of Origin",
+    unknown: "문서 유형 확인 필요",
+  };
+  return labels[value] ?? value;
+}
+
+function assistantScopeLabel(value: NonNullable<AssistantMessage["answer_scope"]>): string {
+  const labels: Record<NonNullable<AssistantMessage["answer_scope"]>, string> = {
+    case_grounded: "Case 근거 답변",
+    evidence_grounded: "Evidence 근거 답변",
+    general_customs_guidance: "일반 통관 안내 · 사건 판단 아님",
+    clarification_needed: "추가 확인 필요",
+    insufficient_evidence: "근거 부족",
+    out_of_scope: "답변 범위 밖",
+  };
+  return labels[value];
+}
+
+function citationLabel(citation: AssistantCitation): string {
+  const labels: Record<AssistantCitation["kind"], string> = {
+    fact: "문서 사실",
+    comparison: "문서 비교",
+    evidence: "Evidence",
+  };
+  return `${labels[citation.kind]} · ${citation.reference_id.slice(0, 18)}`;
+}
+
+function assistantSuggestions(run: ReviewRun, messages: AssistantMessage[]): string[] {
+  const fromLatestAnswer = [...messages].reverse().find((item) => item.role === "assistant")?.suggested_questions ?? [];
+  if (fromLatestAnswer.length) return fromLatestAnswer;
+  const suggestions: string[] = [];
+  if (run.findings.length) suggestions.push("가장 우선해서 확인할 항목과 그 근거를 알려줘");
+  if (run.comparisons.length) suggestions.push("문서 간 비교에서 확인이 필요한 값은 무엇이야?");
+  if (run.evidence.length) suggestions.push("연결된 법령 Evidence가 이 Case와 어떻게 관련되는지 알려줘");
+  return suggestions.slice(0, 3);
 }
 
 function documentTypeLabel(value: DocumentType): string {
@@ -841,6 +1843,25 @@ function comparisonStatusLabel(value: ReviewComparison["status"]): string {
 
 function decisionStatusLabel(value: ReviewerDecision["status"]): string {
   const labels: Record<ReviewerDecision["status"], string> = { confirmed: "확인함", needs_information: "추가자료 요청", resolved: "해결됨" };
+  return labels[value];
+}
+
+function correctionStatusLabel(value: CorrectionProposal["status"] | CorrectionDecision["status"]): string {
+  const labels: Record<CorrectionProposal["status"] | CorrectionDecision["status"], string> = {
+    proposed: "제안됨",
+    approved: "승인됨",
+    rejected: "반려됨",
+  };
+  return labels[value];
+}
+
+function correctionHistoryLabel(value: CorrectionProposal["history"][number]["event"]): string {
+  const labels: Record<CorrectionProposal["history"][number]["event"], string> = {
+    proposed: "제안 기록",
+    approved: "승인",
+    rejected: "반려",
+    applied: "자식 심사 반영",
+  };
   return labels[value];
 }
 
@@ -899,8 +1920,31 @@ function input(
   });
 }
 
-function textarea(name: string, options: { required?: boolean; maxLength?: number; placeholder?: string }): HTMLTextAreaElement {
-  return element("textarea", { attributes: { name, required: options.required ? "" : undefined, maxlength: options.maxLength === undefined ? undefined : String(options.maxLength), placeholder: options.placeholder, rows: "8" } });
+function textarea(
+  name: string,
+  options: {
+    required?: boolean;
+    maxLength?: number;
+    placeholder?: string;
+    value?: string;
+    onInput?: EventListener;
+    onKeydown?: EventListener;
+  },
+): HTMLTextAreaElement {
+  return element("textarea", {
+    attributes: {
+      name,
+      required: options.required ? "" : undefined,
+      maxlength: options.maxLength === undefined ? undefined : String(options.maxLength),
+      placeholder: options.placeholder,
+      rows: "8",
+    },
+    on: {
+      ...(options.onInput ? { input: options.onInput } : {}),
+      ...(options.onKeydown ? { keydown: options.onKeydown } : {}),
+    },
+    ...(options.value === undefined ? {} : { text: options.value }),
+  });
 }
 
 function select(name: string, options: ReadonlyArray<readonly [string, string]>, value?: string, onChange?: EventListener): HTMLSelectElement {

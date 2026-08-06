@@ -1,16 +1,31 @@
 import type {
   AgentWorkflow,
+  AssistantAnswerScope,
+  AssistantCitation,
+  AssistantConversation,
+  AssistantCorrectionDraft,
+  AssistantMessage,
+  AssistantMessageExchange,
   Assessment,
   AuthConfig,
   CaseDocument,
   CaseSummary,
   ComparisonOperand,
+  CorrectionDecision,
+  CorrectionProposal,
+  CorrectionProposalHistoryEntry,
   DocumentAnalysis,
   DocumentFact,
   DocumentLineItem,
   DocumentView,
   EvidenceItem,
+  FactSourceReference,
+  HumanProvidedSourceReference,
   JobRecord,
+  PlannerAction,
+  PlannerTrace,
+  ReportClaim,
+  ReportSection,
   RequiredAction,
   ReviewerDecision,
   ReviewerDecisionHistoryItem,
@@ -63,9 +78,9 @@ export function decodeAuthConfig(value: unknown): AuthConfig {
 export function decodeSession(value: unknown): Session {
   const raw = record(value, "session");
   const roles = array(raw.roles, "session.roles").map((item, index) =>
-    literal(item, "reviewer", `session.roles[${index}]`),
+    oneOf(item, ["reviewer", "approver"] as const, `session.roles[${index}]`),
   );
-  if (!roles.length) throw new ContractError("session must have a reviewer role");
+  if (!roles.length) throw new ContractError("session must have at least one workspace role");
   return {
     subject: requiredString(raw.subject, "session.subject"),
     org_id: requiredString(raw.org_id, "session.org_id"),
@@ -142,6 +157,12 @@ export function decodeReviewRunSummary(value: unknown): ReviewRunSummary {
     finding_count: nonNegativeInteger(raw.finding_count, "run.finding_count"),
     reviewer_decision_count: nonNegativeInteger(raw.reviewer_decision_count, "run.reviewer_decision_count"),
     created_at: requiredString(raw.created_at, "run.created_at"),
+    ...(raw.parent_review_run_id === undefined || raw.parent_review_run_id === null
+      ? {}
+      : { parent_review_run_id: requiredString(raw.parent_review_run_id, "run.parent_review_run_id") }),
+    ...(raw.applied_correction_proposal_ids === undefined
+      ? {}
+      : { applied_correction_proposal_ids: decodeIdentifierList(raw.applied_correction_proposal_ids, "run.applied_correction_proposal_ids") }),
   };
 }
 
@@ -159,7 +180,7 @@ export function decodeReviewRun(value: unknown): ReviewRun {
     assessment: oneOf(raw.assessment, ["no_issue_detected", "issues_detected", "indeterminate"], "run.assessment") as Assessment,
     review_disposition: oneOf(raw.review_disposition, ["human_review_required", "blocked"], "run.review_disposition"),
     completion_eligibility: decodeCompletionEligibility(raw.completion_eligibility),
-    agent_schema_version: literal(raw.agent_schema_version, "3.1", "run.agent_schema_version"),
+    agent_schema_version: literal(raw.agent_schema_version, "3.2", "run.agent_schema_version"),
     agent_status: oneOf(raw.agent_status, ["needs_review", "blocked"], "run.agent_status"),
     ...(raw.agent_engine === undefined || raw.agent_engine === null
       ? { agent_engine: null }
@@ -174,6 +195,134 @@ export function decodeReviewRun(value: unknown): ReviewRun {
     reviewer_decisions: array(raw.reviewer_decisions, "run.reviewer_decisions").map(decodeReviewerDecision),
     created_by: requiredString(raw.created_by, "run.created_by"),
     created_at: requiredString(raw.created_at, "run.created_at"),
+    ...(raw.parent_review_run_id === undefined || raw.parent_review_run_id === null
+      ? {}
+      : { parent_review_run_id: requiredString(raw.parent_review_run_id, "run.parent_review_run_id") }),
+    ...(raw.applied_correction_proposal_ids === undefined
+      ? {}
+      : { applied_correction_proposal_ids: decodeIdentifierList(raw.applied_correction_proposal_ids, "run.applied_correction_proposal_ids") }),
+  };
+}
+
+/** Decode the planned Backend-owned assistant conversation projection. */
+export function decodeAssistantConversation(value: unknown): AssistantConversation {
+  const raw = record(value, "assistant conversation");
+  return {
+    conversation_id: requiredString(raw.conversation_id, "assistant conversation.conversation_id"),
+    review_run_id: requiredString(raw.review_run_id, "assistant conversation.review_run_id"),
+    ...(raw.title === undefined || raw.title === null
+      ? {}
+      : { title: displayText(raw.title, "assistant conversation.title") }),
+    created_by: requiredString(raw.created_by, "assistant conversation.created_by"),
+    created_at: requiredString(raw.created_at, "assistant conversation.created_at"),
+    updated_at: requiredString(raw.updated_at, "assistant conversation.updated_at"),
+  };
+}
+
+/**
+ * Message history uses `content`; the `direct_answer` fallback accepts the
+ * Agent's canonical answer projection while Backend wiring is being aligned.
+ */
+export function decodeAssistantMessage(
+  value: unknown,
+  inferredRole?: AssistantMessage["role"],
+): AssistantMessage {
+  const raw = record(value, "assistant message");
+  const role = raw.role === undefined
+    ? inferredRole
+    : oneOf(raw.role, ["user", "assistant"], "assistant message.role");
+  if (!role) throw new ContractError("assistant message.role is absent");
+  const content = raw.content ?? raw.direct_answer;
+  return {
+    message_id: requiredString(raw.message_id, "assistant message.message_id"),
+    conversation_id: requiredString(raw.conversation_id, "assistant message.conversation_id"),
+    role,
+    content: displayText(content, "assistant message.content"),
+    ...decodeAssistantAnswerScope(raw.answer_scope, role),
+    citations: raw.citations === undefined
+      ? []
+      : array(raw.citations, "assistant message.citations").map(decodeAssistantCitation),
+    suggested_questions: raw.suggested_questions === undefined
+      ? []
+      : decodeSuggestedQuestions(raw.suggested_questions),
+    ...(raw.correction_draft === undefined || raw.correction_draft === null
+      ? {}
+      : { correction_draft: decodeAssistantCorrectionDraft(raw.correction_draft, "assistant message.correction_draft") }),
+    created_by: requiredString(raw.created_by, "assistant message.created_by"),
+    created_at: requiredString(raw.created_at, "assistant message.created_at"),
+  };
+}
+
+export function decodeAssistantMessageExchange(value: unknown): AssistantMessageExchange {
+  const raw = record(value, "assistant message exchange");
+  return {
+    user_message: decodeAssistantMessage(raw.user_message, "user"),
+    assistant_message: decodeAssistantMessage(raw.assistant_message, "assistant"),
+  };
+}
+
+export function decodeCorrectionProposal(value: unknown): CorrectionProposal {
+  const raw = record(value, "correction proposal");
+  return {
+    correction_proposal_id: requiredString(raw.correction_proposal_id, "correction proposal.correction_proposal_id"),
+    review_run_id: requiredString(raw.review_run_id, "correction proposal.review_run_id"),
+    ...(raw.finding_id === undefined || raw.finding_id === null
+      ? {}
+      : { finding_id: requiredString(raw.finding_id, "correction proposal.finding_id") }),
+    document_id: requiredString(raw.document_id, "correction proposal.document_id"),
+    ...(raw.item_id === undefined || raw.item_id === null
+      ? {}
+      : { item_id: requiredString(raw.item_id, "correction proposal.item_id") }),
+    ...(raw.fact_id === undefined || raw.fact_id === null
+      ? {}
+      : { fact_id: requiredString(raw.fact_id, "correction proposal.fact_id") }),
+    field_name: requiredString(raw.field_name, "correction proposal.field_name"),
+    new_value: displayText(raw.new_value, "correction proposal.new_value"),
+    ...(raw.unit === undefined || raw.unit === null
+      ? {}
+      : { unit: requiredString(raw.unit, "correction proposal.unit") }),
+    reason: displayText(raw.reason, "correction proposal.reason"),
+    status: oneOf(raw.status, ["proposed", "approved", "rejected"], "correction proposal.status"),
+    created_by: requiredString(raw.created_by, "correction proposal.created_by"),
+    created_at: requiredString(raw.created_at, "correction proposal.created_at"),
+    ...(raw.decision === undefined || raw.decision === null
+      ? {}
+      : { decision: decodeCorrectionDecision(raw.decision, "correction proposal.decision") }),
+    history: raw.history === undefined
+      ? []
+      : array(raw.history, "correction proposal.history").map((item, index) =>
+        decodeCorrectionProposalHistoryEntry(item, `correction proposal.history[${index}]`),
+      ),
+    ...(raw.applied_review_run_id === undefined || raw.applied_review_run_id === null
+      ? {}
+      : { applied_review_run_id: requiredString(raw.applied_review_run_id, "correction proposal.applied_review_run_id") }),
+  };
+}
+
+export function decodeCorrectionDecision(value: unknown, context = "correction decision"): CorrectionDecision {
+  const raw = record(value, context);
+  return {
+    status: oneOf(raw.status, ["approved", "rejected"], `${context}.status`),
+    reason: displayText(raw.reason, `${context}.reason`),
+    ...(raw.decided_by === undefined || raw.decided_by === null
+      ? {}
+      : { decided_by: requiredString(raw.decided_by, `${context}.decided_by`) }),
+    ...(raw.decided_at === undefined || raw.decided_at === null
+      ? {}
+      : { decided_at: requiredString(raw.decided_at, `${context}.decided_at`) }),
+  };
+}
+
+function decodeCorrectionProposalHistoryEntry(
+  value: unknown,
+  context: string,
+): CorrectionProposalHistoryEntry {
+  const raw = record(value, context);
+  return {
+    event: oneOf(raw.event, ["proposed", "approved", "rejected", "applied"], `${context}.event`),
+    reason: displayText(raw.reason, `${context}.reason`),
+    actor: requiredString(raw.actor, `${context}.actor`),
+    occurred_at: requiredString(raw.occurred_at, `${context}.occurred_at`),
   };
 }
 
@@ -234,15 +383,75 @@ function decodeEngine(value: unknown): NonNullable<ReviewRun["agent_engine"]> {
 
 function decodeReport(value: unknown): ReviewReport {
   const raw = record(value, "run.report");
+  const sections = array(raw.sections, "run.report.sections").map((item, index) =>
+    decodeReportSection(item, `run.report.sections[${index}]`),
+  );
+  const expectedSections = new Set([
+    "conclusion",
+    "execution_process",
+    "document_comparison",
+    "issues_and_causes",
+    "legal_evidence",
+    "impact",
+    "next_actions",
+    "limitations",
+  ]);
+  if (sections.length !== expectedSections.size || new Set(sections.map((section) => section.section)).size !== expectedSections.size) {
+    throw new ContractError("run.report.sections must contain the eight bounded report sections");
+  }
+  if (sections.some((section) => !expectedSections.has(section.section))) {
+    throw new ContractError("run.report.sections contains an unsupported section");
+  }
   return {
     overall_status: oneOf(raw.overall_status, ["needs_review", "blocked"], "run.report.overall_status"),
     summary: displayText(raw.summary, "run.report.summary"),
     disclaimer: displayText(raw.disclaimer, "run.report.disclaimer"),
+    sections,
+  };
+}
+
+function decodeReportSection(value: unknown, context: string): ReportSection {
+  const raw = record(value, context);
+  const claims = array(raw.claims, `${context}.claims`).map((item, index) =>
+    decodeReportClaim(item, `${context}.claims[${index}]`),
+  );
+  if (!claims.length || claims.length > 32) throw new ContractError(`${context}.claims must be bounded and non-empty`);
+  return {
+    section: oneOf(raw.section, [
+      "conclusion",
+      "execution_process",
+      "document_comparison",
+      "issues_and_causes",
+      "legal_evidence",
+      "impact",
+      "next_actions",
+      "limitations",
+    ], `${context}.section`),
+    title: requiredString(raw.title, `${context}.title`),
+    claims,
+  };
+}
+
+function decodeReportClaim(value: unknown, context: string): ReportClaim {
+  const raw = record(value, context);
+  const factIds = decodeIdentifierList(raw.fact_ids, `${context}.fact_ids`);
+  const comparisonIds = decodeIdentifierList(raw.comparison_ids, `${context}.comparison_ids`);
+  const evidenceIds = decodeIdentifierList(raw.evidence_ids, `${context}.evidence_ids`);
+  if (!factIds.length && !comparisonIds.length && !evidenceIds.length) {
+    throw new ContractError(`${context} must cite a fact, comparison, or Evidence item`);
+  }
+  return {
+    claim_id: requiredString(raw.claim_id, `${context}.claim_id`),
+    text: displayText(raw.text, `${context}.text`),
+    fact_ids: factIds,
+    comparison_ids: comparisonIds,
+    evidence_ids: evidenceIds,
   };
 }
 
 function decodeWorkflow(value: unknown): AgentWorkflow {
   const raw = record(value, "run.workflow");
+  const planner = decodePlanner(raw.planner, "run.workflow.planner");
   return {
     status: oneOf(raw.status, ["completed", "partial", "failed"], "run.workflow.status"),
     stages: array(raw.stages, "run.workflow.stages").map(decodeWorkflowStage),
@@ -257,6 +466,42 @@ function decodeWorkflow(value: unknown): AgentWorkflow {
         status: oneOf(reextraction.status, ["completed", "unavailable"], "reextraction.status"),
       };
     }),
+    planner,
+  };
+}
+
+function decodePlanner(value: unknown, context: string): PlannerTrace {
+  const raw = record(value, context);
+  const cycleCount = plannerCycle(raw.cycle_count, `${context}.cycle_count`);
+  const actions = array(raw.actions, `${context}.actions`).map((item, index) =>
+    decodePlannerAction(item, `${context}.actions[${index}]`),
+  );
+  if (!actions.length || actions.length > 6 || actions.some((action) => action.cycle > cycleCount)) {
+    throw new ContractError(`${context} exceeds the bounded planning limit`);
+  }
+  if (actions.some((action, index) => index > 0 && action.cycle < (actions[index - 1]?.cycle ?? 1))) {
+    throw new ContractError(`${context}.actions must be ordered by cycle`);
+  }
+  return { cycle_count: cycleCount, actions };
+}
+
+function decodePlannerAction(value: unknown, context: string): PlannerAction {
+  const raw = record(value, context);
+  return {
+    cycle: plannerCycle(raw.cycle, `${context}.cycle`),
+    action: oneOf(raw.action, [
+      "analyze_documents",
+      "apply_human_corrections",
+      "compare_documents",
+      "reextract_documents",
+      "retrieve_evidence",
+      "generate_report",
+    ], `${context}.action`),
+    status: oneOf(raw.status, ["completed", "skipped", "needs_review", "failed"], `${context}.status`),
+    summary: displayText(raw.summary, `${context}.summary`),
+    correction_proposal_ids: raw.correction_proposal_ids === undefined
+      ? []
+      : decodeIdentifierList(raw.correction_proposal_ids, `${context}.correction_proposal_ids`),
   };
 }
 
@@ -280,7 +525,7 @@ function decodeDocumentAnalysis(value: unknown): DocumentAnalysis {
     filename: requiredString(raw.filename, "document analysis.filename"),
     declared_type: raw.declared_type === null ? null : requiredString(raw.declared_type, "document analysis.declared_type"),
     document_type: oneOf(raw.document_type, ["invoice", "packing_list", "bill_of_lading", "certificate_of_origin", "unknown"], "document analysis.document_type"),
-    classification_source: raw.classification_source === null ? null : decodeSource(raw.classification_source),
+    classification_source: raw.classification_source === null ? null : decodeDocumentSource(raw.classification_source),
     extraction_status: oneOf(raw.extraction_status, ["complete", "needs_review"], "document analysis.extraction_status"),
     facts: array(raw.facts, "document analysis.facts").map(decodeFact),
     line_items: array(raw.line_items, "document analysis.line_items").map(decodeLineItem),
@@ -295,7 +540,7 @@ function decodeLineItem(value: unknown): DocumentLineItem {
   const raw = record(value, "line item");
   return {
     item_id: requiredString(raw.item_id, "line item.item_id"),
-    source: decodeSource(raw.source),
+    source: decodeDocumentSource(raw.source),
     facts: array(raw.facts, "line item.facts").map(decodeFact),
   };
 }
@@ -310,17 +555,33 @@ function decodeFact(value: unknown): DocumentFact {
       ? {}
       : { normalized_value: displayText(raw.normalized_value, "fact.normalized_value") }),
     ...(raw.unit === undefined || raw.unit === null ? {} : { unit: requiredString(raw.unit, "fact.unit") }),
-    source: decodeSource(raw.source),
+    source: decodeFactSource(raw.source),
   };
 }
 
-function decodeSource(value: unknown): SourceReference {
-  const raw = record(value, "fact.source");
+function decodeDocumentSource(value: unknown): SourceReference {
+  const raw = record(value, "document source");
   return {
-    document_id: requiredString(raw.document_id, "fact.source.document_id"),
-    quote: displayText(raw.quote, "fact.source.quote"),
-    occurrence: nonNegativeInteger(raw.occurrence, "fact.source.occurrence"),
+    source_kind: literal(raw.source_kind, "document", "document source.source_kind"),
+    document_id: requiredString(raw.document_id, "document source.document_id"),
+    quote: displayText(raw.quote, "document source.quote"),
+    occurrence: nonNegativeInteger(raw.occurrence, "document source.occurrence"),
   };
+}
+
+function decodeFactSource(value: unknown): FactSourceReference {
+  const raw = record(value, "fact.source");
+  if (raw.source_kind === "document") return decodeDocumentSource(raw);
+  if (raw.source_kind !== "human_provided") {
+    throw new ContractError("fact.source.source_kind must be document or human_provided");
+  }
+  const source: HumanProvidedSourceReference = {
+    source_kind: "human_provided",
+    document_id: requiredString(raw.document_id, "human-provided source.document_id"),
+    correction_proposal_id: requiredString(raw.correction_proposal_id, "human-provided source.correction_proposal_id"),
+    reason: displayText(raw.reason, "human-provided source.reason"),
+  };
+  return source;
 }
 
 function decodeComparison(value: unknown): ReviewComparison {
@@ -404,6 +665,65 @@ function decodeReviewerDecisionEntry(value: Record<string, unknown>, context: st
   };
 }
 
+function decodeAssistantCitation(value: unknown): AssistantCitation {
+  const raw = record(value, "assistant citation");
+  return {
+    kind: oneOf(raw.kind, ["fact", "comparison", "evidence"], "assistant citation.kind"),
+    reference_id: requiredString(raw.reference_id, "assistant citation.reference_id"),
+  };
+}
+
+function decodeAssistantAnswerScope(
+  value: unknown,
+  role: AssistantMessage["role"],
+): { answer_scope?: AssistantAnswerScope } {
+  if (value === undefined || value === null) {
+    if (role === "assistant") throw new ContractError("assistant answer_scope is absent");
+    return {};
+  }
+  return {
+    answer_scope: oneOf(value, [
+      "case_grounded",
+      "evidence_grounded",
+      "general_customs_guidance",
+      "clarification_needed",
+      "insufficient_evidence",
+      "out_of_scope",
+    ], "assistant message.answer_scope"),
+  };
+}
+
+function decodeSuggestedQuestions(value: unknown): string[] {
+  const questions = array(value, "assistant message.suggested_questions");
+  if (questions.length > 3) throw new ContractError("assistant message.suggested_questions exceeds three items");
+  return questions.map((question, index) =>
+    displayText(question, `assistant message.suggested_questions[${index}]`),
+  );
+}
+
+function decodeAssistantCorrectionDraft(value: unknown, context: string): AssistantCorrectionDraft {
+  const raw = record(value, context);
+  return {
+    document_id: requiredString(raw.document_id, `${context}.document_id`),
+    ...(raw.item_id === undefined || raw.item_id === null
+      ? {}
+      : { item_id: requiredString(raw.item_id, `${context}.item_id`) }),
+    ...(raw.fact_id === undefined || raw.fact_id === null
+      ? {}
+      : { fact_id: requiredString(raw.fact_id, `${context}.fact_id`) }),
+    field_name: requiredString(raw.field_name, `${context}.field_name`),
+    new_value: displayText(raw.new_value, `${context}.new_value`),
+    ...(raw.unit === undefined || raw.unit === null
+      ? {}
+      : { unit: requiredString(raw.unit, `${context}.unit`) }),
+    reason: displayText(raw.reason, `${context}.reason`),
+  };
+}
+
+function decodeIdentifierList(value: unknown, context: string): string[] {
+  return array(value, context).map((item, index) => requiredString(item, `${context}[${index}]`));
+}
+
 function record(value: unknown, context: string): Record<string, unknown> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) throw new ContractError(`${context}: object expected`);
   return value as Record<string, unknown>;
@@ -435,6 +755,11 @@ function nonNegativeInteger(value: unknown, context: string): number {
 
 function positiveInteger(value: unknown, context: string): number {
   if (typeof value !== "number" || !Number.isInteger(value) || value < 1 || value > 1_000_000_000) throw new ContractError(`${context}: positive integer expected`);
+  return value;
+}
+
+function plannerCycle(value: unknown, context: string): 1 | 2 {
+  if (value !== 1 && value !== 2) throw new ContractError(`${context}: one or two expected`);
   return value;
 }
 

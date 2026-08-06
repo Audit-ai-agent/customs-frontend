@@ -21,7 +21,7 @@ export interface AuthConfig {
 export interface Session {
   subject: string;
   org_id: string;
-  roles: Array<"reviewer">;
+  roles: Array<"reviewer" | "approver">;
 }
 
 export interface CaseSummary {
@@ -61,6 +61,35 @@ export interface ReviewReport {
   overall_status: "needs_review" | "blocked";
   summary: string;
   disclaimer: string;
+  /**
+   * The Agent's eight grounded report sections.  These are rendered directly;
+   * the Browser does not manufacture a second report from the raw result.
+   */
+  sections: ReportSection[];
+}
+
+export type ReportSectionName =
+  | "conclusion"
+  | "execution_process"
+  | "document_comparison"
+  | "issues_and_causes"
+  | "legal_evidence"
+  | "impact"
+  | "next_actions"
+  | "limitations";
+
+export interface ReportClaim {
+  claim_id: string;
+  text: string;
+  fact_ids: string[];
+  comparison_ids: string[];
+  evidence_ids: string[];
+}
+
+export interface ReportSection {
+  section: ReportSectionName;
+  title: string;
+  claims: ReportClaim[];
 }
 
 export interface ReviewFinding {
@@ -121,13 +150,53 @@ export interface AgentWorkflow {
   status: "completed" | "partial" | "failed";
   stages: WorkflowStage[];
   reextractions: ReextractionRecord[];
+  planner: PlannerTrace;
+}
+
+export type PlannerActionName =
+  | "analyze_documents"
+  | "apply_human_corrections"
+  | "compare_documents"
+  | "reextract_documents"
+  | "retrieve_evidence"
+  | "generate_report";
+
+export interface PlannerAction {
+  cycle: 1 | 2;
+  action: PlannerActionName;
+  status: "completed" | "skipped" | "needs_review" | "failed";
+  summary: string;
+  correction_proposal_ids: string[];
+}
+
+export interface PlannerTrace {
+  cycle_count: 1 | 2;
+  actions: PlannerAction[];
 }
 
 export interface SourceReference {
+  source_kind: "document";
   document_id: string;
   quote: string;
   /** Zero-based occurrence of the source quote in the document. */
   occurrence: number;
+}
+
+/**
+ * An approved person-supplied value intentionally has no fabricated quote in
+ * the source document.  It remains visibly separate from extracted facts.
+ */
+export interface HumanProvidedSourceReference {
+  source_kind: "human_provided";
+  document_id: string;
+  correction_proposal_id: string;
+  reason: string;
+}
+
+export type FactSourceReference = SourceReference | HumanProvidedSourceReference;
+
+export function isDocumentSource(source: FactSourceReference): source is SourceReference {
+  return source.source_kind === "document";
 }
 
 export interface DocumentFact {
@@ -136,7 +205,7 @@ export interface DocumentFact {
   raw_value: string;
   normalized_value?: string | null;
   unit?: string | null;
-  source: SourceReference;
+  source: FactSourceReference;
 }
 
 export interface DocumentLineItem {
@@ -201,6 +270,10 @@ export interface ReviewRunSummary {
   finding_count: number;
   reviewer_decision_count: number;
   created_at: string;
+  /** Present when this run was created from approved corrections on another run. */
+  parent_review_run_id?: string | null;
+  /** The approved proposal IDs applied to produce this child run. */
+  applied_correction_proposal_ids?: string[];
 }
 
 export interface ReviewRun {
@@ -218,7 +291,7 @@ export interface ReviewRun {
     eligible: false;
     unmet_reason_codes: string[];
   };
-  agent_schema_version: "3.1";
+  agent_schema_version: "3.2";
   agent_status: "needs_review" | "blocked";
   agent_engine?: { kind: "deterministic" | "claude"; model_id: string } | null;
   report: ReviewReport;
@@ -231,6 +304,110 @@ export interface ReviewRun {
   reviewer_decisions: ReviewerDecision[];
   created_by: string;
   created_at: string;
+  /** A child run keeps its parent for an auditable, non-destructive history. */
+  parent_review_run_id?: string | null;
+  /** Only the Backend decides which approved correction proposals were applied. */
+  applied_correction_proposal_ids?: string[];
+}
+
+/** A link in an assistant answer back to an already displayed review fact. */
+export type AssistantCitationKind = "fact" | "comparison" | "evidence";
+
+export interface AssistantCitation {
+  kind: AssistantCitationKind;
+  reference_id: string;
+}
+
+export type AssistantAnswerScope =
+  | "case_grounded"
+  | "evidence_grounded"
+  | "general_customs_guidance"
+  | "clarification_needed"
+  | "insufficient_evidence"
+  | "out_of_scope";
+
+/**
+ * A structured correction draft returned by the Agent. It is only a proposal:
+ * the Browser never mutates a review result directly.
+ */
+export interface AssistantCorrectionDraft {
+  document_id: string;
+  item_id?: string | null;
+  fact_id?: string | null;
+  field_name: string;
+  new_value: string;
+  unit?: string | null;
+  reason: string;
+}
+
+/** Browser projection of one persisted assistant conversation. */
+export interface AssistantConversation {
+  conversation_id: string;
+  review_run_id: string;
+  title?: string | null;
+  created_by: string;
+  created_at: string;
+  updated_at: string;
+}
+
+/**
+ * User messages have no answer scope. Assistant answers use the bounded
+ * Backend-owned enum so the UI can explain what the answer is grounded in.
+ */
+export interface AssistantMessage {
+  message_id: string;
+  conversation_id: string;
+  role: "user" | "assistant";
+  content: string;
+  answer_scope?: AssistantAnswerScope | null;
+  citations: AssistantCitation[];
+  suggested_questions: string[];
+  correction_draft?: AssistantCorrectionDraft | null;
+  created_by: string;
+  created_at: string;
+}
+
+export interface AssistantMessageExchange {
+  user_message: AssistantMessage;
+  assistant_message: AssistantMessage;
+}
+
+export type CorrectionProposalStatus = "proposed" | "approved" | "rejected";
+
+export interface CorrectionDecision {
+  status: "approved" | "rejected";
+  reason: string;
+  decided_by?: string;
+  decided_at?: string;
+}
+
+/** Immutable lifecycle entry kept by Backend for proposal-to-child-run traceability. */
+export interface CorrectionProposalHistoryEntry {
+  event: "proposed" | "approved" | "rejected" | "applied";
+  reason: string;
+  actor: string;
+  occurred_at: string;
+}
+
+/** A proposed fact correction tied to one review run; it cannot change source text. */
+export interface CorrectionProposal {
+  correction_proposal_id: string;
+  review_run_id: string;
+  finding_id?: string | null;
+  document_id: string;
+  item_id?: string | null;
+  fact_id?: string | null;
+  field_name: string;
+  new_value: string;
+  unit?: string | null;
+  reason: string;
+  status: CorrectionProposalStatus;
+  created_by: string;
+  created_at: string;
+  decision?: CorrectionDecision | null;
+  history: CorrectionProposalHistoryEntry[];
+  /** A non-destructive link to a child review run, if Backend has created one. */
+  applied_review_run_id?: string | null;
 }
 
 export interface JobRecord {
@@ -265,4 +442,32 @@ export interface EnqueueReviewRequest {
 export interface FindingDecisionRequest {
   status: "confirmed" | "needs_information" | "resolved";
   reason: string;
+}
+
+export interface CreateAssistantConversationRequest {
+  title?: string;
+}
+
+export interface SendAssistantMessageRequest {
+  content: string;
+}
+
+export interface CreateCorrectionProposalRequest {
+  document_id: string;
+  item_id?: string | null;
+  fact_id?: string | null;
+  field_name: string;
+  new_value: string;
+  unit?: string | null;
+  reason: string;
+  finding_id?: string | null;
+}
+
+export interface CorrectionDecisionRequest {
+  status: "approved" | "rejected";
+  reason: string;
+}
+
+export interface CreateRevisionRequest {
+  proposal_ids: string[];
 }
