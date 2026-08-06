@@ -122,3 +122,24 @@ Backend에 없는 기능은 `customs-backend/docs/FRONTEND_UX_BACKEND_GAP.ko.md`
 테스트가 찾는 `[data-report-section]` 8개가 유지되는 것 확인.
 
 **스크린샷** — `cp4-01-review.png`(전체), `cp4-02-report-open.png`(보고서 펼침)
+
+---
+
+## CP5 — 처리 중 표시 · 라벨 정확도 · 남은 오버플로
+
+**한 일**
+
+- **처리 중 표시 추가** — 요청이 나가면 버튼만 비활성화되고 아무 신호가 없었습니다.
+  화면 최상단에 얇은 진행 바를 띄웁니다(움직이는 요소는 이것 하나뿐).
+- **버튼 라벨 정정** — 이미 심사 실행이 있는 Case에서도 "AI 심사 시작"이라고 적혀
+  처음 실행하는 것처럼 보였습니다. 실행 이력이 있으면 **"AI 심사 다시 실행"**으로 바꿉니다.
+- **남은 가로 오버플로 제거** — 390px에서 서류 등록·관세 진단 두 화면이 12px씩 넘쳤습니다.
+  원인은 미지원 안내에 적어둔 파일 경로
+  `customs-backend/docs/FRONTEND_UX_BACKEND_GAP.ko.md`가 끊기지 않는 한 덩어리라서.
+  줄바꿈 허용으로 해결.
+- 최종 확인: **8개 화면 × 390/1024px 전부** `scrollWidth == clientWidth`이고
+  가로 스크롤 시도해도 `scrollX == 0`.
+
+**검증** — lint · typecheck · 테스트 12건 · build 통과.
+
+**스크린샷** — `cp5-01-notice.png`(완료 알림 + 다시 실행 라벨), `cp5-02-crosscheck.png`(교차 검증 표)

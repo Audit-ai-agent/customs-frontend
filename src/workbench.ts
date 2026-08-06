@@ -755,6 +755,9 @@ export class CommercialReviewWorkspace {
   private render(): void {
     if (this.destroyed) return;
     const page = element("div", { className: "g-page" },
+      this.state.busy
+        ? element("div", { className: "g-progress", attributes: { role: "status", "aria-label": "요청을 처리하고 있습니다" } })
+        : null,
       this.createUtilityBar(),
       this.createSiteHeader(),
       this.createGlobalNav(),
@@ -1251,9 +1254,11 @@ export class CommercialReviewWorkspace {
   private createReviewButton(): HTMLElement {
     const running = this.state.activeJob !== null && ACTIVE_JOB_STATES.has(this.state.activeJob.status);
     const canReview = this.hasRole("reviewer");
+    // A case that already has a run gets a new run, not the first one; say so.
+    const startLabel = this.state.runs.length ? "AI 심사 다시 실행" : "AI 심사 시작";
     return element("button", {
       className: "button button--primary button--lg",
-      text: running ? "심사 진행 중" : canReview ? "AI 심사 시작" : "심사자 역할에서 실행",
+      text: running ? "심사 진행 중" : canReview ? startLabel : "심사자 역할에서 실행",
       attributes: {
         type: "button",
         disabled: this.state.busy || !this.activeDocuments().length || running || !canReview ? "" : undefined,

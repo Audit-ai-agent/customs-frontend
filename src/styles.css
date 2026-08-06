@@ -93,6 +93,16 @@ small { color: var(--krds-muted); }
 
 /* ── 정부 서브페이지 셸 ─────────────────────────────────────────── */
 .g-page { display: flex; flex-direction: column; min-height: 100vh; }
+/* A request is in flight: the only moving thing on the page. */
+.g-progress { position: fixed; inset: 0 0 auto; z-index: 50; height: .1875rem; overflow: hidden; background: var(--krds-primary-bg); }
+.g-progress::before {
+  display: block; width: 40%; height: 100%; background: var(--krds-primary);
+  animation: g-progress-slide 1.1s ease-in-out infinite; content: "";
+}
+@keyframes g-progress-slide {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(350%); }
+}
 .g-inner { width: 100%; max-width: var(--container); margin: 0 auto; padding: 0 clamp(1rem, 3vw, 1.5rem); }
 .g-main { flex: 1; min-width: 0; }
 
@@ -411,6 +421,8 @@ small { color: var(--krds-muted); }
 .unsupported-stage__note, .unsupported-inline {
   margin: 0; padding: .75rem .85rem; color: var(--krds-text); background: var(--krds-info-bg);
   border-radius: .5rem; border-left: 4px solid var(--krds-primary); font-size: .84rem; line-height: 1.6;
+  /* These notes cite file paths, which are single unbreakable tokens. */
+  overflow-wrap: anywhere;
 }
 
 /* ── 원문 대조 모달 (FRAME 03b) ────────────────────────────────── */
