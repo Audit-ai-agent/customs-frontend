@@ -264,7 +264,11 @@ async function recordFindingDecision(finding: ReturnType<Page["locator"]>): Prom
   await form.locator('select[name="status"]').selectOption("confirmed");
   await form.locator('textarea[name="reason"]').fill("Browser Functional-UAT에서 문서 비교 결과를 확인했습니다.");
   await form.getByRole("button", { name: /판단 (기록|수정)/u }).click();
-  await expect(finding.locator(".decision-current")).toBeVisible();
+  await expect(panel.locator(".decision-current")).toHaveCount(1);
+  if (!(await panel.evaluate((node) => (node as HTMLDetailsElement).open))) {
+    await panel.locator("summary").click();
+  }
+  await expect(panel.locator(".decision-current")).toBeVisible();
 }
 
 async function recordCorrectionProposal(finding: ReturnType<Page["locator"]>): Promise<void> {
