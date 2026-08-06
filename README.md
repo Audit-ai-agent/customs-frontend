@@ -1,6 +1,7 @@
 # Customs Frontend
 
-팀 개발과 실제 기능 UAT를 위한 작은 Browser 작업대입니다. Browser는 Backend
+팀 개발과 실제 기능 UAT를 위한 사건 중심 Browser 심사 작업대입니다. 사건 목록,
+문서 등록, 심사·근거·이력 탭은 하나의 Case 안에서 연결됩니다. Browser는 Backend
 API v1만 호출합니다. Agent, Data, PostgreSQL, Qdrant, Neo4j 주소나 비밀값을
 Browser에 전달하지 않습니다.
 
@@ -33,8 +34,8 @@ Node.js 22.12.x 이상 23 미만이 필요합니다. npm은 전역 설치하지 
 
     corepack npm run dev:local
 
-Backend가 기본 loopback 주소가 아닐 때만 같은 PowerShell 창에서
-BACKEND_ORIGIN을 지정합니다.
+Backend 기본 loopback 주소는 `http://127.0.0.1:18081`입니다. 다른 주소로
+실행할 때만 같은 PowerShell 창에서 BACKEND_ORIGIN을 지정합니다.
 
 Functional UAT는 네 서비스가 문서의 순서대로 실행된 뒤에만 시작합니다.
 
