@@ -349,7 +349,7 @@ export class CommercialReviewWorkspace {
     const filters = element("div", { className: "queue-filters" },
       input("search", { placeholder: "Case명 또는 참조번호 검색", value: this.state.query, ariaLabel: "Case 검색", onInput: (event) => this.updateQuery((event.currentTarget as HTMLInputElement).value) }),
       select("case_filter", [
-        ["all", "전체"], ["open", "진행 전"], ["in_review", "심사 중"], ["closed", "종료"],
+        ["all", "전체"], ["open", "진행 전"], ["in_review", "사람 검토 중"], ["closed", "종료"],
       ], this.state.caseFilter, (event) => { this.state.caseFilter = (event.currentTarget as HTMLSelectElement).value as CaseFilter; this.render(); }),
     );
 
@@ -805,7 +805,7 @@ function occurrenceIndex(content: string, quote: string, occurrence: number): nu
 
 function display(value: string): string {
   const labels: Record<string, string> = {
-    open: "진행 전", in_review: "심사 중", closed: "종료", queued: "대기", running: "처리 중", succeeded: "완료", failed: "실패",
+    open: "진행 전", in_review: "사람 검토 중", closed: "종료", queued: "대기", running: "처리 중", succeeded: "완료", failed: "실패",
     partial: "부분 완료", no_issue_detected: "주요 이슈 없음", issues_detected: "확인 사항 있음", indeterminate: "판단 보류",
     human_review_required: "사람 검토 필요", blocked: "차단됨", completed: "완료", skipped: "건너뜀", needs_review: "검토 필요",
   };
