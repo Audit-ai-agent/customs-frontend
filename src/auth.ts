@@ -5,6 +5,19 @@ export interface BrowserSession {
   isAuthenticated(): boolean;
 }
 
+export type LocalDevelopmentActor = "reviewer" | "approver";
+
+/** Present only for the loopback dev-fixture identity switcher. */
+export interface RoleSwitchingBrowserSession extends BrowserSession {
+  switchActor(actor: LocalDevelopmentActor): Promise<void>;
+}
+
+export function supportsDevelopmentRoleSwitch(
+  session: BrowserSession,
+): session is RoleSwitchingBrowserSession {
+  return typeof (session as Partial<RoleSwitchingBrowserSession>).switchActor === "function";
+}
+
 export interface LocalDevelopmentSessionResponse {
   access_token: string;
   token_type: "Bearer";
@@ -26,11 +39,11 @@ export class LocalDevelopmentSession implements BrowserSession {
   private accessToken: string | undefined;
 
   constructor(
-    private readonly createSession: () => Promise<LocalDevelopmentSessionResponse>,
+    private readonly createSession: (actor?: LocalDevelopmentActor) => Promise<LocalDevelopmentSessionResponse>,
   ) {}
 
-  async start(): Promise<void> {
-    const response = await this.createSession();
+  async start(actor?: LocalDevelopmentActor): Promise<void> {
+    const response = await this.createSession(actor);
     if (
       response.token_type !== "Bearer"
       || !isSafeLocalToken(response.access_token)
@@ -42,6 +55,14 @@ export class LocalDevelopmentSession implements BrowserSession {
       throw new Error("Backend local-development session response is invalid");
     }
     this.accessToken = response.access_token;
+  }
+
+  /**
+   * Changes only the in-memory loopback token.  It never changes functional
+   * UAT OIDC state and it never stores either local identity in the browser.
+   */
+  async switchActor(actor: LocalDevelopmentActor): Promise<void> {
+    await this.start(actor);
   }
 
   async logout(): Promise<void> {
@@ -64,5 +85,5 @@ function isSafeLocalIdentity(value: LocalDevelopmentSessionResponse["session"]):
   return typeof value.subject === "string" && value.subject.length > 0
     && typeof value.org_id === "string" && value.org_id.length > 0
     && Array.isArray(value.roles) && value.roles.length > 0
-    && value.roles.every((role) => typeof role === "string" && role.length > 0);
+    && value.roles.every((role) => role === "reviewer" || role === "approver");
 }
