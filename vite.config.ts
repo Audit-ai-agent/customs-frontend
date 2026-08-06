@@ -4,6 +4,9 @@ export default defineConfig(({ command, mode }) => {
   // There are exactly two local browser modes: no-secret team development and
   // the explicit functional UAT topology.
   const runtimeMode = mode === "functional-uat" ? "functional-uat" : "local-development";
+  const functionalUatConnectSource = runtimeMode === "functional-uat"
+    ? " http://127.0.0.1:18088"
+    : "";
   return {
     plugins: [
       {
@@ -15,7 +18,7 @@ export default defineConfig(({ command, mode }) => {
           return html.replace(
             "__CUSTOMS_DEV_STYLE_SOURCE__",
             command === "serve" ? " 'unsafe-inline'" : "",
-          );
+          ).replace("__CUSTOMS_CONNECT_SOURCE__", functionalUatConnectSource);
         },
       },
     ],
