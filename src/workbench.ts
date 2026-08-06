@@ -670,7 +670,7 @@ export class CommercialReviewWorkspace {
       createRuntimeNotice(this.mode),
       this.state.error ? message("error", this.state.error) : null,
       this.state.notice ? message("notice", this.state.notice) : null,
-      element("main", { className: "review-app", attributes: { id: "main-content", "aria-busy": String(this.state.busy) } },
+      element("main", { className: "review-app", attributes: { id: "main-content", "aria-busy": String(this.state.busy), "data-e2e": "workspace-root" } },
         this.createQueue(),
         this.state.selectedCase ? this.createWorkspace() : this.createWelcome(),
       ),
@@ -688,7 +688,13 @@ export class CommercialReviewWorkspace {
     for (const item of visible) {
       list.append(element("button", {
         className: `case-card${this.state.selectedCase?.case_id === item.case_id ? " is-selected" : ""}`,
-        attributes: { type: "button", "aria-current": this.state.selectedCase?.case_id === item.case_id ? "page" : undefined, disabled: this.state.busy ? "" : undefined },
+        attributes: {
+          type: "button",
+          "aria-current": this.state.selectedCase?.case_id === item.case_id ? "page" : undefined,
+          disabled: this.state.busy ? "" : undefined,
+          "data-e2e": "case-card",
+          "data-case-id": item.case_id,
+        },
         on: { click: () => void this.openCase(item.case_id).catch((error) => this.showError(error)) },
       },
       element("strong", { text: item.title }),
@@ -704,7 +710,7 @@ export class CommercialReviewWorkspace {
       ], this.state.caseFilter, (event) => { this.state.caseFilter = (event.currentTarget as HTMLSelectElement).value as CaseFilter; this.render(); }),
     );
 
-    const form = element("form", { className: "case-create-form", on: { submit: (event) => { event.preventDefault(); void this.createCase(event.currentTarget as HTMLFormElement); } } },
+    const form = element("form", { className: "case-create-form", attributes: { "data-e2e": "case-create-form" }, on: { submit: (event) => { event.preventDefault(); void this.createCase(event.currentTarget as HTMLFormElement); } } },
       field("Case 제목", input("title", { required: true, maxLength: 200, placeholder: "예: 8월 수입 신고 검토" })),
       field("업무 참조번호", input("reference", { maxLength: 200, placeholder: "선택 입력" })),
       submit("새 Case 만들기", this.state.busy),
@@ -719,7 +725,7 @@ export class CommercialReviewWorkspace {
       filters,
       list,
       this.hasRole("reviewer")
-        ? element("details", { className: "new-case-panel", attributes: { open: this.state.cases.length === 0 ? "" : undefined } },
+        ? element("details", { className: "new-case-panel", attributes: { open: this.state.cases.length === 0 ? "" : undefined, "data-e2e": "case-create-panel" } },
           element("summary", { text: "새 Case 등록" }), form)
         : element("p", { className: "role-boundary-note", text: "승인자 역할은 Case를 읽고 정정 제안을 독립적으로 승인·반려할 수 있습니다. 새 Case 등록은 심사자 역할에서만 가능합니다." }),
     );
@@ -741,7 +747,7 @@ export class CommercialReviewWorkspace {
 
   private createWorkspace(): HTMLElement {
     const current = this.requireCase();
-    return element("section", { className: "case-workspace" },
+    return element("section", { className: "case-workspace", attributes: { "data-e2e": "case-workspace" } },
       element("header", { className: "case-heading" },
         element("div", {},
           element("p", { className: "eyebrow", text: "CASE WORKSPACE" }),
@@ -772,6 +778,7 @@ export class CommercialReviewWorkspace {
         type: "button",
         disabled: this.state.busy || !this.activeDocuments().length || running || !canReview ? "" : undefined,
         title: canReview ? undefined : "AI 심사 실행은 심사자 역할에서만 가능합니다.",
+        "data-e2e": "review-start",
       },
       on: { click: () => void this.startReview() },
     });
@@ -784,7 +791,7 @@ export class CommercialReviewWorkspace {
       tabs.append(element("button", {
         className: `workspace-tab${tab.id === this.state.activeTab ? " is-active" : ""}`,
         text: tab.label,
-        attributes: { type: "button", role: "tab", "aria-selected": tab.id === this.state.activeTab ? "true" : "false" },
+        attributes: { type: "button", role: "tab", "aria-selected": tab.id === this.state.activeTab ? "true" : "false", "data-e2e": `workspace-tab-${tab.id}` },
         on: { click: () => this.setRoute(current.case_id, tab.id) },
       }));
     }
@@ -807,7 +814,7 @@ export class CommercialReviewWorkspace {
       const superseded = Boolean(document.superseded_by_document_id);
       documents.append(element("button", {
         className: `document-row${this.state.selectedDocument?.document_id === document.document_id ? " is-selected" : ""}${superseded ? " is-superseded" : ""}`,
-        attributes: { type: "button", role: "listitem" },
+        attributes: { type: "button", role: "listitem", "data-e2e": "document-row", "data-document-id": document.document_id },
         on: { click: () => void this.withBusy(() => this.openDocument(document.document_id)) },
       },
       element("span", { className: "document-type", text: document.document_type }),
@@ -818,7 +825,7 @@ export class CommercialReviewWorkspace {
     if (!this.state.documents.length) documents.append(element("p", { className: "empty-copy", text: "등록된 문서가 없습니다." }));
 
     const active = this.activeDocuments();
-    const form = element("form", { className: "document-form", on: { submit: (event) => { event.preventDefault(); void this.addDocument(event.currentTarget as HTMLFormElement); } } },
+    const form = element("form", { className: "document-form", attributes: { "data-e2e": "document-form" }, on: { submit: (event) => { event.preventDefault(); void this.addDocument(event.currentTarget as HTMLFormElement); } } },
       element("p", { className: "form-hint", text: "텍스트 붙여넣기 또는 .txt 파일만 지원합니다. PDF·이미지·OCR은 이 기능 범위에 포함되지 않습니다." }),
       element("div", { className: "form-grid" },
         field("문서 유형", select("document_type", DOCUMENT_TYPES.map((type): [string, string] => [type, documentTypeLabel(type)]))),
@@ -835,7 +842,7 @@ export class CommercialReviewWorkspace {
         sectionHeading("문서", "활성 문서는 다음 심사 입력에 포함됩니다."),
         documents,
         this.hasRole("reviewer")
-          ? element("details", { className: "document-add-panel" }, element("summary", { text: "문서 등록 또는 보완" }), form)
+          ? element("details", { className: "document-add-panel", attributes: { "data-e2e": "document-add-panel" } }, element("summary", { text: "문서 등록 또는 보완" }), form)
           : element("p", { className: "role-boundary-note", text: "승인자 역할은 원문과 심사 이력을 읽을 수 있지만 문서를 등록하거나 보완할 수는 없습니다." }),
       ),
       element("section", { className: "surface document-preview" }, this.createDocumentPreview()),
@@ -857,7 +864,7 @@ export class CommercialReviewWorkspace {
     const sections = run.report.sections.map((section, index) =>
       this.createAgentReportSection(run, section, index),
     );
-    return element("section", { className: "analysis-stack grounded-report" },
+    return element("section", { className: "analysis-stack grounded-report", attributes: { "data-e2e": "analysis-content" } },
       element("header", { className: "surface report-intro" },
         element("p", { className: "eyebrow", text: "GROUNDED REVIEW REPORT" }),
         element("h2", { text: "근거 기반 심사 보고서" }),
@@ -1019,7 +1026,7 @@ export class CommercialReviewWorkspace {
       element("button", {
         className: "button button--secondary",
         text: "새 대화",
-        attributes: { type: "button", disabled: loading || this.state.assistantSending ? "" : undefined },
+        attributes: { type: "button", disabled: loading || this.state.assistantSending ? "" : undefined, "data-e2e": "assistant-new-conversation" },
         on: { click: () => void this.createAssistantConversation() },
       }),
       conversations,
@@ -1042,7 +1049,7 @@ export class CommercialReviewWorkspace {
       return element("div", { className: "assistant-empty" },
         element("h3", { text: "새 대화를 시작해 보십시오." }),
         element("p", { text: "예: ‘수량 불일치가 나온 문서와 실제 값을 알려줘’처럼 현재 심사 결과에 대해 질문할 수 있습니다." }),
-        element("button", { className: "button button--primary", text: "첫 대화 만들기", attributes: { type: "button" }, on: { click: () => void this.createAssistantConversation() } }),
+        element("button", { className: "button button--primary", text: "첫 대화 만들기", attributes: { type: "button", "data-e2e": "assistant-create" }, on: { click: () => void this.createAssistantConversation() } }),
       );
     }
     const messageList = element("ol", { className: "assistant-message-list", attributes: { "aria-live": "polite", "aria-label": "AI 도우미 메시지" } });
@@ -1059,7 +1066,7 @@ export class CommercialReviewWorkspace {
       ));
     }
     const form = element("form", {
-      className: "assistant-composer",
+      className: "assistant-composer", attributes: { "data-e2e": "assistant-form" },
       on: { submit: (event) => { event.preventDefault(); const formData = new FormData(event.currentTarget as HTMLFormElement); void this.sendAssistantMessage(stringValue(formData, "assistant_message")); } },
     },
     field("질문", textarea("assistant_message", {
@@ -1117,7 +1124,7 @@ export class CommercialReviewWorkspace {
         })
         : element("small", { className: "role-boundary-note", text: "정정 제안 초안은 심사자 역할에서만 기록할 수 있습니다." })
       : null;
-    return element("li", { className: `assistant-message assistant-message--${item.role}` },
+    return element("li", { className: `assistant-message assistant-message--${item.role}`, attributes: { "data-e2e": "assistant-message", "data-message-role": item.role } },
       element("header", {}, element("strong", { text: label }), metadata, element("small", { text: formatDate(item.created_at) })),
       element("p", { className: "assistant-message__content", text: item.content }),
       citations,
@@ -1204,7 +1211,7 @@ export class CommercialReviewWorkspace {
       const decision = run.reviewer_decisions.find((item) => item.finding_id === finding.finding_id);
       const comparison = finding.comparison_id ? run.comparisons.find((item) => item.comparison_id === finding.comparison_id) : undefined;
       const source = sourceForFinding(run, finding);
-      const card = element("article", { className: `finding-card finding-card--${finding.severity}` },
+      const card = element("article", { className: `finding-card finding-card--${finding.severity}`, attributes: { "data-e2e": "finding-card", "data-finding-id": finding.finding_id } },
         element("header", { className: "finding-heading" },
           element("span", { className: `severity severity--${finding.severity}`, text: severityLabel(finding.severity) }),
           element("div", {}, element("strong", { text: finding.code }), element("p", { text: finding.message })),
@@ -1250,7 +1257,7 @@ export class CommercialReviewWorkspace {
       )) : null,
     ) : element("p", { className: "decision-empty", text: "아직 담당자 판단이 기록되지 않았습니다." });
     const form = this.hasRole("reviewer")
-      ? element("form", { className: "decision-form", on: { submit: (event) => { event.preventDefault(); void this.decideFinding(event.currentTarget as HTMLFormElement, finding.finding_id); } } },
+      ? element("form", { className: "decision-form", attributes: { "data-e2e": "finding-decision" }, on: { submit: (event) => { event.preventDefault(); void this.decideFinding(event.currentTarget as HTMLFormElement, finding.finding_id); } } },
         select("status", [["confirmed", "확인함"], ["needs_information", "추가자료 요청"], ["resolved", "해결됨"]]),
         textarea("reason", { required: true, maxLength: 4_000, placeholder: "판단 사유를 기록하십시오." }),
         submit(decision ? "판단 수정" : "판단 기록", this.state.busy),
@@ -1277,7 +1284,7 @@ export class CommercialReviewWorkspace {
       return element("p", { className: "muted", text: "이 확인 사항에는 정정할 문서 사실이 연결되어 있지 않습니다. 문서 원문을 보완하거나 AI 도우미의 근거 있는 정정 제안을 사용하십시오." });
     }
     const form = element("form", {
-      className: "correction-proposal-form",
+      className: "correction-proposal-form", attributes: { "data-e2e": "correction-proposal" },
       on: { submit: (event) => { event.preventDefault(); void this.createCorrectionProposal(event.currentTarget as HTMLFormElement); } },
     },
     input("document_id", { type: "hidden", value: documentId }),
@@ -1346,7 +1353,7 @@ export class CommercialReviewWorkspace {
       const linked = run.findings.filter((finding) => finding.evidence_ids.includes(item.evidence_id));
       evidence.append(element("article", {
         className: `evidence-card${this.state.evidenceFocusId === item.evidence_id ? " is-focused" : ""}`,
-        attributes: { "data-evidence-id": item.evidence_id },
+        attributes: { "data-e2e": "evidence-card", "data-evidence-id": item.evidence_id },
       },
         element("header", {}, element("span", { className: "evidence-type", text: item.source_type }), element("h3", { text: item.title })),
         item.law_name ? element("p", { className: "evidence-law", text: item.law_name }) : null,
@@ -1363,7 +1370,7 @@ export class CommercialReviewWorkspace {
         (item) => item.dataset.evidenceId === focusedId,
       )));
     }
-    return element("section", { className: "surface evidence-surface" }, sectionHeading("법령 Evidence", "Agent가 Data Evidence API에서 받은 근거입니다."), evidence);
+    return element("section", { className: "surface evidence-surface", attributes: { "data-e2e": "evidence-content" } }, sectionHeading("법령 Evidence", "Agent가 Data Evidence API에서 받은 근거입니다."), evidence);
   }
 
   private createHistoryTab(): HTMLElement {
@@ -1374,7 +1381,14 @@ export class CommercialReviewWorkspace {
       const relation = run.parent_review_run_id
         ? `정정 반영 자식 실행 · 부모 ${run.parent_review_run_id.slice(0, 10)}`
         : "기준 심사 실행";
-      timeline.append(element("li", { className: `history-item${this.state.selectedRun?.review_run_id === run.review_run_id ? " is-selected" : ""}` },
+      timeline.append(element("li", {
+        className: `history-item${this.state.selectedRun?.review_run_id === run.review_run_id ? " is-selected" : ""}`,
+        attributes: {
+          "data-e2e": "review-run",
+          "data-review-run-id": run.review_run_id,
+          "data-parent-review-run-id": run.parent_review_run_id ?? undefined,
+        },
+      },
         element("button", {
           className: "history-button", attributes: { type: "button" },
           on: { click: () => void this.withBusy(async () => { await this.openRun(run.review_run_id); await this.ensureCorrectionProposalsLoaded(); }) },
@@ -1390,7 +1404,7 @@ export class CommercialReviewWorkspace {
     const approvedCorrectionCount = this.eligibleCorrectionProposals().length;
     const selectedCorrectionCount = this.selectedEligibleCorrectionProposalIds().length;
     const canRevise = this.hasRole("approver");
-    return element("section", { className: "history-layout" },
+    return element("section", { className: "history-layout", attributes: { "data-e2e": "history-content" } },
       element("section", { className: "surface history-main" },
         sectionHeading("심사 이력", "원래 심사 결과를 덮어쓰지 않고, 승인된 정정 제안은 자식 심사 실행으로 남깁니다."),
         lineage,
@@ -1411,6 +1425,7 @@ export class CommercialReviewWorkspace {
             type: "button",
             disabled: !selectedCorrectionCount || this.state.busy || !canRevise ? "" : undefined,
             title: canRevise ? undefined : "자식 심사 실행은 승인자 역할에서만 가능합니다.",
+            "data-e2e": "revision-start",
           },
           on: { click: () => void this.startRevision().catch((error) => this.showError(error)) },
         }),
@@ -1461,7 +1476,7 @@ export class CommercialReviewWorkspace {
     const selfProposed = proposal.created_by === this.state.session?.subject;
     const canDecide = proposal.status === "proposed" && this.hasRole("approver") && !selfProposed;
     const decisionForm = canDecide
-      ? element("form", { className: "correction-decision-form", on: { submit: (event) => { event.preventDefault(); void this.decideCorrectionProposal(proposal, event.currentTarget as HTMLFormElement); } } },
+      ? element("form", { className: "correction-decision-form", attributes: { "data-e2e": "correction-decision" }, on: { submit: (event) => { event.preventDefault(); void this.decideCorrectionProposal(proposal, event.currentTarget as HTMLFormElement); } } },
         select("status", [["approved", "승인"], ["rejected", "반려"]]),
         textarea("reason", { required: true, maxLength: 2_000, placeholder: "승인 또는 반려 사유를 기록하십시오." }),
         submit("결정 기록", this.state.busy),
@@ -1480,7 +1495,7 @@ export class CommercialReviewWorkspace {
     const revisionSelection = canSelectForRevision
       ? this.createCorrectionProposalSelection(proposal, selectedForRevision)
       : null;
-    return element("article", { className: `correction-proposal-card correction-proposal-card--${proposal.status}` },
+    return element("article", { className: `correction-proposal-card correction-proposal-card--${proposal.status}`, attributes: { "data-e2e": "correction-card" } },
       element("header", {}, element("span", { className: "correction-status", text: correctionStatusLabel(proposal.status) }), element("small", { text: formatDate(proposal.created_at) })),
       element("h4", { text: `${proposal.field_name}: ${proposal.new_value}${proposal.unit ? ` ${proposal.unit}` : ""}` }),
       element("p", { text: proposal.reason }),
@@ -1505,6 +1520,7 @@ export class CommercialReviewWorkspace {
       attributes: {
         type: "checkbox",
         "data-correction-proposal-id": proposal.correction_proposal_id,
+        "data-e2e": "correction-select",
         "aria-label": `${proposal.field_name} 정정을 자식 심사에 반영`,
       },
       on: {

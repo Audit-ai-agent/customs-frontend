@@ -11,6 +11,7 @@ Browser에 전달하지 않습니다.
 | --- | --- | --- |
 | corepack npm run dev:local | 기본 팀 개발 | 없음 |
 | corepack npm run dev:functional-uat | 실제 기능 UAT 화면 | Backend Functional-UAT와 OIDC 설정 |
+| Backend의 `uv run --no-sync python tools/run_functional_uat_browser_e2e.py` | 실제 Browser 대표 E2E | 준비된 네 서비스·개인 Functional-UAT profile |
 
 기본 개발은 Backend의 loopback 전용 development session을 메모리에만
 보관합니다. 공용 키, OIDC, Docker, 모델 cache, Law API 또는 Claude 키가
@@ -68,6 +69,30 @@ Agent/Data/DB 값으로 Browser를 설정하지 마십시오.
 질문하고, 정정 제안을 독립된 approver가 승인한 뒤 자식 심사를 요청할 수 있습니다. 이 과정도
 자동 승인이나 원문 변경으로 이어지지 않습니다. Browser는 심사 기준일을 보내지 않습니다. Backend가 개발 모드의
 로컬 날짜를 정하거나 Functional UAT의 2026-08-05를 강제합니다.
+
+## 실제 Browser E2E
+
+현재 `main` 조합의 화면 연결을 실제로 확인할 때만 Backend 저장소에서 다음 명령을 실행합니다.
+Frontend 저장소에서 환경변수나 비밀번호를 직접 설정한 뒤 이 명령을 실행하지 않습니다.
+
+```powershell
+Set-Location ..\customs-backend
+uv run --no-sync python tools/run_functional_uat_browser_e2e.py
+```
+
+이 명령은 이미 실행 중인 Functional-UAT 서비스만 확인하고, profile의 reviewer·approver
+비밀번호를 자식 프로세스 메모리에만 주입합니다. Microsoft Edge의 설치된 `msedge` 채널을
+headless로 사용하며 별도 Browser 다운로드, Docker 기동·정리, 서비스 재기동, GitHub Actions
+실행을 하지 않습니다.
+
+검증 범위는 reviewer 로그인 → Case·텍스트 문서 등록(.txt 업로드 포함) → 실제 심사 → 보고서·Evidence·인용 →
+AI 도우미 → finding 판단·정정 제안 → 독립 approver 승인 → 자식 심사 → 문서 대체와 새 심사 이력입니다.
+Browser는 Frontend의 `/api/v1` proxy만 사용해야 하며 Agent·Data 직접 요청은 실패로 처리합니다.
+
+Playwright는 이 로컬 명령에만 쓰는 정확히 고정된 개발 의존성입니다. 일반 `test`, `check:quick`,
+CI에는 Browser E2E를 넣지 않습니다. trace·video·screenshot·HTML 보고서는 만들지 않고, 성공 시
+Backend가 지정한 `_local/state/e2e-runs/<run-id>/receipt.json`에 비밀 제거 요약만 한 번 기록합니다.
+실제 문서·대화·Claude 결과는 기존 Functional-UAT transcript 경계에만 남습니다.
 
 ## 선택적 정적 Docker smoke
 

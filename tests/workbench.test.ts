@@ -59,6 +59,7 @@ describe("commercial review workspace", () => {
     const auth = { logout: async () => undefined, freshAccessToken: async () => "token", isAuthenticated: () => true };
     const app = new LightweightWorkbench(root, api as never, auth, "local-development");
     await app.start();
+    expect(root.querySelector('[data-e2e="workspace-root"]')).not.toBeNull();
     expect(root.textContent).toContain("문서와 근거를 한 화면에서 검토합니다.");
     expect(root.textContent).toContain("기본 개발");
     expect(root.textContent).toContain("사람 검토");
@@ -88,6 +89,8 @@ describe("commercial review workspace", () => {
     expect(api.getJob).not.toHaveBeenCalled();
     expect(api.getReviewRun).toHaveBeenCalledWith("run-1");
     expect(root.textContent).toContain("처리 과정과 실행 상태");
+    expect(root.querySelector('[data-e2e="analysis-content"]')).not.toBeNull();
+    expect(root.querySelector('[data-e2e="finding-card"]')).not.toBeNull();
     expect(root.textContent).toContain("문서 간 비교");
     expect(root.textContent).toContain("담당자 판단 기록");
     expect(root.querySelectorAll("[data-report-section]")).toHaveLength(8);
@@ -223,6 +226,7 @@ describe("commercial review workspace", () => {
     expect(api.enqueueRevision).toHaveBeenCalledWith("run-1", { proposal_ids: ["proposal-1"] }, expect.any(String));
     window.location.hash = "#/cases/case-1/history";
     await (app as unknown as { followRoute(): Promise<void> }).followRoute();
+    expect(root.querySelector('[data-e2e="history-content"]')).not.toBeNull();
     expect(root.textContent).toContain("정정 반영 자식 실행");
     window.location.hash = "#/cases/case-1/analysis";
     await (app as unknown as { followRoute(): Promise<void> }).followRoute();

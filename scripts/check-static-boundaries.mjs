@@ -29,16 +29,43 @@ if (!main.includes('import("./workbench")')) {
 if (main.includes("/api/v2")) violations.push("main entry must not use the retired v2 experience API");
 const viteConfig = await readFile(new URL("../vite.config.ts", import.meta.url), "utf8");
 if (viteConfig.includes("/api/v2")) violations.push("Vite must not proxy the retired v2 experience API");
+const playwrightConfig = await readFile(new URL("../playwright.functional-uat.config.ts", import.meta.url), "utf8");
+for (const required of [
+  'channel: "msedge"',
+  'headless: true',
+  'screenshot: "off"',
+  'video: "off"',
+  'trace: "off"',
+  "workers: 1",
+]) {
+  if (!playwrightConfig.includes(required)) {
+    violations.push("Functional-UAT Browser config must remain local, single-worker, and capture-free");
+    break;
+  }
+}
+const browserE2e = await readFile(new URL("../e2e/functional-uat-browser.spec.ts", import.meta.url), "utf8");
+for (const forbidden of [/\bpage\.request\b/u, /\brequest\.newContext\b/u, /\bAPIRequestContext\b/u, /\bfetch\s*\(/u]) {
+  if (forbidden.test(browserE2e)) {
+    violations.push("Functional-UAT Browser spec must use the visible Browser UI only");
+    break;
+  }
+}
 const apiClient = await readFile(new URL("../src/api/v1/client.ts", import.meta.url), "utf8");
 if (apiClient.includes("/api/v2") || !apiClient.includes('const API_BASE = "/api/v1"')) {
   violations.push("Browser client must use Backend API v1 only");
 }
 
 const packageJson = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
-for (const forbidden of ["react", "react-dom", "react-router", "@playwright/test", "@vitejs/plugin-react"]) {
+for (const forbidden of ["react", "react-dom", "react-router", "@vitejs/plugin-react"]) {
   if (packageJson.dependencies?.[forbidden] || packageJson.devDependencies?.[forbidden]) {
     violations.push("unused dependency remains: " + forbidden);
   }
+}
+if (packageJson.devDependencies?.["@playwright/test"] !== "1.62.1") {
+  violations.push("local Functional-UAT browser runner must pin @playwright/test 1.62.1 exactly");
+}
+if (packageJson.scripts?.["functional-uat:browser"] !== "playwright test --config playwright.functional-uat.config.ts") {
+  violations.push("Functional-UAT browser command must remain local-only and explicit");
 }
 for (const script of ["build:uat", "uat:export:scenarios", "uat:evaluate:scenario", "test:e2e", "test:coverage"]) {
   if (packageJson.scripts?.[script]) violations.push("retired script remains: " + script);
@@ -56,6 +83,9 @@ if (packageJson.scripts?.["check:quick"] !== "npm run lint && npm run typecheck 
 }
 if (packageJson.scripts?.["check:contract"] !== "npm run contract:check") {
   violations.push("check:contract must remain the Backend API byte check");
+}
+if (!viteConfig.includes('exclude: ["node_modules/**", "dist/**", "e2e/**"]')) {
+  violations.push("Vitest must exclude the explicit local Browser E2E path");
 }
 
 if (violations.length) {
