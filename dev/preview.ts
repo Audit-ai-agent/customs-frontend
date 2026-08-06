@@ -156,12 +156,13 @@ const api = {
   getSession: async () => ({ subject: "local-reviewer", org_id: "local-org", roles: ["reviewer"] }),
   listCases: async () => ({ items: cases }),
   getCase: async (caseId: string) => cases.find((item) => item.case_id === caseId) ?? cases[0],
-  listDocuments: async () => documents,
+  // case-2 is deliberately empty so the empty states can be reviewed too.
+  listDocuments: async (caseId: string) => caseId === "case-2" ? [] : documents,
   getDocumentContent: async (_caseId: string, documentId: string) => ({
     ...documents.find((item) => item.document_id === documentId),
     content_text: contents[documentId] ?? "",
   }),
-  listReviewRuns: async () => [runSummary],
+  listReviewRuns: async (caseId: string) => caseId === "case-2" ? [] : [runSummary],
   getReviewRun: async () => run,
   listAssistantConversations: async () => [conversation],
   listAssistantMessages: async () => messages,

@@ -1,0 +1,101 @@
+- generic [active] [ref=f2e1]:
+  - link "본문으로 건너뛰기" [ref=f2e2] [cursor=pointer]:
+    - /url: "#main-content"
+  - generic [ref=f2e4]:
+    - generic [ref=f2e6]:
+      - generic [ref=f2e7]: 통관 AI 사전심사 · 업무시스템
+      - generic [ref=f2e8]:
+        - group "본문 글자 크기 조절" [ref=f2e9]:
+          - generic [ref=f2e10]: 글자크기
+          - button "글자 크기 작게" [ref=f2e11] [cursor=pointer]: 가⁻
+          - button "글자 크기 보통" [pressed] [ref=f2e12] [cursor=pointer]: 가
+          - button "글자 크기 크게" [ref=f2e13] [cursor=pointer]: 가⁺
+        - group "로컬 개발 역할 전환" [ref=f2e14]:
+          - generic [ref=f2e15]: 개발 역할
+          - button "심사자" [disabled] [pressed] [ref=f2e16]
+          - button "승인자" [ref=f2e17] [cursor=pointer]
+        - button "로그아웃" [ref=f2e18] [cursor=pointer]
+    - banner [ref=f2e19]:
+      - generic [ref=f2e20]:
+        - link "통관 AI 사전심사 첫 화면" [ref=f2e21] [cursor=pointer]:
+          - /url: "#/cases"
+          - generic [ref=f2e22]: 通
+          - generic [ref=f2e23]:
+            - strong [ref=f2e24]: 통관 AI 사전심사
+            - generic [ref=f2e25]: 팀 개발 환경
+        - generic [ref=f2e26]:
+          - strong [ref=f2e27]: local-reviewer
+          - generic [ref=f2e28]: local-org · 심사자
+    - navigation "주요 메뉴" [ref=f2e29]:
+      - generic [ref=f2e30]:
+        - button "심사 업무함" [ref=f2e31] [cursor=pointer]
+        - button "심사 워크스페이스" [ref=f2e32] [cursor=pointer]
+        - button "AI 도우미" [ref=f2e33] [cursor=pointer]
+        - button "심사 이력" [ref=f2e34] [cursor=pointer]
+    - status [ref=f2e35]:
+      - generic [ref=f2e36]:
+        - strong [ref=f2e37]: 기본 개발
+        - generic [ref=f2e38]: 합성 Evidence와 결정론 Agent를 사용합니다. Docker·모델·Law API·Claude 키 없이 전체 업무 흐름을 확인할 수 있습니다.
+    - main [ref=f2e39]:
+      - generic [ref=f2e41]:
+        - paragraph [ref=f2e42]:
+          - generic [ref=f2e43]: 홈
+          - generic [ref=f2e44]: ›
+          - generic [ref=f2e45]: 심사 업무함
+          - generic [ref=f2e46]: ›
+          - strong [ref=f2e47]: 전자부품 수입 건 (2026-08)
+        - generic [ref=f2e48]:
+          - generic [ref=f2e49]:
+            - heading "전자부품 수입 건 (2026-08)" [level=1] [ref=f2e50]
+            - paragraph [ref=f2e51]: IMP-2026-0812 · 사람 검토 중 · 활성 문서 2건
+          - generic [ref=f2e52]:
+            - generic [ref=f2e53]: 항상 사람 검토 필요
+            - button "AI 심사 시작" [ref=f2e54] [cursor=pointer]
+      - generic [ref=f2e57]:
+        - generic [ref=f2e58]:
+          - generic [ref=f2e59]:
+            - heading "심사 이력" [level=2] [ref=f2e60]
+            - paragraph [ref=f2e61]: 원래 심사 결과를 덮어쓰지 않고, 승인된 정정 제안은 자식 심사 실행으로 남깁니다.
+          - generic [ref=f2e62]:
+            - heading "정정 반영 계보" [level=3] [ref=f2e63]
+            - list [ref=f2e64]:
+              - listitem [ref=f2e65]:
+                - strong [ref=f2e66]: 기준 심사
+                - generic [ref=f2e67]: 이 실행은 이전 정정 제안을 반영한 자식 실행이 아닙니다.
+          - list [ref=f2e68]:
+            - listitem [ref=f2e69]:
+              - button "2026. 8. 5. 오후 6:12 확인 사항 있음 · 확인 사항 2건 기준 심사 실행 · 담당자 판단 0건" [ref=f2e70] [cursor=pointer]:
+                - strong [ref=f2e71]: 2026. 8. 5. 오후 6:12
+                - generic [ref=f2e72]: 확인 사항 있음 · 확인 사항 2건
+                - generic [ref=f2e73]: 기준 심사 실행 · 담당자 판단 0건
+          - generic [ref=f2e74]:
+            - generic [ref=f2e75]:
+              - heading "정정 제안" [level=2] [ref=f2e76]
+              - paragraph [ref=f2e77]: 제안 → 담당자 승인 또는 반려 → 선택된 항목의 자식 심사 실행 순서로 진행됩니다.
+            - article [ref=f2e79]:
+              - generic [ref=f2e80]:
+                - generic [ref=f2e81]: 제안됨
+                - generic [ref=f2e82]: 2026. 8. 5. 오후 6:12
+              - 'heading "quantity: 100 EA" [level=4] [ref=f2e83]'
+              - paragraph [ref=f2e84]: Packing List 원문 확인 결과 100 EA가 맞습니다.
+              - generic [ref=f2e85]: 문서 doc-1 · 사실 fact-2
+              - list [ref=f2e86]:
+                - listitem [ref=f2e87]:
+                  - strong [ref=f2e88]: 제안 기록
+                  - generic [ref=f2e89]: Packing List 원문 확인 결과 100 EA가 맞습니다.
+                  - generic [ref=f2e90]: local-reviewer · 2026. 8. 5. 오후 6:12
+              - paragraph [ref=f2e91]: 제안자는 자신의 제안을 승인하거나 반려할 수 없습니다. 다른 승인자가 결정해야 합니다.
+        - generic [ref=f2e92]:
+          - generic [ref=f2e93]:
+            - heading "다음 작업" [level=2] [ref=f2e94]
+            - paragraph [ref=f2e95]: 문서 보완 또는 선택한 승인 정정 제안을 반영한 재심사를 진행할 수 있습니다.
+          - paragraph [ref=f2e96]: 대체 문서는 문서 탭에서 등록하십시오. 정정 제안은 승인돼도 원래 실행을 바꾸지 않으며, 선택한 항목만 새 자식 심사에 반영됩니다.
+          - button "문서 탭으로 이동" [ref=f2e97] [cursor=pointer]
+          - button "승인자 역할에서 재심사" [disabled] [ref=f2e98]
+          - paragraph [ref=f2e99]: 승인자 역할에서 승인된 제안을 선택해 자식 심사를 실행할 수 있습니다.
+    - contentinfo [ref=f2e100]:
+      - generic [ref=f2e101]:
+        - paragraph [ref=f2e102]: 통관 AI 사전심사 작업대
+        - paragraph [ref=f2e103]: 팀 개발 모드입니다. 세션과 토큰은 메모리에만 두며 브라우저 저장소에 남기지 않습니다.
+        - paragraph [ref=f2e104]: 모든 결과는 항상 담당자 검토 대상이며 통관 승인 판단이 아닙니다. 화면에 비밀정보를 입력하지 마십시오.
+        - paragraph [ref=f2e105]: KRDS(대한민국 정부 디자인 시스템) 문법을 적용한 업무 화면입니다.

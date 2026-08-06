@@ -1,0 +1,149 @@
+- generic [active] [ref=e1]:
+  - link "본문으로 건너뛰기" [ref=e2] [cursor=pointer]:
+    - /url: "#main-content"
+  - generic [ref=e4]:
+    - generic [ref=e6]:
+      - generic [ref=e7]: 통관 AI 사전심사 · 업무시스템
+      - generic [ref=e8]:
+        - group "본문 글자 크기 조절" [ref=e9]:
+          - generic [ref=e10]: 글자크기
+          - button "글자 크기 작게" [ref=e11] [cursor=pointer]: 가⁻
+          - button "글자 크기 보통" [pressed] [ref=e12] [cursor=pointer]: 가
+          - button "글자 크기 크게" [ref=e13] [cursor=pointer]: 가⁺
+        - group "로컬 개발 역할 전환" [ref=e14]:
+          - generic [ref=e15]: 개발 역할
+          - button "심사자" [disabled] [pressed] [ref=e16]
+          - button "승인자" [ref=e17] [cursor=pointer]
+        - button "로그아웃" [ref=e18] [cursor=pointer]
+    - banner [ref=e19]:
+      - generic [ref=e20]:
+        - link "통관 AI 사전심사 첫 화면" [ref=e21] [cursor=pointer]:
+          - /url: "#/cases"
+          - generic [ref=e22]: 通
+          - generic [ref=e23]:
+            - strong [ref=e24]: 통관 AI 사전심사
+            - generic [ref=e25]: 팀 개발 환경
+        - generic [ref=e26]:
+          - strong [ref=e27]: local-reviewer
+          - generic [ref=e28]: local-org · 심사자
+    - navigation "주요 메뉴" [ref=e29]:
+      - button "심사 업무함" [ref=e31] [cursor=pointer]
+    - status [ref=e32]:
+      - generic [ref=e33]:
+        - strong [ref=e34]: 기본 개발
+        - generic [ref=e35]: 합성 Evidence와 결정론 Agent를 사용합니다. Docker·모델·Law API·Claude 키 없이 전체 업무 흐름을 확인할 수 있습니다.
+    - main [ref=e36]:
+      - generic [ref=e38]:
+        - paragraph [ref=e39]:
+          - generic [ref=e40]: 홈
+          - generic [ref=e41]: ›
+          - generic [ref=e42]: 통관심사
+          - generic [ref=e43]: ›
+          - strong [ref=e44]: 심사 업무함
+        - generic [ref=e46]:
+          - heading "심사 업무함" [level=1] [ref=e47]
+          - paragraph [ref=e48]: 등록된 Case 3건 · 문서와 근거를 한 화면에서 검토합니다.
+      - generic [ref=e50]:
+        - generic [ref=e51]:
+          - generic [ref=e52]:
+            - generic [ref=e53]: 전체 Case
+            - strong [ref=e54]: "3"
+            - generic [ref=e55]: 업무함에 등록된 전체 건
+          - generic [ref=e56]:
+            - generic [ref=e57]: 진행 전
+            - strong [ref=e58]: "1"
+            - generic [ref=e59]: 심사를 아직 시작하지 않은 건
+          - generic [ref=e60]:
+            - generic [ref=e61]: 사람 검토 중
+            - strong [ref=e62]: "1"
+            - generic [ref=e63]: 담당자 판단이 필요한 건
+          - generic [ref=e64]:
+            - generic [ref=e65]: 종료
+            - strong [ref=e66]: "1"
+            - generic [ref=e67]: 검토가 끝난 건
+        - region "처리 흐름" [ref=e68]:
+          - paragraph [ref=e69]: 처리 흐름 · 서류 등록에서 담당자 확정까지
+          - list [ref=e70]:
+            - listitem [ref=e71]:
+              - generic [ref=e72]: "1"
+              - generic [ref=e73]:
+                - strong [ref=e74]: 서류 등록
+                - generic [ref=e75]: 텍스트 문서 구조화
+              - generic [ref=e76]: →
+            - listitem [ref=e77]:
+              - generic [ref=e78]: "2"
+              - generic [ref=e79]:
+                - strong [ref=e80]: AI 사전심사
+                - generic [ref=e81]: 제한형 Agent workflow
+              - generic [ref=e82]: →
+            - listitem [ref=e83]:
+              - generic [ref=e84]: "3"
+              - generic [ref=e85]:
+                - strong [ref=e86]: 교차 검증
+                - generic [ref=e87]: 문서 간 값 대조
+              - generic [ref=e88]: →
+            - listitem [ref=e89]:
+              - generic [ref=e90]: "4"
+              - generic [ref=e91]:
+                - strong [ref=e92]: 판정 · 근거
+                - generic [ref=e93]: 확인 사항 · 법령 Evidence
+              - generic [ref=e94]: →
+            - listitem [ref=e95]:
+              - generic [ref=e96]: "5"
+              - generic [ref=e97]:
+                - strong [ref=e98]: 담당자 확정
+                - generic [ref=e99]: 판단 기록 · 정정 승인
+        - generic [ref=e100]:
+          - group "상태 필터" [ref=e101]:
+            - button "전체 3" [pressed] [ref=e102] [cursor=pointer]:
+              - generic [ref=e103]: 전체
+              - generic [ref=e104]: "3"
+            - button "진행 전 1" [ref=e105] [cursor=pointer]:
+              - generic [ref=e106]: 진행 전
+              - generic [ref=e107]: "1"
+            - button "사람 검토 중 1" [ref=e108] [cursor=pointer]:
+              - generic [ref=e109]: 사람 검토 중
+              - generic [ref=e110]: "1"
+            - button "종료 1" [ref=e111] [cursor=pointer]:
+              - generic [ref=e112]: 종료
+              - generic [ref=e113]: "1"
+          - generic [ref=e114]:
+            - generic [ref=e115]: ⌕
+            - textbox "Case 검색" [ref=e116]:
+              - /placeholder: Case명 또는 참조번호 검색 ( / )
+        - generic [ref=e117]:
+          - generic [ref=e118]:
+            - heading "심사 업무함" [level=2] [ref=e119]
+            - paragraph [ref=e120]: 행을 누르면 해당 Case의 심사 워크스페이스로 이동합니다.
+          - table "Case 목록" [ref=e121]:
+            - row "참조번호 ↕ Case 제목 상태 최근 수정 ▼" [ref=e122]:
+              - button "참조번호 ↕" [ref=e123] [cursor=pointer]
+              - generic [ref=e124]: Case 제목
+              - generic [ref=e125]: 상태
+              - button "최근 수정 ▼" [ref=e126] [cursor=pointer]
+            - row "IMP-2026-0812 전자부품 수입 건 (2026-08) 사람 검토 중 2026. 8. 5. 오후 6:12" [ref=e127] [cursor=pointer]:
+              - generic [ref=e128]: IMP-2026-0812
+              - generic [ref=e129]: 전자부품 수입 건 (2026-08)
+              - generic [ref=e130]: 사람 검토 중
+              - generic [ref=e132]: 2026. 8. 5. 오후 6:12
+              - generic [ref=e133]: ›
+            - row "IMP-2026-0771 섬유 완제품 수입 건 진행 전 2026. 8. 5. 오후 6:12" [ref=e134] [cursor=pointer]:
+              - generic [ref=e135]: IMP-2026-0771
+              - generic [ref=e136]: 섬유 완제품 수입 건
+              - generic [ref=e137]: 진행 전
+              - generic [ref=e139]: 2026. 8. 5. 오후 6:12
+              - generic [ref=e140]: ›
+            - row "IMP-2026-0654 기계부품 수입 건 (완료) 종료 2026. 8. 5. 오후 6:12" [ref=e141] [cursor=pointer]:
+              - generic [ref=e142]: IMP-2026-0654
+              - generic [ref=e143]: 기계부품 수입 건 (완료)
+              - generic [ref=e144]: 종료
+              - generic [ref=e146]: 2026. 8. 5. 오후 6:12
+              - generic [ref=e147]: ›
+        - group [ref=e148]:
+          - generic "＋ 새 Case 등록" [ref=e149] [cursor=pointer]
+    - contentinfo [ref=e150]:
+      - generic [ref=e151]:
+        - paragraph [ref=e152]: 통관 AI 사전심사 작업대
+        - paragraph [ref=e153]: 팀 개발 모드입니다. 세션과 토큰은 메모리에만 두며 브라우저 저장소에 남기지 않습니다.
+        - paragraph [ref=e154]: 모든 결과는 항상 담당자 검토 대상이며 통관 승인 판단이 아닙니다. 화면에 비밀정보를 입력하지 마십시오.
+        - paragraph [ref=e155]: KRDS(대한민국 정부 디자인 시스템) 문법을 적용한 업무 화면입니다.

@@ -1,0 +1,202 @@
+- generic [active] [ref=f1e1]:
+  - link "본문으로 건너뛰기" [ref=f1e2] [cursor=pointer]:
+    - /url: "#main-content"
+  - generic [ref=f1e4]:
+    - generic [ref=f1e6]:
+      - generic [ref=f1e7]: 통관 AI 사전심사 · 업무시스템
+      - generic [ref=f1e8]:
+        - group "본문 글자 크기 조절" [ref=f1e9]:
+          - generic [ref=f1e10]: 글자크기
+          - button "글자 크기 작게" [ref=f1e11] [cursor=pointer]: 가⁻
+          - button "글자 크기 보통" [pressed] [ref=f1e12] [cursor=pointer]: 가
+          - button "글자 크기 크게" [ref=f1e13] [cursor=pointer]: 가⁺
+        - group "로컬 개발 역할 전환" [ref=f1e14]:
+          - generic [ref=f1e15]: 개발 역할
+          - button "심사자" [disabled] [pressed] [ref=f1e16]
+          - button "승인자" [ref=f1e17] [cursor=pointer]
+        - button "로그아웃" [ref=f1e18] [cursor=pointer]
+    - banner [ref=f1e19]:
+      - generic [ref=f1e20]:
+        - link "통관 AI 사전심사 첫 화면" [ref=f1e21] [cursor=pointer]:
+          - /url: "#/cases"
+          - generic [ref=f1e22]: 通
+          - generic [ref=f1e23]:
+            - strong [ref=f1e24]: 통관 AI 사전심사
+            - generic [ref=f1e25]: 팀 개발 환경
+        - generic [ref=f1e26]:
+          - strong [ref=f1e27]: local-reviewer
+          - generic [ref=f1e28]: local-org · 심사자
+    - navigation "주요 메뉴" [ref=f1e29]:
+      - generic [ref=f1e30]:
+        - button "심사 업무함" [ref=f1e31] [cursor=pointer]
+        - button "심사 워크스페이스" [ref=f1e32] [cursor=pointer]
+        - button "AI 도우미" [ref=f1e33] [cursor=pointer]
+        - button "심사 이력" [ref=f1e34] [cursor=pointer]
+    - status [ref=f1e35]:
+      - generic [ref=f1e36]:
+        - strong [ref=f1e37]: 기본 개발
+        - generic [ref=f1e38]: 합성 Evidence와 결정론 Agent를 사용합니다. Docker·모델·Law API·Claude 키 없이 전체 업무 흐름을 확인할 수 있습니다.
+    - main [ref=f1e39]:
+      - generic [ref=f1e41]:
+        - paragraph [ref=f1e42]:
+          - generic [ref=f1e43]: 홈
+          - generic [ref=f1e44]: ›
+          - generic [ref=f1e45]: 심사 업무함
+          - generic [ref=f1e46]: ›
+          - strong [ref=f1e47]: 전자부품 수입 건 (2026-08)
+        - generic [ref=f1e48]:
+          - generic [ref=f1e49]:
+            - heading "전자부품 수입 건 (2026-08)" [level=1] [ref=f1e50]
+            - paragraph [ref=f1e51]: IMP-2026-0812 · 사람 검토 중 · 활성 문서 2건
+          - generic [ref=f1e52]:
+            - generic [ref=f1e53]: 항상 사람 검토 필요
+            - button "AI 심사 시작" [ref=f1e54] [cursor=pointer]
+      - generic [ref=f1e56]:
+        - navigation "심사 단계" [ref=f1e57]:
+          - button "1 서류 등록 텍스트 문서 구조화" [ref=f1e58] [cursor=pointer]:
+            - generic [ref=f1e59]: "1"
+            - generic [ref=f1e60]:
+              - strong [ref=f1e61]: 서류 등록
+              - generic [ref=f1e62]: 텍스트 문서 구조화
+          - generic [ref=f1e63]: ›
+          - button "2 교차 검증 이기종 문서 불일치 탐지" [ref=f1e64] [cursor=pointer]:
+            - generic [ref=f1e65]: "2"
+            - generic [ref=f1e66]:
+              - strong [ref=f1e67]: 교차 검증
+              - generic [ref=f1e68]: 이기종 문서 불일치 탐지
+          - generic [ref=f1e69]: ›
+          - button "3 통관 심사 요건 · 법령 근거 판정 미해결 확인 사항 2건" [ref=f1e70] [cursor=pointer]:
+            - generic [ref=f1e71]: "3"
+            - generic [ref=f1e72]:
+              - strong [ref=f1e73]: 통관 심사
+              - generic [ref=f1e74]: 요건 · 법령 근거 판정
+            - generic "미해결 확인 사항 2건" [ref=f1e75]: "2"
+          - generic [ref=f1e76]: ›
+          - button "4 관세 진단 세율 · 절감 (Backend 미지원)" [ref=f1e77] [cursor=pointer]:
+            - generic [ref=f1e78]: "4"
+            - generic [ref=f1e79]:
+              - strong [ref=f1e80]: 관세 진단
+              - generic [ref=f1e81]: 세율 · 절감 (Backend 미지원)
+        - generic [ref=f1e82]:
+          - complementary "선적 서류" [ref=f1e83]:
+            - paragraph [ref=f1e84]: 선적 서류 · 2
+            - button "CI commercial-invoice.txt Commercial Invoice 활성" [ref=f1e85] [cursor=pointer]:
+              - generic [ref=f1e86]: CI
+              - generic [ref=f1e87]:
+                - strong [ref=f1e88]: commercial-invoice.txt
+                - generic [ref=f1e89]: Commercial Invoice
+              - generic [ref=f1e90]: 활성
+            - button "PL packing-list.txt Packing List 활성" [ref=f1e91] [cursor=pointer]:
+              - generic [ref=f1e92]: PL
+              - generic [ref=f1e93]:
+                - strong [ref=f1e94]: packing-list.txt
+                - generic [ref=f1e95]: Packing List
+              - generic [ref=f1e96]: 활성
+            - button "서류 등록 · 보완 텍스트 · .txt만 지원" [ref=f1e97] [cursor=pointer]:
+              - generic [ref=f1e98]: ＋
+              - generic [ref=f1e99]:
+                - strong [ref=f1e100]: 서류 등록 · 보완
+                - generic [ref=f1e101]: 텍스트 · .txt만 지원
+          - generic [ref=f1e102]:
+            - status [ref=f1e103]:
+              - generic [ref=f1e104]: "!"
+              - generic [ref=f1e105]:
+                - strong [ref=f1e106]: 판단이 필요한 확인 사항 2건
+                - text: — 담당자 판단을 기록하면 이 표시가 사라집니다.
+              - button "통관 심사로 →" [ref=f1e107] [cursor=pointer]
+              - button "우선 확인 · QTY_MISMATCH_INVOICE_PACKING" [ref=f1e108] [cursor=pointer]
+            - generic [ref=f1e109]:
+              - generic [ref=f1e110]:
+                - generic [ref=f1e111]:
+                  - heading "서류 등록" [level=2] [ref=f1e112]
+                  - paragraph [ref=f1e113]: 활성 문서는 다음 심사 입력에 포함됩니다. 행을 누르면 원문 대조 창이 열립니다.
+                - list [ref=f1e114]:
+                  - listitem "원문 대조 열기" [ref=f1e115] [cursor=pointer]:
+                    - generic [ref=f1e116]: CI
+                    - generic [ref=f1e117]: commercial-invoice.txt
+                    - generic [ref=f1e118]: 활성
+                    - generic [ref=f1e119]: 96자
+                  - listitem "원문 대조 열기" [ref=f1e120] [cursor=pointer]:
+                    - generic [ref=f1e121]: PL
+                    - generic [ref=f1e122]: packing-list.txt
+                    - generic [ref=f1e123]: 활성
+                    - generic [ref=f1e124]: 42자
+                - group [ref=f1e125]:
+                  - generic "문서 등록 또는 보완" [ref=f1e126] [cursor=pointer]
+                  - option "Commercial Invoice" [selected]
+                  - option "Packing List"
+                  - option "Bill of Lading"
+                  - option "Certificate of Origin"
+                  - option "미분류"
+                  - option "새 문서로 등록" [selected]
+                  - option "CI · commercial-invoice.txt"
+                  - option "PL · packing-list.txt"
+              - generic [ref=f1e127]:
+                - generic [ref=f1e128]:
+                  - heading "HSK 분류" [level=2] [ref=f1e129]
+                  - paragraph [ref=f1e130]: 목업 1단계의 HSK 자동분류·후보 선택 영역입니다.
+                - paragraph [ref=f1e131]: Backend API v1에 HSK 후보·신뢰도·확정 계약이 없어 표시할 수 없습니다. 필요한 계약은 customs-backend/docs/FRONTEND_UX_BACKEND_GAP.ko.md 1항에 기록했습니다.
+          - complementary "Agent 실행 트레이스" [ref=f1e132]:
+            - generic [ref=f1e133]:
+              - generic [ref=f1e134]:
+                - strong [ref=f1e135]: Agent 실행 트레이스
+                - button "트레이스 접기" [ref=f1e136] [cursor=pointer]: »
+              - paragraph [ref=f1e137]: 실행 상태 완료 · 이 실행에서 실제로 수행한 제한형 workflow입니다.
+              - generic [ref=f1e138]:
+                - generic [ref=f1e139]:
+                  - strong [ref=f1e140]: "5"
+                  - generic [ref=f1e141]: 처리 단계
+                - generic [ref=f1e142]:
+                  - strong [ref=f1e143]: "3"
+                  - generic [ref=f1e144]: 계획 실행
+                - generic [ref=f1e145]:
+                  - strong [ref=f1e146]: "0"
+                  - generic [ref=f1e147]: 제한 재추출
+            - list [ref=f1e149]:
+              - listitem [ref=f1e150]:
+                - generic [ref=f1e152]:
+                  - strong [ref=f1e153]: 문서 유형 판별
+                  - paragraph [ref=f1e154]: 문서 2건의 유형을 판별했습니다.
+                  - text: "상태: 완료 · 실행 1회"
+              - listitem [ref=f1e155]:
+                - generic [ref=f1e157]:
+                  - strong [ref=f1e158]: 문서 사실 추출
+                  - paragraph [ref=f1e159]: 문서 사실 3건을 추출했습니다.
+                  - text: "상태: 완료 · 실행 1회"
+              - listitem [ref=f1e160]:
+                - generic [ref=f1e162]:
+                  - strong [ref=f1e163]: 정합성 검사
+                  - paragraph [ref=f1e164]: 수량 비교에서 불일치가 확인되었습니다.
+                  - text: "상태: 검토 필요 · 실행 1회"
+              - listitem [ref=f1e165]:
+                - generic [ref=f1e167]:
+                  - strong [ref=f1e168]: 법령 Evidence 조회
+                  - paragraph [ref=f1e169]: 법령 Evidence 2건을 연결했습니다.
+                  - text: "상태: 완료 · 실행 1회"
+              - listitem [ref=f1e170]:
+                - generic [ref=f1e172]:
+                  - strong [ref=f1e173]: 검토 결과 생성
+                  - paragraph [ref=f1e174]: 근거 기반 보고서를 생성했습니다.
+                  - text: "상태: 완료 · 실행 1회"
+              - listitem [ref=f1e175]:
+                - strong [ref=f1e176]: 제한형 계획 · 1회 cycle
+                - list [ref=f1e177]:
+                  - listitem [ref=f1e178]:
+                    - generic [ref=f1e179]: 1차
+                    - strong [ref=f1e180]: 문서 분석
+                    - generic [ref=f1e181]: 문서를 분석했습니다.
+                  - listitem [ref=f1e182]:
+                    - generic [ref=f1e183]: 1차
+                    - strong [ref=f1e184]: 문서·품목 비교
+                    - generic [ref=f1e185]: 품목과 값을 비교했습니다.
+                  - listitem [ref=f1e186]:
+                    - generic [ref=f1e187]: 1차
+                    - strong [ref=f1e188]: 근거 기반 보고서 생성
+                    - generic [ref=f1e189]: 보고서를 작성했습니다.
+            - button "💬 AI 도우미 열기 →" [ref=f1e191] [cursor=pointer]
+    - contentinfo [ref=f1e192]:
+      - generic [ref=f1e193]:
+        - paragraph [ref=f1e194]: 통관 AI 사전심사 작업대
+        - paragraph [ref=f1e195]: 팀 개발 모드입니다. 세션과 토큰은 메모리에만 두며 브라우저 저장소에 남기지 않습니다.
+        - paragraph [ref=f1e196]: 모든 결과는 항상 담당자 검토 대상이며 통관 승인 판단이 아닙니다. 화면에 비밀정보를 입력하지 마십시오.
+        - paragraph [ref=f1e197]: KRDS(대한민국 정부 디자인 시스템) 문법을 적용한 업무 화면입니다.

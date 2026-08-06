@@ -1074,13 +1074,23 @@ export class CommercialReviewWorkspace {
     );
   }
 
+  /** Completion reflects real progress in the case, not merely where the user is standing. */
+  private stageComplete(stage: StageView): boolean {
+    const run = this.state.selectedRun;
+    switch (stage) {
+      case "documents": return this.activeDocuments().length > 0;
+      case "crosscheck": return run !== null;
+      case "review": return run !== null && this.openFindings().length === 0;
+      default: return false;
+    }
+  }
+
   private createStageBar(): HTMLElement {
     const current = this.requireCase();
-    const activeIndex = STAGE_IDS.indexOf(this.state.activeView as StageView);
     const bar = element("nav", { className: "stagebar", attributes: { "aria-label": "심사 단계" } });
     STAGES.forEach((stage, index) => {
       const active = stage.id === this.state.activeView;
-      const done = activeIndex > index;
+      const done = !active && this.stageComplete(stage.id);
       const badge = stage.id === "review" ? this.openFindings().length : 0;
       bar.append(element("button", {
         className: `stage${active ? " is-active" : ""}${done ? " is-done" : ""}${stage.supported ? "" : " is-unsupported"}`,
@@ -1304,7 +1314,7 @@ export class CommercialReviewWorkspace {
 
   private createCrosscheckStage(): HTMLElement {
     const run = this.state.selectedRun;
-    if (!run) return emptyState("아직 비교 결과가 없습니다.", "활성 텍스트 문서를 등록한 뒤 AI 심사를 시작하십시오.");
+    if (!run) return emptyState("아직 비교 결과가 없습니다.", "활성 텍스트 문서를 등록한 뒤 AI 심사를 시작하십시오.", this.createGoToDocumentsButton());
     const mismatches = run.comparisons.filter((item) => item.status === "mismatch" || item.status === "needs_review").length;
     return element("section", { className: "stage-view" },
       element("section", { className: "surface" },
@@ -1388,9 +1398,23 @@ export class CommercialReviewWorkspace {
     return overlay;
   }
 
+  private createGoToDocumentsButton(): HTMLElement {
+    return element("button", {
+      className: "button button--primary",
+      text: this.activeDocuments().length ? "AI 심사 시작하기" : "서류 등록 단계로 이동",
+      attributes: { type: "button" },
+      on: {
+        click: () => {
+          if (this.activeDocuments().length) void this.startReview();
+          else this.setRoute(this.requireCase().case_id, "documents");
+        },
+      },
+    });
+  }
+
   private createReviewStage(): HTMLElement {
     const run = this.state.selectedRun;
-    if (!run) return emptyState("아직 심사 결과가 없습니다.", "활성 텍스트 문서를 등록한 뒤 AI 심사를 시작하십시오.");
+    if (!run) return emptyState("아직 심사 결과가 없습니다.", "활성 텍스트 문서를 등록한 뒤 AI 심사를 시작하십시오.", this.createGoToDocumentsButton());
     const sections = run.report.sections.map((section, index) =>
       this.createAgentReportSection(run, section, index),
     );
@@ -1640,7 +1664,7 @@ export class CommercialReviewWorkspace {
       suggestions.length ? element("div", { className: "assistant-suggestions", attributes: { "aria-label": "추천 질문" } },
         element("span", { text: "추천 질문" }),
         ...suggestions.map((question) => element("button", {
-          className: "text-link", text: question, attributes: { type: "button", disabled: this.state.assistantSending ? "" : undefined },
+          className: "suggestion-chip", text: question, attributes: { type: "button", disabled: this.state.assistantSending ? "" : undefined },
           on: { click: () => void this.sendAssistantMessage(question) },
         })),
       ) : null,
@@ -1664,7 +1688,7 @@ export class CommercialReviewWorkspace {
     const suggestions = item.role === "assistant" && item.suggested_questions.length
       ? element("div", { className: "assistant-message-suggestions" },
         ...item.suggested_questions.map((question) => element("button", {
-          className: "text-link", text: question, attributes: { type: "button", disabled: this.state.assistantSending ? "" : undefined },
+          className: "suggestion-chip", text: question, attributes: { type: "button", disabled: this.state.assistantSending ? "" : undefined },
           on: { click: () => void this.sendAssistantMessage(question) },
         })),
       ) : null;
@@ -2187,8 +2211,12 @@ function definition(label: string, value: string): HTMLElement {
   return element("div", {}, element("dt", { text: label }), element("dd", { text: value }));
 }
 
-function emptyState(title: string, copy: string): HTMLElement {
-  return element("section", { className: "surface empty-state" }, element("h2", { text: title }), element("p", { text: copy }));
+function emptyState(title: string, copy: string, action: HTMLElement | null = null): HTMLElement {
+  return element("section", { className: "surface empty-state" },
+    element("h2", { text: title }),
+    element("p", { text: copy }),
+    action,
+  );
 }
 
 function message(kind: "error" | "notice", text: string): HTMLElement {

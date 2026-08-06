@@ -1,0 +1,417 @@
+- generic [active] [ref=e1]:
+  - link "본문으로 건너뛰기" [ref=e2] [cursor=pointer]:
+    - /url: "#main-content"
+  - generic [ref=e156]:
+    - generic [ref=e158]:
+      - generic [ref=e159]: 통관 AI 사전심사 · 업무시스템
+      - generic [ref=e160]:
+        - group "본문 글자 크기 조절" [ref=e161]:
+          - generic [ref=e162]: 글자크기
+          - button "글자 크기 작게" [ref=e163] [cursor=pointer]: 가⁻
+          - button "글자 크기 보통" [pressed] [ref=e164] [cursor=pointer]: 가
+          - button "글자 크기 크게" [ref=e165] [cursor=pointer]: 가⁺
+        - group "로컬 개발 역할 전환" [ref=e166]:
+          - generic [ref=e167]: 개발 역할
+          - button "심사자" [disabled] [pressed] [ref=e168]
+          - button "승인자" [ref=e169] [cursor=pointer]
+        - button "로그아웃" [ref=e170] [cursor=pointer]
+    - banner [ref=e171]:
+      - generic [ref=e172]:
+        - link "통관 AI 사전심사 첫 화면" [ref=e173] [cursor=pointer]:
+          - /url: "#/cases"
+          - generic [ref=e174]: 通
+          - generic [ref=e175]:
+            - strong [ref=e176]: 통관 AI 사전심사
+            - generic [ref=e177]: 팀 개발 환경
+        - generic [ref=e178]:
+          - strong [ref=e179]: local-reviewer
+          - generic [ref=e180]: local-org · 심사자
+    - navigation "주요 메뉴" [ref=e181]:
+      - generic [ref=e182]:
+        - button "심사 업무함" [ref=e183] [cursor=pointer]
+        - button "심사 워크스페이스" [ref=e184] [cursor=pointer]
+        - button "AI 도우미" [ref=e185] [cursor=pointer]
+        - button "심사 이력" [ref=e186] [cursor=pointer]
+    - status [ref=e187]:
+      - generic [ref=e188]:
+        - strong [ref=e189]: 기본 개발
+        - generic [ref=e190]: 합성 Evidence와 결정론 Agent를 사용합니다. Docker·모델·Law API·Claude 키 없이 전체 업무 흐름을 확인할 수 있습니다.
+    - main [ref=e191]:
+      - generic [ref=e193]:
+        - paragraph [ref=e194]:
+          - generic [ref=e195]: 홈
+          - generic [ref=e196]: ›
+          - generic [ref=e197]: 심사 업무함
+          - generic [ref=e198]: ›
+          - strong [ref=e199]: 전자부품 수입 건 (2026-08)
+        - generic [ref=e200]:
+          - generic [ref=e201]:
+            - heading "전자부품 수입 건 (2026-08)" [level=1] [ref=e202]
+            - paragraph [ref=e203]: IMP-2026-0812 · 사람 검토 중 · 활성 문서 2건
+          - generic [ref=e204]:
+            - generic [ref=e205]: 항상 사람 검토 필요
+            - button "AI 심사 시작" [ref=e206] [cursor=pointer]
+      - generic [ref=e208]:
+        - navigation "심사 단계" [ref=e209]:
+          - button "1 서류 등록 텍스트 문서 구조화" [ref=e210] [cursor=pointer]:
+            - generic [ref=e211]: "1"
+            - generic [ref=e212]:
+              - strong [ref=e213]: 서류 등록
+              - generic [ref=e214]: 텍스트 문서 구조화
+          - generic [ref=e215]: ›
+          - button "2 교차 검증 이기종 문서 불일치 탐지" [ref=e216] [cursor=pointer]:
+            - generic [ref=e217]: "2"
+            - generic [ref=e218]:
+              - strong [ref=e219]: 교차 검증
+              - generic [ref=e220]: 이기종 문서 불일치 탐지
+          - generic [ref=e221]: ›
+          - button "3 통관 심사 요건 · 법령 근거 판정 미해결 확인 사항 2건" [ref=e222] [cursor=pointer]:
+            - generic [ref=e223]: "3"
+            - generic [ref=e224]:
+              - strong [ref=e225]: 통관 심사
+              - generic [ref=e226]: 요건 · 법령 근거 판정
+            - generic "미해결 확인 사항 2건" [ref=e227]: "2"
+          - generic [ref=e228]: ›
+          - button "4 관세 진단 세율 · 절감 (Backend 미지원)" [ref=e229] [cursor=pointer]:
+            - generic [ref=e230]: "4"
+            - generic [ref=e231]:
+              - strong [ref=e232]: 관세 진단
+              - generic [ref=e233]: 세율 · 절감 (Backend 미지원)
+        - generic [ref=e234]:
+          - complementary "선적 서류" [ref=e235]:
+            - paragraph [ref=e236]: 선적 서류 · 2
+            - button "CI commercial-invoice.txt Commercial Invoice 활성" [ref=e237] [cursor=pointer]:
+              - generic [ref=e238]: CI
+              - generic [ref=e239]:
+                - strong [ref=e240]: commercial-invoice.txt
+                - generic [ref=e241]: Commercial Invoice
+              - generic [ref=e242]: 활성
+            - button "PL packing-list.txt Packing List 활성" [ref=e243] [cursor=pointer]:
+              - generic [ref=e244]: PL
+              - generic [ref=e245]:
+                - strong [ref=e246]: packing-list.txt
+                - generic [ref=e247]: Packing List
+              - generic [ref=e248]: 활성
+            - button "서류 등록 · 보완 텍스트 · .txt만 지원" [ref=e249] [cursor=pointer]:
+              - generic [ref=e250]: ＋
+              - generic [ref=e251]:
+                - strong [ref=e252]: 서류 등록 · 보완
+                - generic [ref=e253]: 텍스트 · .txt만 지원
+          - generic [ref=e254]:
+            - status [ref=e255]:
+              - generic [ref=e256]: "!"
+              - generic [ref=e257]:
+                - strong [ref=e258]: 판단이 필요한 확인 사항 2건
+                - text: — 담당자 판단을 기록하면 이 표시가 사라집니다.
+              - button "우선 확인 · QTY_MISMATCH_INVOICE_PACKING" [ref=e259] [cursor=pointer]
+            - generic [ref=e260]:
+              - generic [ref=e261]:
+                - generic [ref=e262]:
+                  - generic [ref=e263]: 검토 필요
+                  - generic [ref=e264]:
+                    - strong [ref=e265]: 확인 사항 있음
+                    - generic [ref=e266]: 처리 방향 · 사람 검토 필요
+                    - generic [ref=e267]: 미판단 2건
+                - generic [ref=e268]:
+                  - paragraph [ref=e269]: GROUNDED REVIEW REPORT
+                  - heading "근거 기반 심사 보고서" [level=2] [ref=e270]
+                  - paragraph [ref=e271]: Invoice와 Packing List의 수량이 달라 담당자 확인이 필요합니다.
+                  - paragraph [ref=e272]: 이 결과는 자동 완료되지 않으며 반드시 담당자가 검토해야 합니다.
+              - generic [ref=e273]:
+                - generic [ref=e274]:
+                  - heading "확인 사항" [level=2] [ref=e275]
+                  - paragraph [ref=e276]: 담당자 판단이 필요한 항목 2건이 남아 있습니다.
+                - generic [ref=e277]:
+                  - article [ref=e278]:
+                    - generic [ref=e279]:
+                      - generic [ref=e280]: 높음
+                      - generic [ref=e281]:
+                        - strong [ref=e282]: QTY_MISMATCH_INVOICE_PACKING
+                        - paragraph [ref=e283]: Invoice 수량과 Packing List 수량이 일치하지 않습니다.
+                      - generic [ref=e284]: 판단 필요
+                    - generic [ref=e285]:
+                      - text: QTY_MISMATCH_INVOICE_PACKING · 불일치
+                      - paragraph [ref=e286]: Invoice와 Packing List의 수량이 일치하지 않습니다.
+                      - generic [ref=e287]:
+                        - generic [ref=e288]:
+                          - term [ref=e289]: 기준
+                          - definition [ref=e290]: "120"
+                        - generic [ref=e291]:
+                          - term [ref=e292]: 관측
+                          - definition [ref=e293]: "100"
+                        - generic [ref=e294]:
+                          - term [ref=e295]: 단위
+                          - definition [ref=e296]: EA
+                    - generic [ref=e297]:
+                      - button "문서 원문 인용 보기" [ref=e298] [cursor=pointer]
+                      - button "연결된 법령 근거 1건" [ref=e299] [cursor=pointer]
+                    - group [ref=e300]:
+                      - generic "담당자 판단 기록" [ref=e301] [cursor=pointer]
+                      - paragraph [ref=e302]: 아직 담당자 판단이 기록되지 않았습니다.
+                      - generic [ref=e303]:
+                        - combobox [ref=e304]:
+                          - option "확인함" [selected]
+                          - option "추가자료 요청"
+                          - option "해결됨"
+                        - textbox "판단 사유를 기록하십시오." [ref=e305]
+                        - button "판단 기록" [ref=e306] [cursor=pointer]
+                    - group [ref=e307]:
+                      - generic "정정 제안 만들기" [ref=e308] [cursor=pointer]
+                  - article [ref=e309]:
+                    - generic [ref=e310]:
+                      - generic [ref=e311]: 보통
+                      - generic [ref=e312]:
+                        - strong [ref=e313]: LOW_CONFIDENCE_FIELD
+                        - paragraph [ref=e314]: HS 코드 추출 신뢰도가 기준치 미만입니다.
+                      - generic [ref=e315]: 판단 필요
+                    - group [ref=e316]:
+                      - generic "담당자 판단 기록" [ref=e317] [cursor=pointer]
+                      - paragraph [ref=e318]: 아직 담당자 판단이 기록되지 않았습니다.
+                      - generic [ref=e319]:
+                        - combobox [ref=e320]:
+                          - option "확인함" [selected]
+                          - option "추가자료 요청"
+                          - option "해결됨"
+                        - textbox "판단 사유를 기록하십시오." [ref=e321]
+                        - button "판단 기록" [ref=e322] [cursor=pointer]
+                    - paragraph [ref=e323]: 이 확인 사항에는 정정할 문서 사실이 연결되어 있지 않습니다. 문서 원문을 보완하거나 AI 도우미의 근거 있는 정정 제안을 사용하십시오.
+              - generic [ref=e324]:
+                - generic [ref=e325]:
+                  - heading "법령 Evidence" [level=2] [ref=e326]
+                  - paragraph [ref=e327]: Agent가 Data Evidence API에서 받은 근거입니다.
+                - generic [ref=e328]:
+                  - article [ref=e329]:
+                    - generic [ref=e330]:
+                      - generic [ref=e331]: law
+                      - heading "수입 요건 확인" [level=3] [ref=e332]
+                    - paragraph [ref=e333]: 전기용품 및 생활용품 안전관리법
+                    - paragraph [ref=e334]: 전기용품은 수입 전 안전확인 신고확인증이 필요하다.
+                    - generic [ref=e335]:
+                      - generic [ref=e336]: 연결된 확인 사항 1건
+                      - link "출처 열기" [ref=e337] [cursor=pointer]:
+                        - /url: https://law.example/1
+                  - article [ref=e338]:
+                    - generic [ref=e339]:
+                      - generic [ref=e340]: law
+                      - heading "관세율 적용" [level=3] [ref=e341]
+                    - paragraph [ref=e342]: 관세법
+                    - paragraph [ref=e343]: 관세율은 수입신고 당시의 법령에 따라 적용한다.
+                    - generic [ref=e344]:
+                      - generic [ref=e345]: 연결된 확인 사항 0건
+                      - link "출처 열기" [ref=e346] [cursor=pointer]:
+                        - /url: https://law.example/2
+              - generic [ref=e347]:
+                - generic [ref=e348]:
+                  - generic [ref=e349]: "01"
+                  - generic [ref=e350]:
+                    - heading "심사 결론" [level=3] [ref=e351]
+                    - paragraph [ref=e352]: 현재 심사 실행의 결론과 사람 검토 경계를 설명합니다.
+                - list [ref=e353]:
+                  - listitem [ref=e354]:
+                    - paragraph [ref=e355]: 수량 불일치 1건이 확인되어 사람 검토가 필요합니다.
+                    - generic "보고서 주장 근거" [ref=e356]:
+                      - generic [ref=e357]: 근거
+                      - button "문서 사실 · fact-2" [ref=e358] [cursor=pointer]
+              - generic [ref=e359]:
+                - generic [ref=e360]:
+                  - generic [ref=e361]: "02"
+                  - generic [ref=e362]:
+                    - heading "처리 과정과 실행 상태" [level=3] [ref=e363]
+                    - paragraph [ref=e364]: 실제로 수행한 제한형 Agent workflow를 설명합니다.
+                - list [ref=e365]:
+                  - listitem [ref=e366]:
+                    - paragraph [ref=e367]: 문서 분류·사실 추출·비교·Evidence 조회를 제한된 순서로 수행했습니다.
+                    - generic "보고서 주장 근거" [ref=e368]:
+                      - generic [ref=e369]: 근거
+                      - button "문서 사실 · fact-2" [ref=e370] [cursor=pointer]
+              - generic [ref=e371]:
+                - generic [ref=e372]:
+                  - generic [ref=e373]: "03"
+                  - generic [ref=e374]:
+                    - heading "문서 간 비교" [level=3] [ref=e375]
+                    - paragraph [ref=e376]: 문서·품목 대응과 코드 기반 비교 결과를 설명합니다.
+                - list [ref=e377]:
+                  - listitem [ref=e378]:
+                    - paragraph [ref=e379]: Invoice 수량 120 EA와 Packing List 수량 100 EA가 다릅니다.
+                    - generic "보고서 주장 근거" [ref=e380]:
+                      - generic [ref=e381]: 근거
+                      - button "문서 사실 · fact-2" [ref=e382] [cursor=pointer]
+                      - button "문서 비교 · comparison-1" [ref=e383] [cursor=pointer]
+              - generic [ref=e384]:
+                - generic [ref=e385]:
+                  - generic [ref=e386]: "04"
+                  - generic [ref=e387]:
+                    - heading "문제와 원인" [level=3] [ref=e388]
+                    - paragraph [ref=e389]: 확인 사항과 판단 보류가 필요한 원인을 설명합니다.
+                - list [ref=e390]:
+                  - listitem [ref=e391]:
+                    - paragraph [ref=e392]: 두 문서의 수량 표기가 서로 다르게 기재되어 있습니다.
+                    - generic "보고서 주장 근거" [ref=e393]:
+                      - generic [ref=e394]: 근거
+                      - button "문서 사실 · fact-2" [ref=e395] [cursor=pointer]
+                      - button "문서 비교 · comparison-1" [ref=e396] [cursor=pointer]
+              - generic [ref=e397]:
+                - generic [ref=e398]:
+                  - generic [ref=e399]: "05"
+                  - generic [ref=e400]:
+                    - heading "법령 근거" [level=3] [ref=e401]
+                    - paragraph [ref=e402]: 연결된 Evidence가 어떤 근거인지 설명합니다.
+                - list [ref=e403]:
+                  - listitem [ref=e404]:
+                    - paragraph [ref=e405]: 전기용품 안전확인 요건과 관세율 적용 조문을 연결했습니다.
+                    - generic "보고서 주장 근거" [ref=e406]:
+                      - generic [ref=e407]: 근거
+                      - button "Evidence · evidence-1" [ref=e408] [cursor=pointer]
+                      - button "Evidence · evidence-2" [ref=e409] [cursor=pointer]
+              - generic [ref=e410]:
+                - generic [ref=e411]:
+                  - generic [ref=e412]: "06"
+                  - generic [ref=e413]:
+                    - heading "영향" [level=3] [ref=e414]
+                    - paragraph [ref=e415]: 현재 결과가 업무 검토에 미치는 영향을 설명합니다.
+                - list [ref=e416]:
+                  - listitem [ref=e417]:
+                    - paragraph [ref=e418]: 요건이 확인되지 않으면 통관 검토가 보류될 수 있습니다.
+                    - generic "보고서 주장 근거" [ref=e419]:
+                      - generic [ref=e420]: 근거
+                      - button "문서 사실 · fact-2" [ref=e421] [cursor=pointer]
+              - generic [ref=e422]:
+                - generic [ref=e423]:
+                  - generic [ref=e424]: "07"
+                  - generic [ref=e425]:
+                    - heading "담당자 판단 기록" [level=3] [ref=e426]
+                    - paragraph [ref=e427]: 사람이 이어서 수행할 조치를 설명합니다.
+                - list [ref=e428]:
+                  - listitem [ref=e429]:
+                    - paragraph [ref=e430]: 담당자가 원문을 확인하고 판단 사유를 기록해야 합니다.
+                    - generic "보고서 주장 근거" [ref=e431]:
+                      - generic [ref=e432]: 근거
+                      - button "문서 사실 · fact-2" [ref=e433] [cursor=pointer]
+              - generic [ref=e434]:
+                - generic [ref=e435]:
+                  - generic [ref=e436]: "08"
+                  - generic [ref=e437]:
+                    - heading "한계" [level=3] [ref=e438]
+                    - paragraph [ref=e439]: 입력·근거·텍스트 범위의 한계를 설명합니다.
+                - list [ref=e440]:
+                  - listitem [ref=e441]:
+                    - paragraph [ref=e442]: 텍스트로 등록된 문서에 있는 사실만 확인했습니다.
+                    - generic "보고서 주장 근거" [ref=e443]:
+                      - generic [ref=e444]: 근거
+                      - button "문서 사실 · fact-2" [ref=e445] [cursor=pointer]
+              - generic [ref=e446]:
+                - generic [ref=e447]:
+                  - heading "심사 근거 상세" [level=2] [ref=e448]
+                  - paragraph [ref=e449]: 보고서의 각 근거 참조를 더 자세히 확인할 수 있습니다.
+                - generic [ref=e450]:
+                  - generic [ref=e451]:
+                    - generic [ref=e452]: 확인 사항
+                    - strong [ref=e453]: "2"
+                  - generic [ref=e454]:
+                    - generic [ref=e455]: 문서 비교
+                    - strong [ref=e456]: "1"
+                  - generic [ref=e457]:
+                    - generic [ref=e458]: 법령 근거
+                    - strong [ref=e459]: "2"
+                  - generic [ref=e460]:
+                    - generic [ref=e461]: 담당자 판단
+                    - strong [ref=e462]: "0"
+                - 'button "commercial-invoice.txt Commercial Invoice · 사실 추출 완료 등록 유형: invoice" [ref=e464] [cursor=pointer]':
+                  - strong [ref=e465]: commercial-invoice.txt
+                  - generic [ref=e466]: Commercial Invoice · 사실 추출 완료
+                  - generic [ref=e467]: "등록 유형: invoice"
+                - generic [ref=e468]:
+                  - generic [ref=e469]:
+                    - term [ref=e470]: commercial-invoice.txt · invoice_no
+                    - definition [ref=e471]: CI-2026-0001
+                    - button "원문 인용 보기" [ref=e472] [cursor=pointer]
+                  - generic [ref=e473]:
+                    - term [ref=e474]: commercial-invoice.txt · quantity
+                    - definition [ref=e475]: 120 EA
+                    - button "원문 인용 보기" [ref=e476] [cursor=pointer]
+                  - generic [ref=e477]:
+                    - term [ref=e478]: commercial-invoice.txt · total_amount
+                    - definition [ref=e479]: 12,400.00 → 12400.00 USD
+                    - button "원문 인용 보기" [ref=e480] [cursor=pointer]
+                - generic [ref=e481]:
+                  - button "수입 요건 확인 전기용품 및 생활용품 안전관리법 source hash cccccccccccc…" [ref=e482] [cursor=pointer]:
+                    - strong [ref=e483]: 수입 요건 확인
+                    - generic [ref=e484]: 전기용품 및 생활용품 안전관리법
+                    - generic [ref=e485]: source hash cccccccccccc…
+                  - button "관세율 적용 관세법 source hash dddddddddddd…" [ref=e486] [cursor=pointer]:
+                    - strong [ref=e487]: 관세율 적용
+                    - generic [ref=e488]: 관세법
+                    - generic [ref=e489]: source hash dddddddddddd…
+                - generic [ref=e490]:
+                  - list [ref=e491]:
+                    - listitem [ref=e492]:
+                      - strong [ref=e493]: inspect_quantity
+                      - generic [ref=e494]: 두 문서의 수량 원문을 확인하십시오.
+                    - listitem [ref=e495]:
+                      - strong [ref=e496]: human_review_required
+                      - generic [ref=e497]: 자동 완료하지 않습니다. 담당자가 판단을 기록해야 합니다.
+                  - button "AI 도우미에게 근거 질문하기" [ref=e498] [cursor=pointer]
+          - complementary "Agent 실행 트레이스" [ref=e499]:
+            - generic [ref=e500]:
+              - generic [ref=e501]:
+                - strong [ref=e502]: Agent 실행 트레이스
+                - button "트레이스 접기" [ref=e503] [cursor=pointer]: »
+              - paragraph [ref=e504]: 실행 상태 완료 · 이 실행에서 실제로 수행한 제한형 workflow입니다.
+              - generic [ref=e505]:
+                - generic [ref=e506]:
+                  - strong [ref=e507]: "5"
+                  - generic [ref=e508]: 처리 단계
+                - generic [ref=e509]:
+                  - strong [ref=e510]: "3"
+                  - generic [ref=e511]: 계획 실행
+                - generic [ref=e512]:
+                  - strong [ref=e513]: "0"
+                  - generic [ref=e514]: 제한 재추출
+            - list [ref=e516]:
+              - listitem [ref=e517]:
+                - generic [ref=e519]:
+                  - strong [ref=e520]: 문서 유형 판별
+                  - paragraph [ref=e521]: 문서 2건의 유형을 판별했습니다.
+                  - text: "상태: 완료 · 실행 1회"
+              - listitem [ref=e522]:
+                - generic [ref=e524]:
+                  - strong [ref=e525]: 문서 사실 추출
+                  - paragraph [ref=e526]: 문서 사실 3건을 추출했습니다.
+                  - text: "상태: 완료 · 실행 1회"
+              - listitem [ref=e527]:
+                - generic [ref=e529]:
+                  - strong [ref=e530]: 정합성 검사
+                  - paragraph [ref=e531]: 수량 비교에서 불일치가 확인되었습니다.
+                  - text: "상태: 검토 필요 · 실행 1회"
+              - listitem [ref=e532]:
+                - generic [ref=e534]:
+                  - strong [ref=e535]: 법령 Evidence 조회
+                  - paragraph [ref=e536]: 법령 Evidence 2건을 연결했습니다.
+                  - text: "상태: 완료 · 실행 1회"
+              - listitem [ref=e537]:
+                - generic [ref=e539]:
+                  - strong [ref=e540]: 검토 결과 생성
+                  - paragraph [ref=e541]: 근거 기반 보고서를 생성했습니다.
+                  - text: "상태: 완료 · 실행 1회"
+              - listitem [ref=e542]:
+                - strong [ref=e543]: 제한형 계획 · 1회 cycle
+                - list [ref=e544]:
+                  - listitem [ref=e545]:
+                    - generic [ref=e546]: 1차
+                    - strong [ref=e547]: 문서 분석
+                    - generic [ref=e548]: 문서를 분석했습니다.
+                  - listitem [ref=e549]:
+                    - generic [ref=e550]: 1차
+                    - strong [ref=e551]: 문서·품목 비교
+                    - generic [ref=e552]: 품목과 값을 비교했습니다.
+                  - listitem [ref=e553]:
+                    - generic [ref=e554]: 1차
+                    - strong [ref=e555]: 근거 기반 보고서 생성
+                    - generic [ref=e556]: 보고서를 작성했습니다.
+            - button "💬 AI 도우미 열기 →" [ref=e558] [cursor=pointer]
+    - contentinfo [ref=e559]:
+      - generic [ref=e560]:
+        - paragraph [ref=e561]: 통관 AI 사전심사 작업대
+        - paragraph [ref=e562]: 팀 개발 모드입니다. 세션과 토큰은 메모리에만 두며 브라우저 저장소에 남기지 않습니다.
+        - paragraph [ref=e563]: 모든 결과는 항상 담당자 검토 대상이며 통관 승인 판단이 아닙니다. 화면에 비밀정보를 입력하지 마십시오.
+        - paragraph [ref=e564]: KRDS(대한민국 정부 디자인 시스템) 문법을 적용한 업무 화면입니다.

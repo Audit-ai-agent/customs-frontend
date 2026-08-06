@@ -456,8 +456,9 @@ small { color: var(--krds-muted); }
 .section-heading p { flex: 1 1 20rem; max-width: 36rem; margin: .1rem 0 0; color: var(--krds-muted); font-size: .83rem; line-height: 1.55; text-align: right; }
 /* Once the description drops to its own line, right alignment reads as a stray column. */
 @media (max-width: 1600px) { .assistant-sidebar .section-heading p, .history-next .section-heading p { text-align: left; } }
-.empty-state { display: grid; min-height: 14rem; place-content: center; text-align: center; }
+.empty-state { display: grid; gap: .35rem; min-height: 14rem; place-content: center; justify-items: center; text-align: center; }
 .empty-state h2 { color: var(--krds-ink-2); }
+.empty-state .button { margin-top: .75rem; }
 .empty-state p, .empty-copy { margin-bottom: 0; color: var(--krds-muted); line-height: 1.6; }
 .empty-copy { padding: 1.1rem .25rem; font-size: .87rem; text-align: center; }
 
@@ -724,15 +725,26 @@ textarea { min-height: 7rem; resize: vertical; line-height: 1.6; }
   display: grid; align-content: start; gap: .75rem; min-height: 17rem; max-height: 51vh;
   padding: .2rem .2rem .2rem 0; margin: 0; overflow-y: auto; list-style: none;
 }
-.assistant-message { max-width: min(48rem, 92%); padding: .85rem .95rem; border: 1px solid var(--krds-line); border-radius: .875rem; }
-.assistant-message--user { justify-self: end; color: var(--krds-ink-2); background: var(--krds-primary-bg); border-color: transparent; border-bottom-right-radius: .2rem; }
-.assistant-message--assistant { justify-self: start; color: var(--krds-ink-2); background: var(--krds-surface); border-bottom-left-radius: .2rem; }
+/* Chat bubbles follow the mockup: assistant on the left, reviewer on the right. */
+.assistant-message { max-width: min(44rem, 82%); padding: .85rem 1rem; border: 1px solid var(--krds-line); border-radius: 1rem; }
+.assistant-message--user {
+  justify-self: end; color: #fff; background: var(--krds-primary);
+  border-color: transparent; border-bottom-right-radius: .25rem;
+}
+.assistant-message--assistant { justify-self: start; color: var(--krds-ink-2); background: var(--krds-surface); border-bottom-left-radius: .25rem; }
 .assistant-message--loading { display: flex; gap: .55rem; align-items: center; color: var(--krds-text); }
 .assistant-message header { display: flex; align-items: center; gap: .45rem; margin-bottom: .45rem; }
 .assistant-message header strong { font-size: .82rem; font-weight: 700; }
 .assistant-message header small { margin-left: auto; font-size: .71rem; }
+.assistant-message--user header small { color: rgb(255 255 255 / 78%); }
 .assistant-message__content { margin: 0; color: inherit; white-space: pre-wrap; overflow-wrap: anywhere; font-size: .91rem; line-height: 1.7; }
 .assistant-scope { padding: .18rem .5rem; color: var(--krds-primary-strong); background: var(--krds-primary-bg-soft); border-radius: 999px; font-size: .69rem; font-weight: 700; }
+.suggestion-chip {
+  padding: .45rem .85rem; color: var(--krds-primary-strong); background: var(--krds-surface);
+  border: 1px solid var(--krds-line-2); border-radius: 999px; font-size: .82rem; font-weight: 600;
+  transition: border-color .13s, background .13s;
+}
+.suggestion-chip:hover:not(:disabled) { background: var(--krds-primary-bg-soft); border-color: var(--krds-primary); }
 .assistant-citations, .assistant-message-suggestions, .assistant-suggestions { margin-top: .65rem; }
 .assistant-correction-import { margin-top: .65rem; }
 .assistant-empty, .assistant-empty-message { display: grid; gap: .55rem; min-height: 14rem; place-content: center; color: var(--krds-text); text-align: center; justify-items: center; }
