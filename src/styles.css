@@ -64,7 +64,8 @@
 
 * { box-sizing: border-box; }
 html { background: var(--krds-bg); }
-body { min-width: 20rem; min-height: 100vh; margin: 0; background: var(--krds-bg); }
+/* Identifiers and hashes are common here; none of them may scroll the page sideways. */
+body { min-width: 20rem; min-height: 100vh; margin: 0; overflow-x: hidden; background: var(--krds-bg); }
 button, input, select, textarea { font: inherit; }
 button, summary { cursor: pointer; }
 button { color: inherit; }
@@ -74,6 +75,8 @@ a:focus-visible, summary:focus-visible, [tabindex]:focus-visible {
   outline-offset: 2px;
   border-radius: .25rem;
 }
+/* Rows sit inside clipped tables, so their focus ring must be drawn inward to survive. */
+.case-row:focus-visible, .comparison-row:focus-visible { outline-offset: -3px; border-radius: 0; }
 button:disabled { cursor: not-allowed; opacity: .48; }
 a { color: inherit; }
 h1, h2, h3, h4, p, ol, ul, dl { margin-top: 0; }
@@ -630,6 +633,9 @@ textarea { min-height: 7rem; resize: vertical; line-height: 1.6; }
 .finding-card--low { border-left-color: var(--krds-success); }
 .finding-card.is-settled { background: var(--krds-surface-2); }
 .finding-heading { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: .7rem; align-items: flex-start; }
+/* Rule codes are long unbroken tokens; they must wrap rather than widen the page. */
+.finding-heading > div { min-width: 0; }
+.finding-heading strong { overflow-wrap: anywhere; }
 .finding-heading p { margin: .25rem 0 0; color: var(--krds-text); line-height: 1.6; }
 .finding-state {
   padding: .22rem .6rem; color: #c02c0e; background: #fdeeea; border-radius: 999px;
@@ -870,9 +876,11 @@ textarea { min-height: 7rem; resize: vertical; line-height: 1.6; }
   .dash-flow__arrow { display: none; }
   .dash-search { flex: 1 1 100%; }
   .case-table__header { display: none; }
-  .case-row { grid-template-columns: minmax(0, 1fr) auto; gap: .25rem .6rem; }
-  .case-row__ref { grid-column: 1 / -1; }
-  .case-row__date { display: none; }
+  .case-row { grid-template-columns: minmax(0, 1fr) auto; gap: .3rem .6rem; align-items: center; }
+  .case-row__ref { grid-row: 1; grid-column: 1; }
+  .case-row__title { grid-row: 2; grid-column: 1; white-space: normal; }
+  .case-row > span:nth-of-type(3) { grid-row: 1 / span 2; grid-column: 2; }
+  .case-row__date, .case-row__go { display: none; }
   .stage { flex: 1 1 100%; }
   .stage__sep { display: none; }
   .verdict-panel { grid-template-columns: 1fr; justify-items: start; }
@@ -895,7 +903,10 @@ textarea { min-height: 7rem; resize: vertical; line-height: 1.6; }
 }
 
 @media (max-width: 440px) {
-  .review-metrics, .dash-stats { grid-template-columns: 1fr; }
+  /* Four stacked KPI cards would be all scroll and no overview; keep two columns. */
+  .review-metrics { grid-template-columns: 1fr; }
+  .dash-stat { padding: .8rem .85rem; }
+  .dash-stat__value { font-size: 1.5rem; }
   .runtime-notice .g-inner { display: grid; }
   .human-review-badge { white-space: normal; }
   .comparison-values { grid-template-columns: 1fr; }
