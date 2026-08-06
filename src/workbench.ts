@@ -33,8 +33,14 @@ import {
 } from "./auth";
 
 export type FrontendRuntimeMode = "local-development" | "functional-uat";
-type WorkspaceTab = "documents" | "analysis" | "assistant" | "evidence" | "history";
+/**
+ * Screen model taken from the 通審 interaction spec v1.3: a case runs through four
+ * sequential stages, with the assistant and the history trail as their own screens.
+ */
+type StageView = "documents" | "crosscheck" | "review" | "duty";
+type WorkspaceView = StageView | "assistant" | "history";
 type CaseFilter = "all" | "open" | "in_review" | "closed";
+type CaseSortKey = "reference" | "updated";
 
 interface WorkbenchState {
   session: Session | null;
@@ -47,9 +53,13 @@ interface WorkbenchState {
   sourceFocus: SourceReference | null;
   factFocusId: string | null;
   activeJob: JobRecord | null;
-  activeTab: WorkspaceTab;
+  activeView: WorkspaceView;
+  documentModalOpen: boolean;
+  traceRailOpen: boolean;
+  caseSort: { key: CaseSortKey; ascending: boolean };
   comparisonFocusId: string | null;
   evidenceFocusId: string | null;
+  findingFocusId: string | null;
   assistantConversations: AssistantConversation[];
   selectedConversation: AssistantConversation | null;
   assistantMessages: AssistantMessage[];
@@ -68,19 +78,49 @@ interface WorkbenchState {
   selectedCorrectionProposalIds: Set<string>;
   caseFilter: CaseFilter;
   query: string;
+  fontScale: FontScale;
   busy: boolean;
   notice: string | null;
   error: string | null;
 }
 
+/** KRDS utility-bar text sizing. The choice stays in memory only. */
+type FontScale = 0.9 | 1 | 1.1;
+const FONT_SCALES: ReadonlyArray<readonly [FontScale, string, string]> = [
+  [0.9, "가⁻", "작게"],
+  [1, "가", "보통"],
+  [1.1, "가⁺", "크게"],
+];
+
 const DOCUMENT_TYPES: readonly DocumentType[] = ["CI", "PL", "BL", "CO", "UNKNOWN"];
 const ACTIVE_JOB_STATES = new Set(["queued", "running"]);
-const TABS: readonly { id: WorkspaceTab; label: string }[] = [
-  { id: "documents", label: "문서" },
-  { id: "analysis", label: "AI 심사" },
-  { id: "assistant", label: "AI 도우미" },
-  { id: "evidence", label: "근거" },
-  { id: "history", label: "이력" },
+
+/**
+ * The mockup's stage bar. Stage 4 keeps its place in the flow but has no Backend
+ * v1 counterpart; see customs-backend/docs/FRONTEND_UX_BACKEND_GAP.ko.md.
+ */
+const STAGES: readonly { id: StageView; step: number; label: string; hint: string; supported: boolean }[] = [
+  { id: "documents", step: 1, label: "서류 등록", hint: "텍스트 문서 구조화", supported: true },
+  { id: "crosscheck", step: 2, label: "교차 검증", hint: "이기종 문서 불일치 탐지", supported: true },
+  { id: "review", step: 3, label: "통관 심사", hint: "요건 · 법령 근거 판정", supported: true },
+  { id: "duty", step: 4, label: "관세 진단", hint: "세율 · 절감 (Backend 미지원)", supported: false },
+];
+const STAGE_IDS: readonly StageView[] = STAGES.map((stage) => stage.id);
+/** Routes the earlier tab layout used; kept so existing links keep resolving. */
+const LEGACY_VIEW_ALIASES: Record<string, WorkspaceView> = { analysis: "review", evidence: "review" };
+const CASE_FILTERS: readonly { id: CaseFilter; label: string }[] = [
+  { id: "all", label: "전체" },
+  { id: "open", label: "진행 전" },
+  { id: "in_review", label: "사람 검토 중" },
+  { id: "closed", label: "종료" },
+];
+/** Static map of the real pipeline. Every step here is backed by an API v1 call. */
+const FLOW_MAP: readonly { step: string; label: string; hint: string }[] = [
+  { step: "1", label: "서류 등록", hint: "텍스트 문서 구조화" },
+  { step: "2", label: "AI 사전심사", hint: "제한형 Agent workflow" },
+  { step: "3", label: "교차 검증", hint: "문서 간 값 대조" },
+  { step: "4", label: "판정 · 근거", hint: "확인 사항 · 법령 Evidence" },
+  { step: "5", label: "담당자 확정", hint: "판단 기록 · 정정 승인" },
 ];
 
 /**
@@ -99,7 +139,11 @@ export class CommercialReviewWorkspace {
     sourceFocus: null,
     factFocusId: null,
     activeJob: null,
-    activeTab: "documents",
+    activeView: "documents",
+    findingFocusId: null,
+    documentModalOpen: false,
+    traceRailOpen: true,
+    caseSort: { key: "updated", ascending: false },
     comparisonFocusId: null,
     evidenceFocusId: null,
     assistantConversations: [],
@@ -120,6 +164,7 @@ export class CommercialReviewWorkspace {
     selectedCorrectionProposalIds: new Set(),
     caseFilter: "all",
     query: "",
+    fontScale: 1,
     busy: false,
     notice: null,
     error: null,
@@ -127,6 +172,7 @@ export class CommercialReviewWorkspace {
   private jobTimer: number | null = null;
   private destroyed = false;
   private readonly hashChange = () => void this.followRoute();
+  private readonly keydown = (event: KeyboardEvent) => this.handleShortcut(event);
 
   constructor(
     private readonly root: HTMLElement,
@@ -138,6 +184,7 @@ export class CommercialReviewWorkspace {
   async start(): Promise<void> {
     if (!this.auth.isAuthenticated()) throw new Error("브라우저 인증 세션을 시작하지 못했습니다.");
     window.addEventListener("hashchange", this.hashChange);
+    window.addEventListener("keydown", this.keydown);
     await this.withBusy(async () => {
       this.state.session = await this.api.getSession();
       await this.refreshCases();
@@ -148,8 +195,50 @@ export class CommercialReviewWorkspace {
   destroy(): void {
     this.destroyed = true;
     window.removeEventListener("hashchange", this.hashChange);
+    window.removeEventListener("keydown", this.keydown);
     if (this.jobTimer !== null) window.clearTimeout(this.jobTimer);
     this.jobTimer = null;
+    document.documentElement.style.removeProperty("font-size");
+    document.body.style.removeProperty("overflow");
+  }
+
+  /** Mockup shortcuts: `/` focuses search, `1`–`4` and arrows move between stages. */
+  private handleShortcut(event: KeyboardEvent): void {
+    if (event.metaKey || event.ctrlKey || event.altKey) return;
+    const target = event.target;
+    const typing = target instanceof HTMLElement &&
+      (/^(input|textarea|select)$/iu.test(target.tagName) || target.isContentEditable);
+    if (event.key === "Escape" && this.state.documentModalOpen) {
+      event.preventDefault();
+      this.closeDocumentModal();
+      return;
+    }
+    if (typing || this.state.documentModalOpen) return;
+    const current = this.state.selectedCase;
+    if (!current) {
+      if (event.key === "/") {
+        event.preventDefault();
+        this.root.querySelector<HTMLInputElement>('input[name="search"]')?.focus();
+      }
+      return;
+    }
+    const index = STAGE_IDS.indexOf(this.state.activeView as StageView);
+    if (event.key >= "1" && event.key <= "4") {
+      const stage = STAGE_IDS[Number(event.key) - 1];
+      if (stage) {
+        event.preventDefault();
+        this.setRoute(current.case_id, stage);
+      }
+      return;
+    }
+    if (index < 0) return;
+    if (event.key === "ArrowRight" && index < STAGE_IDS.length - 1) {
+      event.preventDefault();
+      this.setRoute(current.case_id, STAGE_IDS[index + 1] as StageView);
+    } else if (event.key === "ArrowLeft" && index > 0) {
+      event.preventDefault();
+      this.setRoute(current.case_id, STAGE_IDS[index - 1] as StageView);
+    }
   }
 
   private hasRole(role: "reviewer" | "approver"): boolean {
@@ -186,19 +275,22 @@ export class CommercialReviewWorkspace {
       this.state.selectedDocument = null;
       this.state.sourceFocus = null;
       this.state.factFocusId = null;
+      this.state.documentModalOpen = false;
       this.resetRunAttachments();
       if (render) this.render();
       return;
     }
-    this.state.activeTab = route.tab;
+    // A route change is a navigation: the source overlay must not survive it.
+    if (this.state.activeView !== route.view) this.state.documentModalOpen = false;
+    this.state.activeView = route.view;
     if (this.state.selectedCase?.case_id !== route.caseId) await this.loadCase(route.caseId);
-    if (route.tab === "assistant") await this.ensureAssistantLoaded();
-    if (route.tab === "history") await this.ensureCorrectionProposalsLoaded();
+    if (route.view === "assistant") await this.ensureAssistantLoaded();
+    if (route.view === "history") await this.ensureCorrectionProposalsLoaded();
     if (render) this.render();
   }
 
-  private setRoute(caseId: string | null, tab: WorkspaceTab = "documents"): void {
-    const target = caseId === null ? "/cases" : `/cases/${encodeURIComponent(caseId)}/${tab}`;
+  private setRoute(caseId: string | null, view: WorkspaceView = "documents"): void {
+    const target = caseId === null ? "/cases" : `/cases/${encodeURIComponent(caseId)}/${view}`;
     if (window.location.hash !== `#${target}`) {
       window.location.hash = target;
       return;
@@ -206,11 +298,11 @@ export class CommercialReviewWorkspace {
     void this.followRoute();
   }
 
-  private async openCase(caseId: string, tab: WorkspaceTab = "documents"): Promise<void> {
+  private async openCase(caseId: string, view: WorkspaceView = "documents"): Promise<void> {
     await this.withBusy(async () => {
       await this.loadCase(caseId);
-      this.state.activeTab = tab;
-      this.setRoute(caseId, tab);
+      this.state.activeView = view;
+      this.setRoute(caseId, view);
     });
   }
 
@@ -244,6 +336,7 @@ export class CommercialReviewWorkspace {
   private resetRunAttachments(): void {
     this.state.comparisonFocusId = null;
     this.state.evidenceFocusId = null;
+    this.state.findingFocusId = null;
     this.state.assistantConversations = [];
     this.state.selectedConversation = null;
     this.state.assistantMessages = [];
@@ -496,7 +589,7 @@ export class CommercialReviewWorkspace {
     }
     this.state.correctionDraft = draft;
     this.state.notice = "AI 도우미의 정정 제안을 심사 결과의 정정 양식에 채웠습니다. 내용을 확인한 뒤에만 기록하십시오.";
-    this.setRoute(this.requireCase().case_id, "analysis");
+    this.setRoute(this.requireCase().case_id, "review");
   }
 
   private async openDocument(documentId: string, source: SourceReference | null = null): Promise<void> {
@@ -516,7 +609,7 @@ export class CommercialReviewWorkspace {
       const created = await this.api.createCase({ title, external_reference: reference || null });
       await this.refreshCases();
       await this.loadCase(created.case_id);
-      this.state.activeTab = "documents";
+      this.state.activeView = "documents";
       this.state.notice = "새 Case를 만들었습니다. 텍스트 문서를 등록해 심사를 시작할 수 있습니다.";
       form.reset();
       this.setRoute(created.case_id, "documents");
@@ -597,9 +690,9 @@ export class CommercialReviewWorkspace {
   private async showSucceededReview(job: JobRecord): Promise<void> {
     await this.loadCase(job.case_id);
     await this.openRun(job.review_run_id);
-    this.state.activeTab = "analysis";
+    this.state.activeView = "review";
     this.state.notice = "심사가 완료되었습니다. 결과는 자동 승인되지 않으며 담당자 검토가 필요합니다.";
-    this.setRoute(job.case_id, "analysis");
+    this.setRoute(job.case_id, "review");
   }
 
   private async decideFinding(form: HTMLFormElement, findingId: string): Promise<void> {
@@ -655,110 +748,493 @@ export class CommercialReviewWorkspace {
     return this.state.selectedRun;
   }
 
+  /**
+   * KRDS government sub-page shell: utility bar, site header, global navigation,
+   * breadcrumb hero, content body, and footer.
+   */
   private render(): void {
     if (this.destroyed) return;
-    const children = [
-      createHeader(
-        this.state.session,
-        this.mode,
-        () => void this.auth.logout(),
-        this.mode === "local-development" && supportsDevelopmentRoleSwitch(this.auth)
-          ? (actor) => void this.switchDevelopmentActor(actor)
-          : undefined,
-        this.state.busy,
-      ),
+    const page = element("div", { className: "g-page" },
+      this.createUtilityBar(),
+      this.createSiteHeader(),
+      this.createGlobalNav(),
       createRuntimeNotice(this.mode),
-      this.state.error ? message("error", this.state.error) : null,
-      this.state.notice ? message("notice", this.state.notice) : null,
-      element("main", { className: "review-app", attributes: { id: "main-content", "aria-busy": String(this.state.busy) } },
-        this.createQueue(),
-        this.state.selectedCase ? this.createWorkspace() : this.createWelcome(),
+      element("main", { className: "g-main", attributes: { id: "main-content", "aria-busy": String(this.state.busy) } },
+        this.createHero(),
+        element("div", { className: "g-inner g-body" },
+          this.state.error ? message("error", this.state.error) : null,
+          this.state.notice ? message("notice", this.state.notice) : null,
+          this.state.selectedCase ? this.createCaseScreen() : this.createDashboard(),
+        ),
       ),
-    ].filter((item): item is HTMLElement => item !== null);
-    this.root.replaceChildren(...children);
+      createSiteFooter(this.mode),
+      this.state.documentModalOpen ? this.createDocumentModal() : null,
+    );
+    this.root.replaceChildren(page);
+    this.applyFontScale();
+    document.body.style.overflow = this.state.documentModalOpen ? "hidden" : "";
   }
 
-  private createQueue(): HTMLElement {
-    const visible = this.state.cases.filter((item) => {
-      const matchesFilter = this.state.caseFilter === "all" || item.status === this.state.caseFilter;
-      const candidate = `${item.title} ${item.external_reference ?? ""} ${item.case_id}`.toLocaleLowerCase();
-      return matchesFilter && candidate.includes(this.state.query.toLocaleLowerCase());
-    });
-    const list = element("nav", { className: "case-list", attributes: { "aria-label": "Case 목록" } });
-    for (const item of visible) {
-      list.append(element("button", {
-        className: `case-card${this.state.selectedCase?.case_id === item.case_id ? " is-selected" : ""}`,
-        attributes: { type: "button", "aria-current": this.state.selectedCase?.case_id === item.case_id ? "page" : undefined, disabled: this.state.busy ? "" : undefined },
-        on: { click: () => void this.openCase(item.case_id).catch((error) => this.showError(error)) },
-      },
-      element("strong", { text: item.title }),
-      element("span", { text: item.external_reference ?? item.case_id }),
-      element("small", { text: `${display(item.status)} · 수정 ${formatDate(item.updated_at)}` })));
-    }
-    if (!visible.length) list.append(element("p", { className: "empty-copy", text: "조건에 맞는 Case가 없습니다." }));
+  private applyFontScale(): void {
+    const root = document.documentElement;
+    if (this.state.fontScale === 1) root.style.removeProperty("font-size");
+    else root.style.setProperty("font-size", `${Math.round(this.state.fontScale * 100)}%`);
+  }
 
-    const filters = element("div", { className: "queue-filters" },
-      input("search", { placeholder: "Case명 또는 참조번호 검색", value: this.state.query, ariaLabel: "Case 검색", onInput: (event) => this.updateQuery((event.currentTarget as HTMLInputElement).value) }),
-      select("case_filter", [
-        ["all", "전체"], ["open", "진행 전"], ["in_review", "사람 검토 중"], ["closed", "종료"],
-      ], this.state.caseFilter, (event) => { this.state.caseFilter = (event.currentTarget as HTMLSelectElement).value as CaseFilter; this.render(); }),
+  private setFontScale(scale: FontScale): void {
+    if (this.state.fontScale === scale) return;
+    this.state.fontScale = scale;
+    this.render();
+  }
+
+  private createUtilityBar(): HTMLElement {
+    const zoom = element("div", { className: "g-zoom", attributes: { role: "group", "aria-label": "본문 글자 크기 조절" } },
+      element("span", { className: "g-zoom__label", text: "글자크기" }),
+      ...FONT_SCALES.map(([scale, glyph, name]) => element("button", {
+        className: `g-zoom__button${this.state.fontScale === scale ? " is-selected" : ""}`,
+        text: glyph,
+        attributes: { type: "button", "aria-label": `글자 크기 ${name}`, "aria-pressed": String(this.state.fontScale === scale) },
+        on: { click: () => this.setFontScale(scale) },
+      })),
+    );
+    return element("div", { className: "g-utilbar" },
+      element("div", { className: "g-inner" },
+        element("span", { className: "g-utilbar__site", text: "통관 AI 사전심사 · 업무시스템" }),
+        element("div", { className: "g-utilbar__tools" },
+          zoom,
+          this.createRoleSwitch(),
+          element("button", { className: "g-lnk", text: "로그아웃", attributes: { type: "button" }, on: { click: () => void this.auth.logout() } }),
+        ),
+      ),
+    );
+  }
+
+  private createRoleSwitch(): HTMLElement | null {
+    if (this.mode !== "local-development" || !supportsDevelopmentRoleSwitch(this.auth)) return null;
+    const actors: readonly { id: LocalDevelopmentActor; label: string }[] = [
+      { id: "reviewer", label: "심사자" },
+      { id: "approver", label: "승인자" },
+    ];
+    return element("div", { className: "local-role-switch", attributes: { role: "group", "aria-label": "로컬 개발 역할 전환" } },
+      element("span", { text: "개발 역할" }),
+      ...actors.map((actor) => element("button", {
+        className: `g-chip${this.hasRole(actor.id) ? " is-selected" : ""}`,
+        text: actor.label,
+        attributes: {
+          type: "button",
+          "aria-pressed": String(this.hasRole(actor.id)),
+          disabled: this.state.busy || this.hasRole(actor.id) ? "" : undefined,
+        },
+        on: { click: () => void this.switchDevelopmentActor(actor.id) },
+      })),
+    );
+  }
+
+  private createSiteHeader(): HTMLElement {
+    const session = this.state.session;
+    return element("header", { className: "g-header" },
+      element("div", { className: "g-inner" },
+        element("a", { className: "g-brand", attributes: { href: "#/cases", "aria-label": "통관 AI 사전심사 첫 화면" } },
+          element("span", { className: "g-brand__mark", attributes: { "aria-hidden": "true" }, text: "通" }),
+          element("span", { className: "g-brand__text" },
+            element("strong", { text: "통관 AI 사전심사" }),
+            element("small", { text: this.mode === "functional-uat" ? "실제 기능 UAT 환경" : "팀 개발 환경" }),
+          ),
+        ),
+        element("div", { className: "g-user" },
+          element("strong", { text: session?.subject ?? "세션 확인 중" }),
+          element("small", { text: `${session?.org_id ?? ""}${session?.roles.length ? ` · ${session.roles.map(roleLabel).join(", ")}` : ""}` }),
+        ),
+      ),
+    );
+  }
+
+  private createGlobalNav(): HTMLElement {
+    const current = this.state.selectedCase;
+    const items = element("div", { className: "g-inner" },
+      element("button", {
+        className: `g-gnb__item${current ? "" : " is-active"}`,
+        text: "심사 업무함",
+        attributes: { type: "button", "aria-current": current ? undefined : "page" },
+        on: { click: () => this.setRoute(null) },
+      }),
+    );
+    if (current) {
+      const sections: readonly { id: WorkspaceView; label: string; matches: (view: WorkspaceView) => boolean }[] = [
+        { id: "documents", label: "심사 워크스페이스", matches: (view) => STAGE_IDS.includes(view as StageView) },
+        { id: "assistant", label: "AI 도우미", matches: (view) => view === "assistant" },
+        { id: "history", label: "심사 이력", matches: (view) => view === "history" },
+      ];
+      for (const section of sections) {
+        const active = section.matches(this.state.activeView);
+        items.append(element("button", {
+          className: `g-gnb__item${active ? " is-active" : ""}`,
+          text: section.label,
+          attributes: { type: "button", "aria-current": active ? "page" : undefined },
+          on: { click: () => this.setRoute(current.case_id, section.id) },
+        }));
+      }
+    }
+    return element("nav", { className: "g-gnb", attributes: { "aria-label": "주요 메뉴" } }, items);
+  }
+
+  private createHero(): HTMLElement {
+    const current = this.state.selectedCase;
+    const trail = current ? ["홈", "심사 업무함", current.title] : ["홈", "통관심사", "심사 업무함"];
+    const crumb = element("p", { className: "g-crumb", attributes: { "aria-label": "현재 위치" } });
+    trail.forEach((step, index) => {
+      const last = index === trail.length - 1;
+      if (index > 0) crumb.append(element("span", { className: "g-crumb__sep", text: "›", attributes: { "aria-hidden": "true" } }));
+      crumb.append(last ? element("strong", { text: step }) : element("span", { text: step }));
+    });
+    const subtitle = current
+      ? `${current.external_reference ?? current.case_id} · ${display(current.status)} · 활성 문서 ${this.activeDocuments().length}건`
+      : `등록된 Case ${this.state.cases.length}건 · 문서와 근거를 한 화면에서 검토합니다.`;
+    return element("div", { className: "g-hero" },
+      element("div", { className: "g-inner" },
+        crumb,
+        element("div", { className: "g-hero__row" },
+          element("div", { className: "g-hero__text" },
+            element("h1", { className: "g-title", text: current ? current.title : "심사 업무함" }),
+            element("p", { className: "g-title-sub", text: subtitle }),
+          ),
+          current
+            ? element("div", { className: "case-actions" },
+              element("span", { className: "human-review-badge", text: "항상 사람 검토 필요" }),
+              this.createReviewButton(),
+            )
+            : null,
+        ),
+      ),
+    );
+  }
+
+  /* ── 대시보드 (인터랙션 명세 FRAME 01) ───────────────────────── */
+
+  private createDashboard(): HTMLElement {
+    const counts = this.caseCounts();
+    const stats = element("div", { className: "dash-stats" },
+      dashStat("전체 Case", String(counts.all), "업무함에 등록된 전체 건"),
+      dashStat("진행 전", String(counts.open), "심사를 아직 시작하지 않은 건", "open"),
+      dashStat("사람 검토 중", String(counts.in_review), "담당자 판단이 필요한 건", "review"),
+      dashStat("종료", String(counts.closed), "검토가 끝난 건", "done"),
     );
 
-    const form = element("form", { className: "case-create-form", on: { submit: (event) => { event.preventDefault(); void this.createCase(event.currentTarget as HTMLFormElement); } } },
-      field("Case 제목", input("title", { required: true, maxLength: 200, placeholder: "예: 8월 수입 신고 검토" })),
-      field("업무 참조번호", input("reference", { maxLength: 200, placeholder: "선택 입력" })),
+    const flow = element("section", { className: "dash-flow", attributes: { "aria-label": "처리 흐름" } },
+      element("p", { className: "dash-flow__title", text: "처리 흐름 · 서류 등록에서 담당자 확정까지" }),
+      element("ol", { className: "dash-flow__row" }, ...FLOW_MAP.map((step, index) => element("li", { className: "dash-flow__step" },
+        element("span", { className: "dash-flow__n", text: step.step }),
+        element("span", { className: "dash-flow__tx" },
+          element("strong", { text: step.label }),
+          element("span", { text: step.hint }),
+        ),
+        index === FLOW_MAP.length - 1 ? null : element("span", { className: "dash-flow__arrow", text: "→", attributes: { "aria-hidden": "true" } }),
+      ))),
+    );
+
+    const filters = element("div", { className: "dash-filters", attributes: { role: "group", "aria-label": "상태 필터" } },
+      ...CASE_FILTERS.map((filter) => element("button", {
+        className: `dash-filter${this.state.caseFilter === filter.id ? " is-active" : ""}`,
+        attributes: { type: "button", "aria-pressed": String(this.state.caseFilter === filter.id) },
+        on: { click: () => { this.state.caseFilter = filter.id; this.render(); } },
+      },
+      element("span", { text: filter.label }),
+      element("span", { className: "dash-filter__count", text: String(counts[filter.id]) }))),
+    );
+
+    const search = element("div", { className: "dash-search" },
+      element("span", { className: "dash-search__icon", text: "⌕", attributes: { "aria-hidden": "true" } }),
+      input("search", {
+        placeholder: "Case명 또는 참조번호 검색 ( / )",
+        value: this.state.query,
+        ariaLabel: "Case 검색",
+        onInput: (event) => this.updateQuery((event.currentTarget as HTMLInputElement).value),
+      }),
+      this.state.query
+        ? element("button", { className: "dash-search__clear", text: "✕", attributes: { type: "button", "aria-label": "검색어 지우기" }, on: { click: () => this.updateQuery("") } })
+        : null,
+    );
+
+    const createForm = element("form", { className: "case-create-form", on: { submit: (event) => { event.preventDefault(); void this.createCase(event.currentTarget as HTMLFormElement); } } },
+      element("div", { className: "form-grid" },
+        field("Case 제목", input("title", { required: true, maxLength: 200, placeholder: "예: 8월 수입 신고 검토" })),
+        field("업무 참조번호", input("reference", { maxLength: 200, placeholder: "선택 입력" })),
+      ),
       submit("새 Case 만들기", this.state.busy),
     );
 
-    return element("aside", { className: "case-queue", attributes: { "aria-label": "심사 업무함" } },
-      element("div", { className: "queue-heading" },
-        element("p", { className: "eyebrow", text: "REVIEW QUEUE" }),
-        element("h2", { text: "심사 업무함" }),
-        element("p", { text: `현재 ${this.state.cases.length}건` }),
+    return element("section", { className: "dashboard" },
+      stats,
+      flow,
+      element("div", { className: "dash-tools" }, filters, search),
+      element("section", { className: "surface dash-table-panel" },
+        sectionHeading("Case 목록", "행을 누르면 해당 Case의 심사 워크스페이스로 이동합니다."),
+        this.createCaseTable(),
       ),
-      filters,
-      list,
       this.hasRole("reviewer")
         ? element("details", { className: "new-case-panel", attributes: { open: this.state.cases.length === 0 ? "" : undefined } },
-          element("summary", { text: "새 Case 등록" }), form)
+          element("summary", { text: "＋ 새 Case 등록" }), createForm)
         : element("p", { className: "role-boundary-note", text: "승인자 역할은 Case를 읽고 정정 제안을 독립적으로 승인·반려할 수 있습니다. 새 Case 등록은 심사자 역할에서만 가능합니다." }),
     );
   }
 
-  private createWelcome(): HTMLElement {
-    return element("section", { className: "workspace-welcome" },
-      element("div", { className: "welcome-graphic", text: "AI" }),
-      element("p", { className: "eyebrow", text: "CUSTOMS REVIEW WORKSPACE" }),
-      element("h1", { text: "문서와 근거를 한 화면에서 검토합니다." }),
-      element("p", { text: "Case를 선택하면 텍스트 문서, AI 심사 결과, 문서 간 비교, 법령 Evidence, 담당자 판단 이력을 연결해 확인할 수 있습니다." }),
-      element("ol", { className: "welcome-steps" },
-        element("li", {}, element("strong", { text: "문서 등록" }), element("span", { text: "Invoice, Packing List, B/L, C/O 텍스트를 등록합니다." })),
-        element("li", {}, element("strong", { text: "AI 사전심사" }), element("span", { text: "Agent가 문서 사실과 정합성·법령 근거를 정리합니다." })),
-        element("li", {}, element("strong", { text: "사람 검토" }), element("span", { text: "담당자가 판단과 사유를 기록하고 필요하면 보완 후 재심사합니다." })),
+  private caseCounts(): Record<CaseFilter, number> {
+    return {
+      all: this.state.cases.length,
+      open: this.state.cases.filter((item) => item.status === "open").length,
+      in_review: this.state.cases.filter((item) => item.status === "in_review").length,
+      closed: this.state.cases.filter((item) => item.status === "closed").length,
+    };
+  }
+
+  private visibleCases(): CaseSummary[] {
+    const keyword = this.state.query.trim().toLocaleLowerCase();
+    const rows = this.state.cases.filter((item) => {
+      const matchesFilter = this.state.caseFilter === "all" || item.status === this.state.caseFilter;
+      const candidate = `${item.title} ${item.external_reference ?? ""} ${item.case_id}`.toLocaleLowerCase();
+      return matchesFilter && candidate.includes(keyword);
+    });
+    const { key, ascending } = this.state.caseSort;
+    const direction = ascending ? 1 : -1;
+    return [...rows].sort((left, right) => {
+      const compared = key === "updated"
+        ? left.updated_at.localeCompare(right.updated_at)
+        : (left.external_reference ?? left.case_id).localeCompare(right.external_reference ?? right.case_id);
+      return compared * direction;
+    });
+  }
+
+  private toggleCaseSort(key: CaseSortKey): void {
+    const current = this.state.caseSort;
+    this.state.caseSort = { key, ascending: current.key === key ? !current.ascending : true };
+    this.render();
+  }
+
+  private createCaseTable(): HTMLElement {
+    const rows = this.visibleCases();
+    const table = element("div", { className: "case-table", attributes: { role: "table", "aria-label": "Case 목록" } });
+    const sortGlyph = (key: CaseSortKey) => this.state.caseSort.key === key ? (this.state.caseSort.ascending ? "▲" : "▼") : "↕";
+    table.append(element("div", { className: "case-table__header", attributes: { role: "row" } },
+      element("button", {
+        className: "case-table__sort", text: `참조번호 ${sortGlyph("reference")}`,
+        attributes: { type: "button" }, on: { click: () => this.toggleCaseSort("reference") },
+      }),
+      element("span", { text: "Case 제목" }),
+      element("span", { text: "상태" }),
+      element("button", {
+        className: "case-table__sort", text: `최근 수정 ${sortGlyph("updated")}`,
+        attributes: { type: "button" }, on: { click: () => this.toggleCaseSort("updated") },
+      }),
+      element("span", { attributes: { "aria-hidden": "true" } }),
+    ));
+    for (const item of rows) {
+      table.append(element("button", {
+        className: "case-row",
+        attributes: { type: "button", role: "row", disabled: this.state.busy ? "" : undefined },
+        on: { click: () => void this.openCase(item.case_id).catch((error) => this.showError(error)) },
+      },
+      element("span", { className: "case-row__ref", text: item.external_reference ?? item.case_id }),
+      element("span", { className: "case-row__title", text: item.title }),
+      element("span", {}, element("span", { className: `status-badge status-badge--${item.status}`, text: display(item.status) })),
+      element("span", { className: "case-row__date", text: formatDate(item.updated_at) }),
+      element("span", { className: "case-row__go", text: "›", attributes: { "aria-hidden": "true" } })));
+    }
+    if (!rows.length) {
+      table.append(element("p", { className: "empty-copy", text: this.state.cases.length ? "조건에 맞는 Case가 없습니다." : "등록된 Case가 없습니다. 아래에서 새 Case를 만드십시오." }));
+    }
+    return table;
+  }
+
+  /* ── Case 화면 (워크스페이스 · 도우미 · 이력) ────────────────── */
+
+  private createCaseScreen(): HTMLElement {
+    const processing = this.state.activeJob && ACTIVE_JOB_STATES.has(this.state.activeJob.status)
+      ? element("section", { className: "processing-notice", attributes: { role: "status" } },
+        element("strong", { text: "심사 요청 처리 중" }),
+        element("span", { text: `Job ${this.state.activeJob.job_id.slice(0, 12)} · ${display(this.state.activeJob.status)}. 실제 완료 결과가 도착한 뒤 워크플로우를 표시합니다.` }),
+      )
+      : null;
+    if (this.state.activeView === "assistant") {
+      return element("section", { className: "case-screen" }, processing, this.createAssistantTab());
+    }
+    if (this.state.activeView === "history") {
+      return element("section", { className: "case-screen" }, processing, this.createHistoryTab());
+    }
+    return element("section", { className: "case-screen" },
+      processing,
+      this.createStageBar(),
+      element("div", { className: `workspace${this.state.traceRailOpen ? "" : " workspace--rail-closed"}` },
+        this.createDocumentRail(),
+        element("section", { className: "workspace__canvas" },
+          this.createIssueBar(),
+          this.createStageView(),
+        ),
+        this.createTraceRail(),
       ),
     );
   }
 
-  private createWorkspace(): HTMLElement {
+  private createStageBar(): HTMLElement {
     const current = this.requireCase();
-    return element("section", { className: "case-workspace" },
-      element("header", { className: "case-heading" },
-        element("div", {},
-          element("p", { className: "eyebrow", text: "CASE WORKSPACE" }),
-          element("h1", { text: current.title }),
-          element("p", { className: "case-meta", text: `${current.external_reference ?? current.case_id} · ${display(current.status)} · 문서 ${this.activeDocuments().length}건` }),
-        ),
-        element("div", { className: "case-actions" },
-          element("span", { className: "human-review-badge", text: "항상 사람 검토 필요" }),
-          this.createReviewButton(),
-        ),
+    const activeIndex = STAGE_IDS.indexOf(this.state.activeView as StageView);
+    const bar = element("nav", { className: "stagebar", attributes: { "aria-label": "심사 단계" } });
+    STAGES.forEach((stage, index) => {
+      const active = stage.id === this.state.activeView;
+      const done = activeIndex > index;
+      const badge = stage.id === "review" ? this.openFindings().length : 0;
+      bar.append(element("button", {
+        className: `stage${active ? " is-active" : ""}${done ? " is-done" : ""}${stage.supported ? "" : " is-unsupported"}`,
+        attributes: { type: "button", "aria-current": active ? "step" : undefined },
+        on: { click: () => this.setRoute(current.case_id, stage.id) },
+      },
+      element("span", { className: "stage__n", text: String(stage.step) }),
+      element("span", { className: "stage__label" },
+        element("strong", { text: stage.label }),
+        element("span", { text: stage.hint }),
       ),
-      this.state.activeJob ? element("section", { className: "processing-notice", attributes: { role: "status" } },
-        element("strong", { text: "심사 요청 처리 중" }),
-        element("span", { text: `Job ${this.state.activeJob.job_id.slice(0, 12)} · ${display(this.state.activeJob.status)}. 실제 완료 결과가 도착한 뒤 워크플로우를 표시합니다.` }),
-      ) : null,
-      this.createTabs(),
-      this.createActiveTab(),
+      badge ? element("span", { className: "stage__badge", text: String(badge), attributes: { "aria-label": `미해결 확인 사항 ${badge}건` } }) : null));
+      if (index < STAGES.length - 1) bar.append(element("span", { className: "stage__sep", text: "›", attributes: { "aria-hidden": "true" } }));
+    });
+    return bar;
+  }
+
+  /** Findings the reviewer has not recorded a judgement for yet. */
+  private openFindings(): ReviewFinding[] {
+    const run = this.state.selectedRun;
+    if (!run) return [];
+    const decided = new Set(run.reviewer_decisions.map((decision) => decision.finding_id));
+    return run.findings.filter((finding) => !decided.has(finding.finding_id));
+  }
+
+  private createIssueBar(): HTMLElement | null {
+    const current = this.requireCase();
+    const run = this.state.selectedRun;
+    if (!run) return null;
+    const open = this.openFindings();
+    if (!open.length) {
+      return element("div", { className: "issuebar issuebar--clear", attributes: { role: "status" } },
+        element("span", { className: "issuebar__icon", text: "✓", attributes: { "aria-hidden": "true" } }),
+        element("span", { className: "issuebar__text", text: "확인 사항 판단이 모두 기록되었습니다. 그래도 결과는 자동 완료되지 않으며 담당자 확정이 필요합니다." }),
+        element("button", {
+          className: "issuebar__chip", text: "심사 이력으로 →",
+          attributes: { type: "button" }, on: { click: () => this.setRoute(current.case_id, "history") },
+        }),
+      );
+    }
+    const highest = [...open].sort((left, right) => severityWeight(right.severity) - severityWeight(left.severity))[0];
+    return element("div", { className: "issuebar", attributes: { role: "status" } },
+      element("span", { className: "issuebar__icon", text: "!", attributes: { "aria-hidden": "true" } }),
+      element("span", { className: "issuebar__text" },
+        element("strong", { text: `판단이 필요한 확인 사항 ${open.length}건` }),
+        element("span", { text: " — 담당자 판단을 기록하면 이 표시가 사라집니다." }),
+      ),
+      this.state.activeView === "review" ? null : element("button", {
+        className: "issuebar__chip", text: "통관 심사로 →",
+        attributes: { type: "button" }, on: { click: () => this.setRoute(current.case_id, "review") },
+      }),
+      highest ? element("button", {
+        className: "issuebar__chip",
+        text: `우선 확인 · ${highest.code}`,
+        attributes: { type: "button" },
+        on: { click: () => { this.state.findingFocusId = highest.finding_id; this.setRoute(current.case_id, "review"); } },
+      }) : null,
+    );
+  }
+
+  private createDocumentRail(): HTMLElement {
+    const rail = element("aside", { className: "workspace__rail-l", attributes: { "aria-label": "선적 서류" } });
+    rail.append(element("p", { className: "rail-title", text: `선적 서류 · ${this.state.documents.length}` }));
+    for (const item of this.state.documents) {
+      const superseded = Boolean(item.superseded_by_document_id);
+      rail.append(element("button", {
+        className: `rail-doc${this.state.selectedDocument?.document_id === item.document_id ? " is-selected" : ""}${superseded ? " is-superseded" : ""}`,
+        attributes: { type: "button", title: "원문 대조 열기" },
+        on: { click: () => void this.openDocumentModal(item.document_id) },
+      },
+      element("span", { className: "rail-doc__type", text: item.document_type }),
+      element("span", { className: "rail-doc__meta" },
+        element("strong", { text: item.filename }),
+        element("small", { text: documentTypeLabel(item.document_type) }),
+      ),
+      element("span", { className: `rail-doc__tag${superseded ? " is-superseded" : ""}`, text: superseded ? "대체됨" : "활성" })));
+    }
+    if (!this.state.documents.length) {
+      rail.append(element("p", { className: "empty-copy", text: "등록된 문서가 없습니다." }));
+    }
+    rail.append(this.hasRole("reviewer")
+      ? element("button", {
+        className: "rail-upload",
+        attributes: { type: "button" },
+        on: { click: () => this.setRoute(this.requireCase().case_id, "documents") },
+      },
+      element("span", { className: "rail-upload__plus", text: "＋", attributes: { "aria-hidden": "true" } }),
+      element("span", {}, element("strong", { text: "서류 등록 · 보완" }), element("small", { text: "텍스트 · .txt만 지원" })))
+      : element("p", { className: "role-boundary-note", text: "승인자 역할은 원문을 읽을 수 있지만 문서를 등록할 수는 없습니다." }));
+    return rail;
+  }
+
+  private createTraceRail(): HTMLElement {
+    const current = this.requireCase();
+    if (!this.state.traceRailOpen) {
+      return element("aside", { className: "workspace__rail-r workspace__rail-r--collapsed" },
+        element("button", {
+          className: "rail-expand", attributes: { type: "button", title: "트레이스 펼치기" },
+          on: { click: () => { this.state.traceRailOpen = true; this.render(); } },
+        }, element("span", { text: "‹" }), element("span", { className: "rail-expand__label", text: "트레이스" })),
+      );
+    }
+    const run = this.state.selectedRun;
+    const body = run
+      ? this.createWorkflow(run)
+      : element("p", { className: "empty-copy", text: "심사를 실행하면 Agent 처리 트레이스가 표시됩니다." });
+    const counts = run
+      ? element("div", { className: "trace-counts" },
+        traceCount(String(run.workflow.stages.length), "처리 단계"),
+        traceCount(String(run.workflow.planner.actions.length), "계획 실행"),
+        traceCount(String(run.workflow.reextractions.length), "제한 재추출"),
+      )
+      : null;
+    return element("aside", { className: "workspace__rail-r", attributes: { "aria-label": "Agent 실행 트레이스" } },
+      element("div", { className: "trace-head" },
+        element("div", { className: "trace-head__row" },
+          element("strong", { text: "Agent 실행 트레이스" }),
+          element("button", {
+            className: "rail-collapse", text: "»", attributes: { type: "button", title: "접기", "aria-label": "트레이스 접기" },
+            on: { click: () => { this.state.traceRailOpen = false; this.render(); } },
+          }),
+        ),
+        element("p", { className: "trace-head__sub", text: run ? `실행 상태 ${display(run.workflow.status)} · 이 실행에서 실제로 수행한 제한형 workflow입니다.` : "아직 실행된 심사가 없습니다." }),
+        counts,
+      ),
+      element("div", { className: "trace-body" }, body),
+      element("div", { className: "trace-foot" },
+        element("button", {
+          className: "button button--secondary button--full", text: "💬 AI 도우미 열기 →",
+          attributes: { type: "button" }, on: { click: () => this.setRoute(current.case_id, "assistant") },
+        }),
+      ),
+    );
+  }
+
+  private createStageView(): HTMLElement {
+    switch (this.state.activeView) {
+      case "crosscheck": return this.createCrosscheckStage();
+      case "review": return this.createReviewStage();
+      case "duty": return this.createDutyStage();
+      default: return this.createDocumentsStage();
+    }
+  }
+
+  private createDutyStage(): HTMLElement {
+    return element("section", { className: "surface unsupported-stage" },
+      sectionHeading("관세 메리트 진단", "목업 4단계에 해당하는 화면입니다."),
+      element("p", { className: "unsupported-stage__lead", text: "이 단계는 Backend API v1에 대응하는 계약이 없어 아직 만들 수 없습니다." }),
+      element("ul", { className: "unsupported-stage__list" },
+        element("li", { text: "적용 세율 사다리(기본·협정·할당)와 각 세율의 적용 요건" }),
+        element("li", { text: "과세가격 산정과 수량·단가·환율·인코텀즈 기반 재계산" }),
+        element("li", { text: "절감액 산출 근거와 협정관세 적용신청서 생성" }),
+      ),
+      element("p", { className: "unsupported-stage__note", text: "필요한 계약은 customs-backend/docs/FRONTEND_UX_BACKEND_GAP.ko.md 2항에 기록했습니다. 근거 없는 금액을 화면에 표시하지 않기 위해 값을 비워 둡니다." }),
     );
   }
 
@@ -766,7 +1242,7 @@ export class CommercialReviewWorkspace {
     const running = this.state.activeJob !== null && ACTIVE_JOB_STATES.has(this.state.activeJob.status);
     const canReview = this.hasRole("reviewer");
     return element("button", {
-      className: "button button--primary",
+      className: "button button--primary button--lg",
       text: running ? "심사 진행 중" : canReview ? "AI 심사 시작" : "심사자 역할에서 실행",
       attributes: {
         type: "button",
@@ -777,38 +1253,16 @@ export class CommercialReviewWorkspace {
     });
   }
 
-  private createTabs(): HTMLElement {
-    const current = this.requireCase();
-    const tabs = element("nav", { className: "workspace-tabs", attributes: { "aria-label": "Case 작업 영역" } });
-    for (const tab of TABS) {
-      tabs.append(element("button", {
-        className: `workspace-tab${tab.id === this.state.activeTab ? " is-active" : ""}`,
-        text: tab.label,
-        attributes: { type: "button", role: "tab", "aria-selected": tab.id === this.state.activeTab ? "true" : "false" },
-        on: { click: () => this.setRoute(current.case_id, tab.id) },
-      }));
-    }
-    return tabs;
-  }
+  /* ── 단계 1 · 서류 등록 ──────────────────────────────────────── */
 
-  private createActiveTab(): HTMLElement {
-    switch (this.state.activeTab) {
-      case "analysis": return this.createAnalysisTab();
-      case "assistant": return this.createAssistantTab();
-      case "evidence": return this.createEvidenceTab();
-      case "history": return this.createHistoryTab();
-      default: return this.createDocumentsTab();
-    }
-  }
-
-  private createDocumentsTab(): HTMLElement {
+  private createDocumentsStage(): HTMLElement {
     const documents = element("div", { className: "document-table", attributes: { role: "list" } });
     for (const document of this.state.documents) {
       const superseded = Boolean(document.superseded_by_document_id);
       documents.append(element("button", {
         className: `document-row${this.state.selectedDocument?.document_id === document.document_id ? " is-selected" : ""}${superseded ? " is-superseded" : ""}`,
-        attributes: { type: "button", role: "listitem" },
-        on: { click: () => void this.withBusy(() => this.openDocument(document.document_id)) },
+        attributes: { type: "button", role: "listitem", title: "원문 대조 열기" },
+        on: { click: () => void this.openDocumentModal(document.document_id) },
       },
       element("span", { className: "document-type", text: document.document_type }),
       element("span", { className: "document-name", text: document.filename }),
@@ -830,40 +1284,134 @@ export class CommercialReviewWorkspace {
       submit("텍스트 문서 등록", this.state.busy),
     );
 
-    return element("section", { className: "tab-layout documents-layout" },
-      element("section", { className: "surface document-panel" },
-        sectionHeading("문서", "활성 문서는 다음 심사 입력에 포함됩니다."),
+    return element("section", { className: "stage-view" },
+      element("section", { className: "surface" },
+        sectionHeading("서류 등록", "활성 문서는 다음 심사 입력에 포함됩니다. 행을 누르면 원문 대조 창이 열립니다."),
         documents,
         this.hasRole("reviewer")
-          ? element("details", { className: "document-add-panel" }, element("summary", { text: "문서 등록 또는 보완" }), form)
+          ? element("details", { className: "document-add-panel", attributes: { open: this.state.documents.length === 0 ? "" : undefined } },
+            element("summary", { text: "문서 등록 또는 보완" }), form)
           : element("p", { className: "role-boundary-note", text: "승인자 역할은 원문과 심사 이력을 읽을 수 있지만 문서를 등록하거나 보완할 수는 없습니다." }),
       ),
-      element("section", { className: "surface document-preview" }, this.createDocumentPreview()),
+      element("section", { className: "surface" },
+        sectionHeading("HSK 분류", "목업 1단계의 HSK 자동분류·후보 선택 영역입니다."),
+        element("p", { className: "unsupported-inline", text: "Backend API v1에 HSK 후보·신뢰도·확정 계약이 없어 표시할 수 없습니다. 필요한 계약은 customs-backend/docs/FRONTEND_UX_BACKEND_GAP.ko.md 1항에 기록했습니다." }),
+      ),
     );
   }
 
-  private createDocumentPreview(): HTMLElement {
+  /* ── 단계 2 · 교차 검증 ──────────────────────────────────────── */
+
+  private createCrosscheckStage(): HTMLElement {
+    const run = this.state.selectedRun;
+    if (!run) return emptyState("아직 비교 결과가 없습니다.", "활성 텍스트 문서를 등록한 뒤 AI 심사를 시작하십시오.");
+    const mismatches = run.comparisons.filter((item) => item.status === "mismatch" || item.status === "needs_review").length;
+    return element("section", { className: "stage-view" },
+      element("section", { className: "surface" },
+        sectionHeading("교차 검증", "문서 간 값을 대조한 결과입니다. 행을 누르면 해당 값의 원문 위치가 열립니다."),
+        element("div", { className: "review-metrics" },
+          metric("전체 비교", String(run.comparisons.length)),
+          metric("확인 필요", String(mismatches)),
+          metric("문서", String(run.document_analyses.length)),
+          metric("추출 사실", String(run.document_analyses.reduce((total, analysis) => total + analysis.facts.length, 0))),
+        ),
+        this.createComparisons(run.comparisons),
+      ),
+      element("section", { className: "surface" },
+        sectionHeading("추출된 문서 사실", "비교의 근거가 된 값입니다."),
+        this.createReportFacts(run),
+      ),
+    );
+  }
+
+  /* ── 원문 대조 모달 (인터랙션 명세 FRAME 03b · HITL) ─────────── */
+
+  private async openDocumentModal(documentId: string, source: SourceReference | null = null): Promise<void> {
+    await this.withBusy(async () => {
+      await this.openDocument(documentId, source);
+      this.state.documentModalOpen = true;
+    });
+  }
+
+  private closeDocumentModal(): void {
+    this.state.documentModalOpen = false;
+    this.render();
+  }
+
+  private createDocumentModal(): HTMLElement {
     const document = this.state.selectedDocument;
-    if (!document) return emptyState("문서 미리보기", "왼쪽 목록에서 문서를 선택하면 원문과 인용 위치를 확인할 수 있습니다.");
-    return element("div", {},
-      sectionHeading(document.filename, `${document.document_type} · ${document.character_count.toLocaleString()}자 · ${document.superseded_by_document_id ? "대체된 문서" : "활성 문서"}`),
-      renderDocumentText(document.content_text, this.state.sourceFocus),
-    );
+    const body = document
+      ? element("div", { className: "docmodal__body" },
+        element("div", { className: "docmodal__meta" },
+          element("span", { className: "document-type", text: document.document_type }),
+          element("strong", { text: document.filename }),
+          element("small", { text: `${documentTypeLabel(document.document_type)} · ${document.character_count.toLocaleString()}자 · ${document.superseded_by_document_id ? "대체된 문서" : "활성 문서"}` }),
+        ),
+        this.state.sourceFocus?.quote
+          ? element("p", { className: "docmodal__hint", text: `인용 위치를 원문에서 강조했습니다: “${this.state.sourceFocus.quote}”` })
+          : null,
+        renderDocumentText(document.content_text, this.state.sourceFocus),
+      )
+      : element("div", { className: "docmodal__body" }, element("p", { className: "empty-copy", text: "문서 원문을 불러오지 못했습니다." }));
+    const overlay = element("div", {
+      className: "docmodal-overlay",
+      on: { click: (event) => { if (event.target === event.currentTarget) this.closeDocumentModal(); } },
+    },
+    element("div", { className: "docmodal", attributes: { role: "dialog", "aria-modal": "true", "aria-label": "원문 대조" } },
+      element("header", { className: "docmodal__head" },
+        element("div", {},
+          element("strong", { text: "원문 대조 · 인용 위치 확인" }),
+          element("small", { text: "원문은 바뀌지 않습니다. 값 정정은 승인이 필요한 제안으로만 기록됩니다." }),
+        ),
+        element("button", {
+          className: "docmodal__close", text: "✕",
+          attributes: { type: "button", "aria-label": "닫기" }, on: { click: () => this.closeDocumentModal() },
+        }),
+      ),
+      body,
+      element("footer", { className: "docmodal__foot" },
+        element("span", { className: "docmodal__note", text: "Esc 키로 닫을 수 있습니다." }),
+        element("button", {
+          className: "button button--quiet", text: "닫기",
+          attributes: { type: "button" }, on: { click: () => this.closeDocumentModal() },
+        }),
+        document && this.hasRole("reviewer")
+          ? element("button", {
+            className: "button button--primary", text: "이 문서로 정정 제안",
+            attributes: { type: "button", disabled: this.state.selectedRun ? undefined : "", title: this.state.selectedRun ? undefined : "심사 결과가 있어야 정정 제안을 기록할 수 있습니다." },
+            on: { click: () => { this.closeDocumentModal(); this.setRoute(this.requireCase().case_id, "review"); } },
+          })
+          : null,
+      ),
+    ));
+    queueMicrotask(() => overlay.querySelector<HTMLElement>(".docmodal__close")?.focus());
+    return overlay;
   }
 
-  private createAnalysisTab(): HTMLElement {
+  private createReviewStage(): HTMLElement {
     const run = this.state.selectedRun;
     if (!run) return emptyState("아직 심사 결과가 없습니다.", "활성 텍스트 문서를 등록한 뒤 AI 심사를 시작하십시오.");
     const sections = run.report.sections.map((section, index) =>
       this.createAgentReportSection(run, section, index),
     );
-    return element("section", { className: "analysis-stack grounded-report" },
-      element("header", { className: "surface report-intro" },
-        element("p", { className: "eyebrow", text: "GROUNDED REVIEW REPORT" }),
-        element("h2", { text: "근거 기반 심사 보고서" }),
-        element("p", { className: "summary-copy", text: run.report.summary }),
-        element("p", { className: "disclaimer", text: run.report.disclaimer }),
-        element("p", { className: "report-source-note", text: "아래 8개 구역은 Agent가 이 심사 실행에서 반환한 주장과 근거 참조를 그대로 표시합니다. 근거 버튼을 누르면 해당 문서 사실, 비교 결과, Evidence로 이동합니다." }),
+    const open = this.openFindings().length;
+    return element("section", { className: "stage-view grounded-report" },
+      element("header", { className: "surface verdict-panel" },
+        this.createVerdictStamp(run, open),
+        element("div", { className: "verdict-panel__text" },
+          element("p", { className: "eyebrow", text: "GROUNDED REVIEW REPORT" }),
+          element("h2", { text: "근거 기반 심사 보고서" }),
+          element("p", { className: "summary-copy", text: run.report.summary }),
+          element("p", { className: "disclaimer", text: run.report.disclaimer }),
+        ),
+      ),
+      element("section", { className: "surface" },
+        sectionHeading("확인 사항", open ? `담당자 판단이 필요한 항목 ${open}건이 남아 있습니다.` : "모든 확인 사항에 담당자 판단이 기록되었습니다."),
+        this.createFindings([...run.findings].sort((left, right) => severityWeight(right.severity) - severityWeight(left.severity))),
+      ),
+      element("section", { className: "surface" },
+        sectionHeading("법령 Evidence", "Agent가 Data Evidence API에서 받은 근거입니다."),
+        this.createEvidenceList(run),
       ),
       ...sections,
       element("section", { className: "surface report-supporting-data" },
@@ -876,11 +1424,24 @@ export class CommercialReviewWorkspace {
         ),
         this.createReportDocuments(run),
         this.createReportFacts(run),
-        this.createComparisons(run.comparisons),
         this.createReportEvidence(run),
-        this.createFindings([...run.findings].sort((left, right) => severityWeight(right.severity) - severityWeight(left.severity))),
-        this.createWorkflow(run),
         this.createNextSteps(run),
+      ),
+    );
+  }
+
+  /**
+   * The mockup's verdict stamp. It reflects the run's own disposition and the
+   * outstanding judgement count; it never claims a clearance the Backend has not given.
+   */
+  private createVerdictStamp(run: ReviewRun, openCount: number): HTMLElement {
+    const settled = openCount === 0;
+    return element("div", { className: `verdict-stamp verdict-stamp--${settled ? "settled" : "pending"}` },
+      element("span", { className: "verdict-stamp__mark", text: settled ? "검토\n완료" : "검토\n필요" }),
+      element("span", { className: "verdict-stamp__meta" },
+        element("strong", { text: display(run.assessment) }),
+        element("small", { text: `처리 방향 · ${display(run.review_disposition)}` }),
+        element("small", { text: settled ? "판단 기록 완료" : `미판단 ${openCount}건` }),
       ),
     );
   }
@@ -1143,7 +1704,7 @@ export class CommercialReviewWorkspace {
       const comparison = run.comparisons.find((item) => item.comparison_id === citation.reference_id);
       if (!comparison) throw new Error("이 답변의 문서 비교 결과를 찾지 못했습니다.");
       this.state.comparisonFocusId = comparison.comparison_id;
-      this.setRoute(this.requireCase().case_id, "analysis");
+      this.setRoute(this.requireCase().case_id, "crosscheck");
       return;
     }
     if (!run.evidence.some((item) => item.evidence_id === citation.reference_id)) {
@@ -1154,12 +1715,12 @@ export class CommercialReviewWorkspace {
 
   private focusFact(factId: string): void {
     this.state.factFocusId = factId;
-    this.setRoute(this.requireCase().case_id, "analysis");
+    this.setRoute(this.requireCase().case_id, "crosscheck");
   }
 
   private focusEvidence(evidenceId: string): void {
     this.state.evidenceFocusId = evidenceId;
-    this.setRoute(this.requireCase().case_id, "evidence");
+    this.setRoute(this.requireCase().case_id, "review");
   }
 
   private createWorkflow(run: ReviewRun): HTMLElement {
@@ -1204,24 +1765,37 @@ export class CommercialReviewWorkspace {
       const decision = run.reviewer_decisions.find((item) => item.finding_id === finding.finding_id);
       const comparison = finding.comparison_id ? run.comparisons.find((item) => item.comparison_id === finding.comparison_id) : undefined;
       const source = sourceForFinding(run, finding);
-      const card = element("article", { className: `finding-card finding-card--${finding.severity}` },
+      const focused = this.state.findingFocusId === finding.finding_id;
+      const card = element("article", {
+        className: `finding-card finding-card--${finding.severity}${decision ? " is-settled" : ""}${focused ? " is-focused" : ""}`,
+        attributes: { "data-finding-id": finding.finding_id },
+      },
         element("header", { className: "finding-heading" },
           element("span", { className: `severity severity--${finding.severity}`, text: severityLabel(finding.severity) }),
           element("div", {}, element("strong", { text: finding.code }), element("p", { text: finding.message })),
+          element("span", { className: `finding-state${decision ? " is-settled" : ""}`, text: decision ? "판단 기록됨" : "판단 필요" }),
         ),
         comparison ? this.createComparisonDetail(comparison) : null,
-        source ? element("button", {
-          className: "text-link", text: "문서 원문 인용 보기", attributes: { type: "button" },
-          on: { click: () => void this.focusSource(source) },
-        }) : null,
-        finding.evidence_ids.length ? element("button", {
-          className: "text-link", text: `연결된 법령 근거 ${finding.evidence_ids.length}건`, attributes: { type: "button" },
-          on: { click: () => this.setRoute(this.requireCase().case_id, "evidence") },
-        }) : null,
+        element("div", { className: "finding-links" },
+          source ? element("button", {
+            className: "text-link", text: "문서 원문 인용 보기", attributes: { type: "button" },
+            on: { click: () => void this.focusSource(source) },
+          }) : null,
+          finding.evidence_ids.length ? element("button", {
+            className: "text-link", text: `연결된 법령 근거 ${finding.evidence_ids.length}건`, attributes: { type: "button" },
+            on: { click: () => this.focusEvidence(finding.evidence_ids[0] as string) },
+          }) : null,
+        ),
         this.createDecisionPanel(finding, decision),
         this.createCorrectionProposalPanel(finding, source),
       );
       list.append(card);
+    }
+    if (this.state.findingFocusId) {
+      const focusedId = this.state.findingFocusId;
+      queueMicrotask(() => scrollIntoViewIfAvailable(Array.from(this.root.querySelectorAll<HTMLElement>("[data-finding-id]")).find(
+        (item) => item.dataset.findingId === focusedId,
+      )));
     }
     return list;
   }
@@ -1266,7 +1840,7 @@ export class CommercialReviewWorkspace {
     source: SourceReference | null,
   ): HTMLElement | null {
     if (!this.hasRole("reviewer")) {
-      return element("p", { className: "role-boundary-note", text: "정정 제안은 심사자 역할에서만 만들 수 있습니다. 승인자 역할에서는 이력 탭에서 다른 사람이 만든 제안을 독립적으로 결정할 수 있습니다." });
+      return element("p", { className: "role-boundary-note", text: "정정 제안은 심사자 역할에서만 만들 수 있습니다. 승인자 역할에서는 심사 이력 화면에서 다른 사람이 만든 제안을 독립적으로 결정할 수 있습니다." });
     }
     const draft = this.state.correctionDraft;
     const matchesDraft = draft !== null && (!source || draft.document_id === source.document_id) &&
@@ -1328,19 +1902,14 @@ export class CommercialReviewWorkspace {
     if (source) await this.focusSource(source);
   }
 
+  /** Citations open the source overlay in place instead of navigating away. */
   private async focusSource(source: SourceReference): Promise<void> {
-    await this.withBusy(async () => {
-      this.state.factFocusId = null;
-      await this.openDocument(source.document_id, source);
-      this.state.activeTab = "documents";
-      this.setRoute(this.requireCase().case_id, "documents");
-    });
+    this.state.factFocusId = null;
+    await this.openDocumentModal(source.document_id, source);
   }
 
-  private createEvidenceTab(): HTMLElement {
-    const run = this.state.selectedRun;
-    if (!run) return emptyState("아직 법령 근거가 없습니다.", "심사를 완료하면 Agent가 Data Evidence를 연결합니다.");
-    if (!run.evidence.length) return emptyState("반환된 법령 Evidence가 없습니다.", "현재 문서와 품목 기준으로 반환된 근거가 없었습니다.");
+  private createEvidenceList(run: ReviewRun): HTMLElement {
+    if (!run.evidence.length) return element("p", { className: "empty-copy", text: "현재 문서와 품목 기준으로 반환된 법령 근거가 없습니다." });
     const evidence = element("div", { className: "evidence-list" });
     for (const item of run.evidence) {
       const linked = run.findings.filter((finding) => finding.evidence_ids.includes(item.evidence_id));
@@ -1363,7 +1932,7 @@ export class CommercialReviewWorkspace {
         (item) => item.dataset.evidenceId === focusedId,
       )));
     }
-    return element("section", { className: "surface evidence-surface" }, sectionHeading("법령 Evidence", "Agent가 Data Evidence API에서 받은 근거입니다."), evidence);
+    return evidence;
   }
 
   private createHistoryTab(): HTMLElement {
@@ -1399,8 +1968,8 @@ export class CommercialReviewWorkspace {
       ),
       element("section", { className: "surface history-next" },
         sectionHeading("다음 작업", "문서 보완 또는 선택한 승인 정정 제안을 반영한 재심사를 진행할 수 있습니다."),
-        element("p", { text: "대체 문서는 문서 탭에서 등록하십시오. 정정 제안은 승인돼도 원래 실행을 바꾸지 않으며, 선택한 항목만 새 자식 심사에 반영됩니다." }),
-        element("button", { className: "button button--secondary", text: "문서 탭으로 이동", attributes: { type: "button" }, on: { click: () => this.setRoute(current.case_id, "documents") } }),
+        element("p", { text: "대체 문서는 서류 등록 단계에서 등록하십시오. 정정 제안은 승인돼도 원래 실행을 바꾸지 않으며, 선택한 항목만 새 자식 심사에 반영됩니다." }),
+        element("button", { className: "button button--secondary", text: "서류 등록 단계로 이동", attributes: { type: "button" }, on: { click: () => this.setRoute(current.case_id, "documents") } }),
         canRevise && approvedCorrectionCount
           ? element("p", { className: "correction-selection-summary", text: `재심사에 반영할 승인된 제안을 선택하십시오. 선택 ${selectedCorrectionCount}건 / 승인 ${approvedCorrectionCount}건` })
           : null,
@@ -1473,7 +2042,7 @@ export class CommercialReviewWorkspace {
         : "제안의 승인·반려는 승인자 역할에서만 기록할 수 있습니다." })
       : null;
     const childLink = proposal.applied_review_run_id
-      ? element("button", { className: "text-link", text: "반영된 자식 심사 열기", attributes: { type: "button" }, on: { click: () => void this.withBusy(async () => { await this.openRun(proposal.applied_review_run_id as string); this.setRoute(this.requireCase().case_id, "analysis"); }) } })
+      ? element("button", { className: "text-link", text: "반영된 자식 심사 열기", attributes: { type: "button" }, on: { click: () => void this.withBusy(async () => { await this.openRun(proposal.applied_review_run_id as string); this.setRoute(this.requireCase().case_id, "review"); }) } })
       : null;
     const canSelectForRevision = this.hasRole("approver") && proposal.status === "approved" && !proposal.applied_review_run_id;
     const selectedForRevision = this.state.selectedCorrectionProposalIds.has(proposal.correction_proposal_id);
@@ -1538,52 +2107,34 @@ export class CommercialReviewWorkspace {
 // Kept as the public bootstrap/test name while the UI is now a full workspace.
 export const LightweightWorkbench = CommercialReviewWorkspace;
 
-function createHeader(
-  session: Session | null,
-  mode: FrontendRuntimeMode,
-  onLogout: () => void,
-  onSwitchActor?: (actor: LocalDevelopmentActor) => void,
-  busy = false,
-): HTMLElement {
-  const roleSwitch = onSwitchActor
-    ? element("div", { className: "local-role-switch", attributes: { "aria-label": "로컬 개발 역할 전환" } },
-      element("span", { text: "개발 역할" }),
-      element("button", {
-        className: `button button--quiet${session?.roles.includes("reviewer") ? " is-selected" : ""}`,
-        text: "심사자",
-        attributes: { type: "button", disabled: busy || session?.roles.includes("reviewer") ? "" : undefined },
-        on: { click: () => onSwitchActor("reviewer") },
-      }),
-      element("button", {
-        className: `button button--quiet${session?.roles.includes("approver") ? " is-selected" : ""}`,
-        text: "승인자",
-        attributes: { type: "button", disabled: busy || session?.roles.includes("approver") ? "" : undefined },
-        on: { click: () => onSwitchActor("approver") },
-      }),
-    )
-    : null;
-  return element("header", { className: "topbar" },
-    element("a", { className: "brand-lockup", attributes: { href: "#/cases", "aria-label": "통관 AI 사전심사 Case 목록" } },
-      element("span", { className: "brand-mark", text: "CA" }),
-      element("span", {}, element("strong", { className: "brand", text: "통관 AI 사전심사" }), element("small", { text: mode === "functional-uat" ? "기능 UAT" : "팀 개발" })),
-    ),
-    element("div", { className: "user-block" },
-      element("span", { text: session?.subject ?? "세션 확인 중" }),
-      element("small", { text: `${session?.org_id ?? ""}${session?.roles.length ? ` · ${session.roles.join(", ")}` : ""}` }),
-      roleSwitch,
-      element("button", { className: "button button--quiet", text: "로그아웃", attributes: { type: "button" }, on: { click: onLogout } }),
+function createRuntimeNotice(mode: FrontendRuntimeMode): HTMLElement {
+  const functional = mode === "functional-uat";
+  return element("section", { className: "runtime-notice", attributes: { role: "status" } },
+    element("div", { className: "g-inner" },
+      element("strong", { text: functional ? "실제 기능 UAT" : "기본 개발" }),
+      element("span", { text: functional
+        ? "실제 관세 3법·Data 저장소·Claude를 사용합니다. 결과는 항상 담당자 검토 대상이며 배포·승인 판단이 아닙니다."
+        : "합성 Evidence와 결정론 Agent를 사용합니다. Docker·모델·Law API·Claude 키 없이 전체 업무 흐름을 확인할 수 있습니다." }),
     ),
   );
 }
 
-function createRuntimeNotice(mode: FrontendRuntimeMode): HTMLElement {
-  const functional = mode === "functional-uat";
-  return element("section", { className: "runtime-notice", attributes: { role: "status" } },
-    element("strong", { text: functional ? "실제 기능 UAT" : "기본 개발" }),
-    element("span", { text: functional
-      ? "실제 관세 3법·Data 저장소·Claude를 사용합니다. 결과는 항상 담당자 검토 대상이며 배포·승인 판단이 아닙니다."
-      : "합성 Evidence와 결정론 Agent를 사용합니다. Docker·모델·Law API·Claude 키 없이 전체 업무 흐름을 확인할 수 있습니다." }),
+function createSiteFooter(mode: FrontendRuntimeMode): HTMLElement {
+  return element("footer", { className: "g-footer" },
+    element("div", { className: "g-inner" },
+      element("p", { className: "g-footer__title", text: "통관 AI 사전심사 작업대" }),
+      element("p", { text: mode === "functional-uat"
+        ? "이 화면은 Backend API v1만 호출합니다. Agent·Data·저장소 주소와 비밀값은 브라우저에 전달되지 않습니다."
+        : "팀 개발 모드입니다. 세션과 토큰은 메모리에만 두며 브라우저 저장소에 남기지 않습니다." }),
+      element("p", { text: "모든 결과는 항상 담당자 검토 대상이며 통관 승인 판단이 아닙니다. 화면에 비밀정보를 입력하지 마십시오." }),
+      element("p", { className: "g-footer__note", text: "KRDS(대한민국 정부 디자인 시스템) 문법을 적용한 업무 화면입니다." }),
+    ),
   );
+}
+
+function roleLabel(value: string): string {
+  const labels: Record<string, string> = { reviewer: "심사자", approver: "승인자" };
+  return labels[value] ?? value;
 }
 
 function sectionHeading(title: string, description: string): HTMLElement {
@@ -1615,6 +2166,21 @@ function assistantLoadingState(label: string): HTMLElement {
 
 function metric(label: string, value: string): HTMLElement {
   return element("div", { className: "metric" }, element("span", { text: label }), element("strong", { text: value }));
+}
+
+function dashStat(label: string, value: string, hint: string, tone?: string): HTMLElement {
+  return element("div", { className: `dash-stat${tone ? ` dash-stat--${tone}` : ""}` },
+    element("span", { className: "dash-stat__label", text: label }),
+    element("strong", { className: "dash-stat__value", text: value }),
+    element("span", { className: "dash-stat__hint", text: hint }),
+  );
+}
+
+function traceCount(value: string, label: string): HTMLElement {
+  return element("div", { className: "trace-count" },
+    element("strong", { text: value }),
+    element("span", { text: label }),
+  );
 }
 
 function definition(label: string, value: string): HTMLElement {
@@ -1697,15 +2263,23 @@ function safeExternalLink(value: string): HTMLElement {
   }
 }
 
-function parseRoute(hash: string): { caseId: string | null; tab: WorkspaceTab } {
-  const match = /^#\/cases\/([^/]+)(?:\/(documents|analysis|assistant|evidence|history))?$/u.exec(hash);
-  if (!match) return { caseId: null, tab: "documents" };
+function parseRoute(hash: string): { caseId: string | null; view: WorkspaceView } {
+  const match = /^#\/cases\/([^/]+)(?:\/([a-z]+))?$/u.exec(hash);
+  if (!match) return { caseId: null, view: "documents" };
   try {
     const caseId = decodeURIComponent(match[1] ?? "");
-    return caseId ? { caseId, tab: (match[2] as WorkspaceTab | undefined) ?? "documents" } : { caseId: null, tab: "documents" };
+    if (!caseId) return { caseId: null, view: "documents" };
+    return { caseId, view: resolveView(match[2]) };
   } catch {
-    return { caseId: null, tab: "documents" };
+    return { caseId: null, view: "documents" };
   }
+}
+
+function resolveView(segment: string | undefined): WorkspaceView {
+  if (!segment) return "documents";
+  if (segment === "assistant" || segment === "history") return segment;
+  if (STAGE_IDS.includes(segment as StageView)) return segment as StageView;
+  return LEGACY_VIEW_ALIASES[segment] ?? "documents";
 }
 
 function occurrenceIndex(content: string, quote: string, occurrence: number): number {

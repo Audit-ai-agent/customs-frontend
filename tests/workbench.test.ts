@@ -131,7 +131,8 @@ describe("commercial review workspace", () => {
     expect(api.sendAssistantMessage).toHaveBeenCalled();
     expect(root.textContent).toContain("Evidence를 열었습니다.");
     await (app as unknown as { openAssistantCitation(value: { kind: "evidence"; reference_id: string }): Promise<void> }).openAssistantCitation({ kind: "evidence", reference_id: "evidence-1" });
-    expect(window.location.hash).toBe("#/cases/case-1/evidence");
+    // Evidence lives inside the "통관 심사" stage now; the flow follows the mockup's stage bar.
+    expect(window.location.hash).toBe("#/cases/case-1/review");
     app.destroy();
   });
 
