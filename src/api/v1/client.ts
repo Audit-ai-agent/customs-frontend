@@ -2,10 +2,13 @@ import {
   ContractError,
   decodeAuthConfig,
   decodeCaseSummary,
+  decodeDocumentListItem,
   decodeDocumentView,
   decodeJob,
   decodeProblem,
+  decodeReviewerDecision,
   decodeReviewRun,
+  decodeReviewRunSummary,
   decodeSession,
 } from "./decoders";
 import type {
@@ -16,8 +19,11 @@ import type {
   CaseSummary,
   CreateCaseRequest,
   EnqueueReviewRequest,
+  FindingDecisionRequest,
   JobRecord,
+  ReviewerDecision,
   ReviewRun,
+  ReviewRunSummary,
   Session,
 } from "./types";
 import type { LocalDevelopmentSessionResponse } from "../../auth";
@@ -91,7 +97,7 @@ export class ApiClient {
 
   listDocuments(caseId: string): Promise<CaseDocument[]> {
     return this.request(`/cases/${segment(caseId)}/documents`, { method: "GET" }, (value) => {
-      const documents = itemsFrom(value, "Document list").map(decodeDocumentView);
+      const documents = itemsFrom(value, "Document list").map(decodeDocumentListItem);
       documents.forEach((item) => this.assertIdentity(item.case_id, caseId, "Document Case"));
       return documents;
     });
@@ -100,17 +106,29 @@ export class ApiClient {
   addDocument(caseId: string, payload: AddDocumentRequest): Promise<CaseDocument> {
     return this.request(`/cases/${segment(caseId)}/documents`, this.json("POST", payload), (value) => {
       const item = decodeDocumentView(value);
-      this.assertIdentity(item.case_id, caseId, "Document Case");
-      return item;
+      this.assertIdentity(item.record.case_id, caseId, "Document Case");
+      return item.record;
     });
   }
 
-  listReviewRuns(caseId: string): Promise<ReviewRun[]> {
+  getDocumentContent(caseId: string, documentId: string): Promise<CaseDocument & { content_text: string }> {
+    return this.request(
+      `/cases/${segment(caseId)}/documents/${segment(documentId)}/content`,
+      { method: "GET" },
+      (value) => {
+        const item = decodeDocumentView(value);
+        this.assertIdentity(item.record.case_id, caseId, "Document Case");
+        this.assertIdentity(item.record.document_id, documentId, "Document");
+        return { ...item.record, content_text: item.content_text };
+      },
+    );
+  }
+
+  listReviewRuns(caseId: string): Promise<ReviewRunSummary[]> {
     return this.request(`/cases/${segment(caseId)}/review-runs`, { method: "GET" }, (value) => {
-      const runs = itemsFrom(value, "Review run list").map(decodeReviewRun);
+      const runs = itemsFrom(value, "Review run list").map(decodeReviewRunSummary);
       runs.forEach((item, index) => {
         this.assertIdentity(item.case_id, caseId, "reviewRuns[" + index + "] Case");
-        this.assertOrg(item.org_id, "reviewRuns[" + index + "]");
       });
       return runs;
     });
@@ -155,7 +173,29 @@ export class ApiClient {
     return job;
   }
 
-  private json(method: "POST", payload: object): RequestInit {
+  setFindingDecision(
+    reviewRunId: string,
+    findingId: string,
+    payload: FindingDecisionRequest,
+  ): Promise<ReviewerDecision> {
+    if (!payload.reason.trim() || payload.reason.length > 4_000) {
+      throw new ContractError("reviewer decision reason is invalid");
+    }
+    if (!(["confirmed", "needs_information", "resolved"] as const).includes(payload.status)) {
+      throw new ContractError("reviewer decision status is invalid");
+    }
+    return this.request(
+      `/review-runs/${segment(reviewRunId)}/findings/${segment(findingId)}/decision`,
+      this.json("PUT", { status: payload.status, reason: payload.reason.trim() }),
+      (value) => {
+        const decision = decodeReviewerDecision(value);
+        this.assertIdentity(decision.finding_id, findingId, "Reviewer decision finding");
+        return decision;
+      },
+    );
+  }
+
+  private json(method: "POST" | "PUT", payload: object): RequestInit {
     return {
       method,
       headers: { "Content-Type": "application/json" },

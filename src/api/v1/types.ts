@@ -45,8 +45,16 @@ export interface CaseDocument {
   content_sha256: string;
   byte_size: number;
   character_count: number;
+  replaces_document_id?: string | null;
+  superseded_by_document_id?: string | null;
+  superseded_at?: string | null;
   created_by: string;
   created_at: string;
+}
+
+export interface DocumentView {
+  record: CaseDocument;
+  content_text: string;
 }
 
 export interface ReviewReport {
@@ -56,15 +64,25 @@ export interface ReviewReport {
 }
 
 export interface ReviewFinding {
+  finding_id: string;
   code: string;
   message: string;
   kind: "validation_issue" | "regulatory_finding";
   severity: "low" | "medium" | "high" | "critical";
+  comparison_id?: string | null;
+  document_ids: string[];
+  fact_ids: string[];
+  evidence_ids: string[];
 }
 
 export interface EvidenceItem {
+  evidence_id: string;
+  item_id: string;
   title: string;
   text: string;
+  source_uri: string;
+  source_type: string;
+  source_hash: string;
   law_id?: string | null;
   law_name?: string | null;
 }
@@ -72,6 +90,117 @@ export interface EvidenceItem {
 export interface RequiredAction {
   action_code: string;
   message: string;
+  finding_ids: string[];
+}
+
+export type WorkflowStageName =
+  | "classify_documents"
+  | "extract_facts"
+  | "normalize_facts"
+  | "match_documents"
+  | "validate_documents"
+  | "reextract_documents"
+  | "retrieve_evidence"
+  | "generate_result";
+
+export interface WorkflowStage {
+  stage: WorkflowStageName;
+  status: "completed" | "skipped" | "needs_review" | "failed";
+  attempt_count: number;
+  summary: string;
+}
+
+export interface ReextractionRecord {
+  document_id: string;
+  attempt_count: 1;
+  requested_fields: string[];
+  status: "completed" | "unavailable";
+}
+
+export interface AgentWorkflow {
+  status: "completed" | "partial" | "failed";
+  stages: WorkflowStage[];
+  reextractions: ReextractionRecord[];
+}
+
+export interface SourceReference {
+  document_id: string;
+  quote: string;
+  /** Zero-based occurrence of the source quote in the document. */
+  occurrence: number;
+}
+
+export interface DocumentFact {
+  fact_id: string;
+  name: string;
+  raw_value: string;
+  normalized_value?: string | null;
+  unit?: string | null;
+  source: SourceReference;
+}
+
+export interface DocumentLineItem {
+  item_id: string;
+  source: SourceReference;
+  facts: DocumentFact[];
+}
+
+export interface DocumentAnalysis {
+  document_id: string;
+  filename: string;
+  declared_type: string | null;
+  document_type: "invoice" | "packing_list" | "bill_of_lading" | "certificate_of_origin" | "unknown";
+  classification_source: SourceReference | null;
+  extraction_status: "complete" | "needs_review";
+  facts: DocumentFact[];
+  line_items: DocumentLineItem[];
+  warnings: Array<{ code: string; message: string }>;
+}
+
+export interface ComparisonOperand {
+  document_id: string | null;
+  item_id?: string | null;
+  fact_ids: string[];
+  display_value?: string | null;
+}
+
+export interface ReviewComparison {
+  comparison_id: string;
+  rule_code: string;
+  status: "pass" | "skip" | "mismatch" | "needs_review";
+  left: ComparisonOperand;
+  right: ComparisonOperand;
+  expected_value?: string | null;
+  observed_value?: string | null;
+  unit?: string | null;
+  message: string;
+}
+
+export interface ReviewerDecisionHistoryItem {
+  status: "confirmed" | "needs_information" | "resolved";
+  reason: string;
+  decided_by: string;
+  decided_at: string;
+}
+
+export interface ReviewerDecision extends ReviewerDecisionHistoryItem {
+  finding_id: string;
+  history: ReviewerDecisionHistoryItem[];
+}
+
+export interface ReviewRunSummary {
+  review_run_id: string;
+  case_id: string;
+  job_id: string;
+  review_as_of: string;
+  trade_type: "import" | "export";
+  execution_status: ExecutionStatus;
+  assessment: Assessment;
+  review_disposition: ReviewDisposition;
+  result_digest: string;
+  finding_count: number;
+  reviewer_decision_count: number;
+  created_at: string;
 }
 
 export interface ReviewRun {
@@ -89,10 +218,17 @@ export interface ReviewRun {
     eligible: false;
     unmet_reason_codes: string[];
   };
+  agent_schema_version: "3.1";
+  agent_status: "needs_review" | "blocked";
+  agent_engine?: { kind: "deterministic" | "claude"; model_id: string } | null;
   report: ReviewReport;
+  workflow: AgentWorkflow;
+  document_analyses: DocumentAnalysis[];
+  comparisons: ReviewComparison[];
   evidence: EvidenceItem[];
   findings: ReviewFinding[];
   required_actions: RequiredAction[];
+  reviewer_decisions: ReviewerDecision[];
   created_by: string;
   created_at: string;
 }
@@ -118,9 +254,15 @@ export interface AddDocumentRequest {
   filename: string;
   media_type?: "text/plain";
   content_text: string;
+  replaces_document_id?: string | null;
 }
 
 export interface EnqueueReviewRequest {
   review_as_of?: string;
   trade_type?: "import" | "export";
+}
+
+export interface FindingDecisionRequest {
+  status: "confirmed" | "needs_information" | "resolved";
+  reason: string;
 }

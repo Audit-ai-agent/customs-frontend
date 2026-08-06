@@ -18,7 +18,7 @@ export default defineConfig(({ mode }) => {
     server: {
       proxy: {
         "/api/v1": {
-          target: process.env.BACKEND_ORIGIN ?? "http://127.0.0.1:8080",
+          target: process.env.BACKEND_ORIGIN ?? "http://127.0.0.1:18081",
           changeOrigin: false,
         },
       },

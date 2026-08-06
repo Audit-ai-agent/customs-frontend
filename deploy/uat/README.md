@@ -20,7 +20,7 @@ Desktop 기준).
 ```powershell
 docker build -f deploy/uat/Dockerfile -t customs-frontend-functional-uat:local .
 docker run --rm --name customs-frontend-functional-uat -p 127.0.0.1:5173:5173 `
-  -e BACKEND_ORIGIN=http://host.docker.internal:8080 customs-frontend-functional-uat:local
+  -e BACKEND_ORIGIN=http://host.docker.internal:18081 customs-frontend-functional-uat:local
 ```
 
 Backend·Agent·Data와 local Keycloak은 먼저 각 저장소의 Functional UAT 순서대로
