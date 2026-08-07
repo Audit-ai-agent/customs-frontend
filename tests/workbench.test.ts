@@ -153,6 +153,37 @@ describe("commercial review workspace", () => {
     app.destroy();
   });
 
+  it("retries the shared successful-review path when the committed result becomes visible shortly after the Job succeeds", async () => {
+    window.location.hash = "#/cases/case-1/documents";
+    const root = document.createElement("div");
+    const caseDetail = { case_id: "case-1", org_id: "local-org", title: "입항 서류", status: "in_review" as const, revision: 1, updated_at: "2026-08-05T00:00:00Z" };
+    const job = { job_id: "job-1", case_id: "case-1", review_run_id: "run-1", status: "succeeded" as const, created_by: "local-reviewer", created_at: "2026-08-05T00:00:00Z", updated_at: "2026-08-05T00:00:00Z" };
+    const summary = { review_run_id: "run-1", case_id: "case-1", job_id: "job-1", review_as_of: "2026-08-05", trade_type: "import" as const, execution_status: "succeeded" as const, assessment: "issues_detected" as const, review_disposition: "human_review_required" as const, result_digest: "b".repeat(64), finding_count: 1, reviewer_decision_count: 0, created_at: "2026-08-05T00:00:00Z" };
+    const run = reviewRun();
+    let reviewRequested = false;
+    const api = {
+      getSession: vi.fn(async () => ({ subject: "local-reviewer", org_id: "local-org", roles: ["reviewer"] })),
+      listCases: vi.fn(async () => ({ items: [caseDetail] })),
+      getCase: vi.fn(async () => caseDetail),
+      listDocuments: vi.fn(async () => [{ document_id: "document-1", case_id: "case-1", document_type: "CI" as const, filename: "invoice.txt", media_type: "text/plain" as const, content_sha256: "a".repeat(64), byte_size: 12, character_count: 12, created_by: "local-reviewer", created_at: "2026-08-05T00:00:00Z" }]),
+      listReviewRuns: vi.fn(async () => reviewRequested ? [summary] : []),
+      enqueueReview: vi.fn(async () => { reviewRequested = true; return job; }),
+      getReviewRun: vi.fn().mockRejectedValueOnce(new Error("result_not_committed_internal")).mockResolvedValue(run),
+      getJob: vi.fn(async () => { throw new Error("a synchronously completed Job must not be polled"); }),
+    };
+    const auth = { logout: async () => undefined, freshAccessToken: async () => "token", isAuthenticated: () => true };
+    const app = new LightweightWorkbench(root, api as never, auth, "functional-uat");
+    await app.start();
+    await (app as unknown as { startReview(): Promise<void> }).startReview();
+
+    expect(api.getJob).not.toHaveBeenCalled();
+    expect(api.getReviewRun.mock.calls.length).toBeGreaterThanOrEqual(2);
+    expect(root.querySelector('[data-e2e="analysis-content"]')).not.toBeNull();
+    expect(root.textContent).toContain("심사가 완료되었습니다.");
+    expect(root.textContent).not.toContain("result_not_committed_internal");
+    app.destroy();
+  });
+
   it("shows a Korean retry state for a synchronously failed review without polling or exposing internal identifiers", async () => {
     window.location.hash = "#/cases/case-1/documents";
     const root = document.createElement("div");

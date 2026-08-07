@@ -122,6 +122,8 @@ const DOCUMENT_TYPES: readonly DocumentType[] = ["CI", "PL", "BL", "CO", "UNKNOW
 const ACTIVE_JOB_STATES = new Set(["queued", "running"]);
 const REVIEW_FAILURE_MESSAGE = "심사를 완료하지 못했습니다. 입력 문서와 서비스 상태를 확인한 뒤 다시 시도해 주십시오. 기존 심사 결과는 변경되지 않았습니다.";
 const REVISION_FAILURE_MESSAGE = "수정 반영 재심사를 완료하지 못했습니다. 승인된 정정 제안을 다시 선택한 뒤 재시도해 주십시오. 기존 심사 결과는 변경되지 않았습니다.";
+const REVIEW_RESULT_VISIBILITY_RETRY_DELAYS_MS = [200, 500, 900] as const;
+const REVIEW_RESULT_VISIBILITY_FAILURE_MESSAGE = "심사 결과가 아직 화면에 준비되지 않았습니다. 잠시 후 이력에서 다시 확인해 주십시오. 기존 심사 결과는 변경되지 않았습니다.";
 const TABS: readonly { id: WorkspaceTab; label: string }[] = [
   { id: "documents", label: "문서" },
   { id: "analysis", label: "AI 심사" },
@@ -650,11 +652,24 @@ export class CommercialReviewWorkspace {
   }
 
   private async showSucceededReview(job: JobRecord): Promise<void> {
-    await this.loadCase(job.case_id);
-    await this.openRun(job.review_run_id);
+    await this.loadVisibleSucceededReview(job);
     this.state.activeTab = "analysis";
     this.state.notice = "심사가 완료되었습니다. 결과는 자동 승인되지 않으며 담당자 검토가 필요합니다.";
     this.setRoute(job.case_id, "analysis");
+  }
+
+  private async loadVisibleSucceededReview(job: JobRecord): Promise<void> {
+    for (const delay of [...REVIEW_RESULT_VISIBILITY_RETRY_DELAYS_MS, null]) {
+      try {
+        await this.loadCase(job.case_id);
+        await this.openRun(job.review_run_id);
+        return;
+      } catch {
+        if (delay === null) break;
+        await delayForVisibleReview(delay);
+      }
+    }
+    throw new Error(REVIEW_RESULT_VISIBILITY_FAILURE_MESSAGE);
   }
 
   private showFailedJob(job: JobRecord): void {
@@ -1937,6 +1952,10 @@ function emptyState(title: string, copy: string): HTMLElement {
 
 function message(kind: "error" | "notice", text: string): HTMLElement {
   return element("section", { className: `notice notice--${kind}`, attributes: { role: kind === "error" ? "alert" : "status" } }, element("p", { text }));
+}
+
+function delayForVisibleReview(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, milliseconds));
 }
 
 function renderDocumentText(content: string, source: SourceReference | null): HTMLElement {
