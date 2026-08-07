@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { LightweightWorkbench } from "../src/workbench";
+import type { ReviewRun } from "../src/api/v1/types";
 
 afterEach(() => {
   window.location.hash = "#/cases";
@@ -150,6 +151,125 @@ describe("commercial review workspace", () => {
     await (app as unknown as { followRoute(): Promise<void> }).followRoute();
     expect(root.querySelector('[data-comparison-id="comparison-1"]')?.classList.contains("is-focused")).toBe(true);
     expect(root.textContent).toContain("심사가 완료되었습니다");
+    app.destroy();
+  });
+
+  it("groups repeated regulatory requirements and keeps legacy prose and file names inside collapsed originals", async () => {
+    window.location.hash = "#/cases/case-1/analysis";
+    const root = document.createElement("div");
+    const caseDetail = { case_id: "case-1", org_id: "local-org", title: "입항 서류", status: "in_review" as const, revision: 1, updated_at: "2026-08-05T00:00:00Z" };
+    const run = reviewRun() as unknown as ReviewRun;
+    const firstClaim = run.report.sections[0]?.claims[0];
+    if (!firstClaim) throw new Error("report fixture conclusion is absent");
+    firstClaim.text = "Document validation for matching-origin.txt failed at comparison-1515e58.";
+    const firstFact = run.document_analyses[0]?.facts[0];
+    const firstComparison = run.comparisons[0];
+    if (!firstFact || !firstComparison) throw new Error("structured value fixture is absent");
+    const syntheticDsn = ["postgresql", "://", "reviewer", ":", "not-a-real-password", "@127.0.0.1:5432/customs"].join("");
+    firstFact.raw_value = "원산지증명서.txt의";
+    firstFact.normalized_value = "ca3647b4a24e64fc3a12c04a";
+    firstComparison.left.display_value = "comparison-structured-unsafe";
+    firstComparison.right.display_value = syntheticDsn;
+    firstComparison.expected_value = "comparison-structured-unsafe";
+    firstComparison.observed_value = syntheticDsn;
+    run.execution_status = "partial";
+    run.workflow.stages = [...run.workflow.stages, {
+      stage: "retrieve_evidence" as const,
+      status: "needs_review" as const,
+      attempt_count: 1,
+      summary: "Data Evidence 일부가 준비되지 않아 담당자 검토가 필요합니다.",
+    }];
+    const baseEvidence = run.evidence[0];
+    if (!baseEvidence) throw new Error("evidence fixture is absent");
+    const requirement = { ...baseEvidence, evidence_id: "evidence-requirement-1", item_id: "requirement-1", title: "수입식품등 수입신고확인증", text: "수입식품등 수입신고확인증을 확인합니다." };
+    const duplicateRequirement = { ...requirement, evidence_id: "evidence-requirement-2" };
+    run.evidence = [requirement, duplicateRequirement];
+    const missingHs = {
+      finding_id: "finding-hs", code: "hs_code_not_found", message: "Certificate of origin matching-origin.txt lacks HS code.",
+      kind: "validation_issue" as const, severity: "medium" as const, comparison_id: null,
+      document_ids: ["document-1"], fact_ids: [], evidence_ids: [],
+    };
+    const regulatoryFinding = {
+      finding_id: "finding-requirement-1", code: "inspect_import_requirement_1", message: "Import documentation is required.",
+      kind: "regulatory_finding" as const, severity: "high" as const, comparison_id: null,
+      document_ids: ["document-1"], fact_ids: [], evidence_ids: [requirement.evidence_id],
+    };
+    const duplicateRegulatoryFinding = {
+      ...regulatoryFinding,
+      finding_id: "finding-requirement-2",
+      code: "inspect_import_requirement_2",
+      document_ids: ["document-2"],
+      evidence_ids: [duplicateRequirement.evidence_id],
+    };
+    run.findings = [missingHs, regulatoryFinding, duplicateRegulatoryFinding];
+    run.required_actions = [
+      { action_code: "inspect_import_requirement_1", message: "수입식품등 수입신고확인증을 확인하십시오.", finding_ids: [regulatoryFinding.finding_id] },
+      { action_code: "inspect_import_requirement_2", message: "수입식품등 수입신고확인증을 확인하십시오.", finding_ids: [duplicateRegulatoryFinding.finding_id] },
+    ];
+    const summary = { review_run_id: "run-1", case_id: "case-1", job_id: "job-1", review_as_of: "2026-08-05", trade_type: "import" as const, execution_status: "partial" as const, assessment: "issues_detected" as const, review_disposition: "human_review_required" as const, result_digest: "b".repeat(64), finding_count: 3, reviewer_decision_count: 0, created_at: "2026-08-05T00:00:00Z" };
+    const api = {
+      getSession: vi.fn(async () => ({ subject: "local-reviewer", org_id: "local-org", roles: ["reviewer"] })),
+      listCases: vi.fn(async () => ({ items: [caseDetail] })),
+      getCase: vi.fn(async () => caseDetail),
+      listDocuments: vi.fn(async () => [
+        { document_id: "document-1", case_id: "case-1", document_type: "CI" as const, filename: "matching-invoice.txt", media_type: "text/plain" as const, content_sha256: "a".repeat(64), byte_size: 12, character_count: 12, created_by: "local-reviewer", created_at: "2026-08-05T00:00:00Z" },
+        { document_id: "document-2", case_id: "case-1", document_type: "CO" as const, filename: "matching-origin.txt", media_type: "text/plain" as const, content_sha256: "b".repeat(64), byte_size: 12, character_count: 12, created_by: "local-reviewer", created_at: "2026-08-05T00:00:00Z" },
+      ]),
+      listReviewRuns: vi.fn(async () => [summary]),
+      getReviewRun: vi.fn(async () => run),
+    };
+    const auth = { logout: async () => undefined, freshAccessToken: async () => "token", isAuthenticated: () => true };
+    const app = new LightweightWorkbench(root, api as never, auth, "functional-uat");
+    await app.start();
+
+    expect(root.querySelectorAll('[data-e2e="regulatory-requirement-card"]')).toHaveLength(1);
+    expect(root.querySelectorAll('[data-e2e="regulatory-required-action"]')).toHaveLength(1);
+    const primaryNarratives = Array.from(root.querySelectorAll<HTMLElement>('[data-e2e="analysis-content"] [data-e2e="reviewer-narrative"]'))
+      .map((item) => item.textContent ?? "");
+    expect(primaryNarratives.some((value) => /matching-origin\.txt|Document validation|comparison-1515e58/u.test(value))).toBe(false);
+    expect(Array.from(root.querySelectorAll(".legacy-execution-original")).some((item) => item.textContent?.includes("matching-origin.txt"))).toBe(true);
+    const protectedFact = root.querySelector<HTMLElement>('[data-fact-id="fact-1"]');
+    expect(protectedFact?.textContent).toContain("추가 확인 필요");
+    expect(protectedFact?.textContent).toContain("표시 제한된 값");
+    expect(protectedFact?.textContent).not.toContain("원산지증명서.txt의");
+    expect(protectedFact?.textContent).not.toContain("ca3647b4a24e64fc3a12c04a");
+    const protectedComparison = root.querySelector<HTMLElement>('[data-comparison-id="comparison-1"]');
+    expect(protectedComparison?.textContent).toContain("추가 확인 필요");
+    expect(protectedComparison?.textContent).toContain("표시 제한된 값");
+    expect(protectedComparison?.textContent).not.toContain("comparison-structured-unsafe");
+    expect(protectedComparison?.textContent).not.toContain("postgresql://");
+
+    window.location.hash = "#/cases/case-1/evidence";
+    await (app as unknown as { followRoute(): Promise<void> }).followRoute();
+    const retrieval = root.querySelector<HTMLElement>('[data-e2e="data-retrieval-status"]');
+    expect(retrieval?.dataset.retrievalSemantics).toBe("input-hs-and-retrieval-partial");
+    expect(retrieval?.textContent).toContain("일부 문서에서 HS 코드를 확인할 수 없어");
+    expect(retrieval?.textContent).toContain("일부 품목의 법령 근거를 확인하지 못했습니다.");
+    expect(retrieval?.textContent).not.toContain("Data Evidence");
+    expect(root.querySelectorAll('[data-e2e="evidence-card"]')).toHaveLength(1);
+
+    await (app as unknown as { openAssistantCitation(value: { kind: "evidence"; reference_id: string }): Promise<void> }).openAssistantCitation({
+      kind: "evidence",
+      reference_id: duplicateRequirement.evidence_id,
+    });
+    await (app as unknown as { followRoute(): Promise<void> }).followRoute();
+    const groupedCard = root.querySelector<HTMLElement>('[data-e2e="evidence-card"]');
+    expect(groupedCard?.dataset.evidenceId).toBe(requirement.evidence_id);
+    expect(groupedCard?.classList.contains("is-focused")).toBe(true);
+
+    run.evidence = [];
+    run.workflow.stages = [{
+      stage: "retrieve_evidence",
+      status: "skipped",
+      attempt_count: 0,
+      summary: "HS 코드가 없어 법령 근거 조회를 진행하지 않았습니다.",
+    }];
+    (app as unknown as { render(): void }).render();
+    const skippedRetrieval = root.querySelector<HTMLElement>('[data-e2e="data-retrieval-status"]');
+    expect(skippedRetrieval?.dataset.retrievalSemantics).toBe("input-hs-insufficient");
+    expect(skippedRetrieval?.textContent).toContain("문서를 보완한 뒤 다시 심사하십시오.");
+    expect(root.textContent).toContain("현재 문서와 품목 기준으로 연결된 법령 근거가 없습니다.");
+    expect(root.querySelectorAll('[data-e2e="evidence-card"]')).toHaveLength(0);
     app.destroy();
   });
 
