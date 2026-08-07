@@ -72,12 +72,15 @@ describe("Backend API client", () => {
     const calls: Array<[RequestInfo | URL, RequestInit | undefined]> = [];
     const replies = [
       json({ subject: "reviewer", org_id: "org-a", roles: ["reviewer"] }),
-      json({ items: [{ case_id: "case-1", org_id: "org-a", title: "입항 서류", status: "open", revision: 0, updated_at: "2026-08-05T00:00:00Z" }] }),
+      json({ items: [{ case_id: "case-1", org_id: "org-a", title: "입항 서류", status: "open", revision: 0, metadata: { system_case_kind: "functional_uat_matrix", system_scenario: "all-documents-match" }, updated_at: "2026-08-05T00:00:00Z" }] }),
     ];
     const fetcher: typeof fetch = async (input, init) => { calls.push([input, init]); return replies.shift() ?? json({}); };
     const api = new ApiClient(fetcher, async () => "local-token");
     await api.getSession();
-    await expect(api.listCases()).resolves.toMatchObject({ items: [expect.objectContaining({ case_id: "case-1" })] });
+    await expect(api.listCases()).resolves.toMatchObject({ items: [expect.objectContaining({
+      case_id: "case-1",
+      metadata: { system_case_kind: "functional_uat_matrix", system_scenario: "all-documents-match" },
+    })] });
     for (const [url, init] of calls) {
       expect(String(url)).toMatch(/^\/api\/v1\//u);
       expect(new Headers(init?.headers).get("Authorization")).toBe("Bearer local-token");

@@ -31,6 +31,11 @@ export interface CaseSummary {
   title: string;
   status: "open" | "in_review" | "closed";
   revision: number;
+  /**
+   * Backend-owned optional metadata. The workbench reads only the two
+   * documented Functional-UAT markers and never renders this object directly.
+   */
+  metadata?: Record<string, unknown>;
   updated_at: string;
 }
 

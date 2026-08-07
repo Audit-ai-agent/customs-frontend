@@ -39,7 +39,7 @@ test.describe.configure({ mode: "serial" });
 test("실제 기능 UAT에서 사건 작업대의 사람 검토 여정을 완료한다", async ({ browser }) => {
   const checks = new Set<FunctionalUatBrowserCheck>();
   const networkBoundary = createNetworkBoundary();
-  const caseTitle = `Browser functional UAT ${Date.now()}`;
+  const caseTitle = `브라우저 기능 검증 ${Date.now()}`;
   let parentRunId = "";
   let childRunId = "";
   let replacementRunId = "";
@@ -74,7 +74,7 @@ test("실제 기능 UAT에서 사건 작업대의 사람 검토 여정을 완료
       checks.add("evidence_displayed");
 
       await reviewer.locator('[data-e2e="workspace-tab-analysis"]').click();
-      const evidenceCitation = reviewer.getByRole("button", { name: /^Evidence · /u }).first();
+      const evidenceCitation = reviewer.getByRole("button", { name: "법령 근거 보기" }).first();
       await expect(evidenceCitation).toBeVisible();
       await evidenceCitation.click();
       await expect(reviewer.locator('[data-e2e="evidence-content"]')).toBeVisible();
@@ -85,7 +85,7 @@ test("실제 기능 UAT에서 사건 작업대의 사람 검토 여정을 완료
       await reviewer.locator('[data-e2e="assistant-create"]').click();
       const assistantForm = reviewer.locator('[data-e2e="assistant-form"]');
       await expect(assistantForm).toBeVisible();
-      await assistantForm.locator('textarea[name="assistant_message"]').fill("현재 Case의 문서 비교 결과와 확인할 사항을 간단히 설명해 주세요.");
+      await assistantForm.locator('textarea[name="assistant_message"]').fill("현재 심사 건의 문서 비교 결과와 확인할 사항을 간단히 설명해 주세요.");
       await assistantForm.getByRole("button", { name: "질문 보내기" }).click();
       await expect(reviewer.locator('[data-e2e="assistant-message"][data-message-role="assistant"]')).toHaveCount(1);
       checks.add("assistant_conversation");
@@ -105,7 +105,7 @@ test("실제 기능 UAT에서 사건 작업대의 사람 검토 여정을 완료
     }
   });
 
-  await test.step("독립 승인과 자식 심사", async () => {
+  await test.step("독립 승인과 수정 반영 재심사", async () => {
     const approver = await signedInPage(browser, "approver", networkBoundary);
     try {
       checks.add("approver_login");
@@ -199,7 +199,7 @@ async function createCase(page: Page, title: string): Promise<void> {
   const form = page.locator('[data-e2e="case-create-form"]');
   await form.locator('input[name="title"]').fill(title);
   await form.locator('input[name="reference"]').fill("Browser E2E");
-  await form.getByRole("button", { name: "새 Case 만들기" }).click();
+  await form.getByRole("button", { name: "새 심사 건 등록" }).click();
   await expect(page.locator('[data-e2e="case-workspace"]')).toBeVisible();
 }
 
@@ -226,10 +226,12 @@ async function addDocument(
     await panel.locator("summary").click();
   }
   const form = page.locator('[data-e2e="document-form"]');
+  const documentRows = page.locator('[data-e2e="document-row"]');
+  const beforeCount = await documentRows.count();
   await form.locator('select[name="document_type"]').selectOption(input.documentType);
   await form.locator('input[name="filename"]').fill(input.filename);
   if (input.replacesFilename) {
-    await form.locator('select[name="replaces_document_id"]').selectOption({ label: `CI · ${input.replacesFilename}` });
+    await form.locator('select[name="replaces_document_id"]').selectOption({ label: "상업송장" });
   }
   if (input.asFile) {
     await form.locator('input[name="text_file"]').setInputFiles({
@@ -241,7 +243,7 @@ async function addDocument(
     await form.locator('textarea[name="content_text"]').fill(input.content);
   }
   await form.getByRole("button", { name: "텍스트 문서 등록" }).click();
-  await expect(page.locator('[data-e2e="document-row"]', { hasText: input.filename })).toHaveCount(1);
+  await expect(documentRows).toHaveCount(beforeCount + 1);
 }
 
 async function runReview(page: Page): Promise<void> {
@@ -262,7 +264,7 @@ async function recordFindingDecision(finding: ReturnType<Page["locator"]>): Prom
   const form = finding.locator('[data-e2e="finding-decision"]');
   await expect(form).toBeVisible();
   await form.locator('select[name="status"]').selectOption("confirmed");
-  await form.locator('textarea[name="reason"]').fill("Browser Functional-UAT에서 문서 비교 결과를 확인했습니다.");
+  await form.locator('textarea[name="reason"]').fill("브라우저 기능 검증에서 문서 비교 결과를 확인했습니다.");
   await form.getByRole("button", { name: /판단 (기록|수정)/u }).click();
   await expect(panel.locator(".decision-current")).toHaveCount(1);
   if (!(await panel.evaluate((node) => (node as HTMLDetailsElement).open))) {
@@ -282,7 +284,7 @@ async function recordCorrectionProposal(finding: ReturnType<Page["locator"]>): P
   await expect(form.locator('input[name="field_name"]')).not.toHaveValue("");
   await expect(form.locator('input[name="field_name"]')).toHaveAttribute("readonly", "");
   await form.locator('textarea[name="new_value"]').fill("INV-BROWSER-E2E-CORRECTED");
-  await form.locator('textarea[name="reason"]').fill("Browser Functional-UAT 독립 승인 흐름 확인용 구조화 정정 제안입니다.");
+  await form.locator('textarea[name="reason"]').fill("브라우저 기능 검증의 독립 승인 흐름을 확인하기 위한 구조화 정정 제안입니다.");
   await form.getByRole("button", { name: "정정 제안 기록" }).click();
   await expect(form.locator('textarea[name="new_value"]')).toHaveValue("");
   await expect(form.locator('textarea[name="reason"]')).toHaveValue("");
@@ -292,7 +294,7 @@ async function decideCorrectionProposal(proposal: ReturnType<Page["locator"]>): 
   const form = proposal.locator('[data-e2e="correction-decision"]');
   await expect(form).toBeVisible();
   await form.locator('select[name="status"]').selectOption("approved");
-  await form.locator('textarea[name="reason"]').fill("Browser Functional-UAT에서 독립 검토를 완료했습니다.");
+  await form.locator('textarea[name="reason"]').fill("브라우저 기능 검증에서 독립 검토를 완료했습니다.");
   await form.getByRole("button", { name: "결정 기록" }).click();
   await expect(proposal).toContainText("승인됨");
 }

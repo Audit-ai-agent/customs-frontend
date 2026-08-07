@@ -14,8 +14,8 @@ function reviewRun() {
     agent_schema_version: "3.2" as const, agent_status: "needs_review" as const, agent_engine: { kind: "deterministic" as const, model_id: "fixture" },
     report: {
       overall_status: "needs_review" as const,
-      summary: "수량을 확인해야 합니다.",
-      disclaimer: "담당자 검토가 필요합니다.",
+      summary: "Review Incomplete—Evidence and HS Code Validation Required",
+      disclaimer: "Document review cannot be finalized because certificate of origin lacks required HS code and food safety import confirmation evidence is not yet available.",
       sections: [
         ["conclusion", "심사 결론", "Invoice와 Packing List의 수량을 사람이 확인해야 합니다."],
         ["execution_process", "처리 과정과 실행 상태", "문서 분석과 비교를 제한된 순서로 완료했습니다."],
@@ -72,6 +72,36 @@ describe("commercial review workspace", () => {
     app.destroy();
   });
 
+  it("shows system functional-UAT records only through the dedicated verification filter", async () => {
+    window.location.hash = "#/cases";
+    const root = document.createElement("div");
+    const api = {
+      getSession: async () => ({ subject: "local-reviewer", org_id: "local-org", roles: ["reviewer"] }),
+      listCases: async () => ({ items: [
+        { case_id: "case-business", external_reference: "수입-001", title: "8월 수입 신고 서류 검토", status: "open" as const, updated_at: "2026-08-05T00:00:00Z" },
+        { case_id: "case-functional", external_reference: null, title: "내부 검증", status: "closed" as const, updated_at: "2026-08-05T00:00:00Z", metadata: { system_case_kind: "functional_uat_matrix", system_scenario: "all-documents-match" } },
+        { case_id: "case-legacy", external_reference: null, title: "Functional matrix: future-case", status: "closed" as const, updated_at: "2026-08-05T00:00:00Z" },
+      ] }),
+    };
+    const auth = { logout: async () => undefined, freshAccessToken: async () => "token", isAuthenticated: () => true };
+    const app = new LightweightWorkbench(root, api as never, auth, "local-development");
+    await app.start();
+
+    expect(root.querySelectorAll('[data-e2e="case-card"]')).toHaveLength(1);
+    expect(root.textContent).toContain("8월 수입 신고 서류 검토");
+    expect(root.textContent).not.toContain("Functional matrix:");
+    const filter = root.querySelector<HTMLSelectElement>('select[name="case_filter"]');
+    if (!filter) throw new Error("case filter is unavailable");
+    filter.value = "functional_uat";
+    filter.dispatchEvent(new Event("change", { bubbles: true }));
+
+    expect(root.querySelectorAll('[data-e2e="case-card"]')).toHaveLength(2);
+    expect(root.textContent).toContain("기능 검증 · 문서 간 일치 확인");
+    expect(root.textContent).toContain("기능 검증 기록");
+    expect(root.querySelector('[data-e2e="case-create-panel"]')).toBeNull();
+    app.destroy();
+  });
+
   it("opens a synchronous completed result and exposes workflow, comparison, and reviewer action", async () => {
     window.location.hash = "#/cases/case-1/documents";
     const root = document.createElement("div");
@@ -93,7 +123,7 @@ describe("commercial review workspace", () => {
     await (app as unknown as { startReview(): Promise<void> }).startReview();
     expect(api.getJob).not.toHaveBeenCalled();
     expect(api.getReviewRun).toHaveBeenCalledWith("run-1");
-    expect(root.textContent).toContain("처리 과정과 실행 상태");
+    expect(root.textContent).toContain("심사 진행 과정");
     expect(root.querySelector('[data-e2e="analysis-content"]')).not.toBeNull();
     expect(root.querySelector('[data-e2e="finding-card"]')).not.toBeNull();
     expect(root.textContent).toContain("문서 간 비교");
@@ -104,8 +134,15 @@ describe("commercial review workspace", () => {
     const correctionField = correctionForm?.querySelector<HTMLInputElement>('input[name="field_name"]');
     expect(correctionField?.value).toBe("quantity");
     expect(correctionField?.readOnly).toBe(true);
+    expect(correctionForm?.querySelector<HTMLInputElement>('input[name="field_display"]')?.value).toBe("수량");
     expect(root.querySelectorAll("[data-report-section]")).toHaveLength(8);
-    expect(root.querySelector("[data-planner-trace]")?.textContent).toContain("제한형 계획");
+    expect(root.querySelector("[data-planner-trace]")?.textContent).toContain("제한형 심사 계획");
+    expect(root.querySelectorAll(".verification-details .technical-copy").length).toBeGreaterThan(0);
+    expect(root.textContent).toContain("심사 결과 확인 필요");
+    const originals = root.querySelectorAll<HTMLDetailsElement>(".legacy-execution-original");
+    expect(originals.length).toBeGreaterThan(0);
+    expect(Array.from(originals).every((item) => item.open === false)).toBe(true);
+    expect(Array.from(originals).some((item) => item.textContent?.includes("Review Incomplete"))).toBe(true);
     const comparisonCitation = Array.from(root.querySelectorAll<HTMLButtonElement>('[data-report-claim-id="claim-3"] .citation-chip'))
       .find((item) => item.textContent?.includes("문서 비교"));
     expect(comparisonCitation).toBeDefined();
@@ -143,7 +180,8 @@ describe("commercial review workspace", () => {
     expect(root.textContent).toContain("문서 간 비교 결과를 확인하십시오.");
     await (app as unknown as { sendAssistantMessage(value: string): Promise<void> }).sendAssistantMessage("근거를 열어 줘");
     expect(api.sendAssistantMessage).toHaveBeenCalled();
-    expect(root.textContent).toContain("Evidence를 열었습니다.");
+    expect(root.textContent).toContain("법령 근거를 열었습니다.");
+    expect(Array.from(root.querySelectorAll(".legacy-execution-original")).some((item) => item.textContent?.includes("Evidence를 열었습니다."))).toBe(true);
     await (app as unknown as { openAssistantCitation(value: { kind: "evidence"; reference_id: string }): Promise<void> }).openAssistantCitation({ kind: "evidence", reference_id: "evidence-1" });
     expect(window.location.hash).toBe("#/cases/case-1/evidence");
     app.destroy();
@@ -214,7 +252,8 @@ describe("commercial review workspace", () => {
     await (app as unknown as { switchDevelopmentActor(value: "approver"): Promise<void> }).switchDevelopmentActor("approver");
     await (app as unknown as { ensureCorrectionProposalsLoaded(): Promise<void> }).ensureCorrectionProposalsLoaded();
     expect(auth.switchActor).toHaveBeenCalledWith("approver");
-    expect(root.textContent).toContain("local-approver");
+    expect(root.textContent).toContain("승인 담당자");
+    expect(root.textContent).not.toContain("local-approver");
     expect(root.querySelector(".correction-decision-form")).not.toBeNull();
 
     const decisionForm = root.querySelector<HTMLFormElement>(".correction-decision-form");
@@ -238,10 +277,10 @@ describe("commercial review workspace", () => {
     window.location.hash = "#/cases/case-1/history";
     await (app as unknown as { followRoute(): Promise<void> }).followRoute();
     expect(root.querySelector('[data-e2e="history-content"]')).not.toBeNull();
-    expect(root.textContent).toContain("정정 반영 자식 실행");
+    expect(root.textContent).toContain("수정 반영 재심사");
     window.location.hash = "#/cases/case-1/analysis";
     await (app as unknown as { followRoute(): Promise<void> }).followRoute();
-    expect(root.textContent).toContain("사람 제공 값");
+    expect(root.textContent).toContain("담당자 제공 값");
     app.destroy();
   });
 });

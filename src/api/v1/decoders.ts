@@ -90,6 +90,9 @@ export function decodeSession(value: unknown): Session {
 
 export function decodeCaseSummary(value: unknown): CaseSummary {
   const raw = record(value, "case");
+  const metadata = raw.metadata === undefined || raw.metadata === null
+    ? undefined
+    : record(raw.metadata, "case.metadata");
   return {
     case_id: requiredString(raw.case_id, "case.case_id"),
     org_id: requiredString(raw.org_id, "case.org_id"),
@@ -99,6 +102,7 @@ export function decodeCaseSummary(value: unknown): CaseSummary {
     title: requiredString(raw.title, "case.title"),
     status: oneOf(raw.status, ["open", "in_review", "closed"], "case.status"),
     revision: nonNegativeInteger(raw.revision, "case.revision"),
+    ...(metadata === undefined ? {} : { metadata }),
     updated_at: requiredString(raw.updated_at, "case.updated_at"),
   };
 }
