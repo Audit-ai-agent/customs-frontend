@@ -1,5 +1,5 @@
 import { rm, stat, writeFile } from "node:fs/promises";
-import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import * as path from "node:path";
 
 export const FUNCTIONAL_UAT_BROWSER_CHECKS = [
   "reviewer_login",
@@ -75,6 +75,7 @@ export function loadFunctionalUatBrowserEnvironment(
   }
 
   const receiptPath = validateReceiptPath(environment.CUSTOMS_FUNCTIONAL_UAT_BROWSER_RECEIPT_PATH as string);
+  const receiptPathApi = pathFor(receiptPath);
   return {
     baseUrl: "http://127.0.0.1:5173",
     reviewerUsername: environment.CUSTOMS_FUNCTIONAL_UAT_BROWSER_REVIEWER_USERNAME as string,
@@ -82,7 +83,7 @@ export function loadFunctionalUatBrowserEnvironment(
     approverUsername: environment.CUSTOMS_FUNCTIONAL_UAT_BROWSER_APPROVER_USERNAME as string,
     approverPassword: environment.CUSTOMS_FUNCTIONAL_UAT_BROWSER_APPROVER_PASSWORD as string,
     receiptPath,
-    transientOutputPath: join(dirname(receiptPath), TRANSIENT_OUTPUT_NAME),
+    transientOutputPath: receiptPathApi.join(receiptPathApi.dirname(receiptPath), TRANSIENT_OUTPUT_NAME),
   };
 }
 
@@ -123,7 +124,7 @@ export async function writeFunctionalUatBrowserReceipt(
   receipt: FunctionalUatBrowserReceipt,
 ): Promise<void> {
   validateFunctionalUatBrowserReceipt(receipt);
-  const parent = dirname(environment.receiptPath);
+  const parent = pathFor(environment.receiptPath).dirname(environment.receiptPath);
   try {
     if (!(await stat(parent)).isDirectory()) throw new Error("functional_uat_browser_receipt_parent_invalid");
   } catch (error) {
@@ -141,23 +142,34 @@ export async function writeFunctionalUatBrowserReceipt(
 export async function removeFunctionalUatBrowserTransientOutput(
   environment: FunctionalUatBrowserEnvironment,
 ): Promise<void> {
-  const expected = join(dirname(environment.receiptPath), TRANSIENT_OUTPUT_NAME);
-  if (environment.transientOutputPath !== expected || basename(expected) !== TRANSIENT_OUTPUT_NAME) {
+  const receiptPathApi = pathFor(environment.receiptPath);
+  const expected = receiptPathApi.join(receiptPathApi.dirname(environment.receiptPath), TRANSIENT_OUTPUT_NAME);
+  if (environment.transientOutputPath !== expected || receiptPathApi.basename(expected) !== TRANSIENT_OUTPUT_NAME) {
     throw new Error("functional_uat_browser_transient_target_invalid");
   }
   await rm(expected, { recursive: true, force: true, maxRetries: 1, retryDelay: 100 });
 }
 
 function validateReceiptPath(value: string): string {
-  if (!isAbsolute(value)) throw new Error("functional_uat_browser_receipt_path_must_be_absolute");
-  const target = resolve(value);
-  if (basename(target) !== RECEIPT_NAME) throw new Error("functional_uat_browser_receipt_name_invalid");
-  const marker = `${sep}_local${sep}state${sep}e2e-runs${sep}`;
+  const receiptPathApi = pathFor(value);
+  if (!receiptPathApi.isAbsolute(value)) throw new Error("functional_uat_browser_receipt_path_must_be_absolute");
+  const target = receiptPathApi.resolve(value);
+  if (receiptPathApi.basename(target) !== RECEIPT_NAME) throw new Error("functional_uat_browser_receipt_name_invalid");
+  const marker = `${receiptPathApi.sep}_local${receiptPathApi.sep}state${receiptPathApi.sep}e2e-runs${receiptPathApi.sep}`;
   if (!target.includes(marker)) throw new Error("functional_uat_browser_receipt_path_outside_local_state");
   const root = target.slice(0, target.indexOf(marker) + marker.length - 1);
-  const relation = relative(root, target);
-  if (!relation || relation.startsWith(`..${sep}`) || relation === "..") {
+  const relation = receiptPathApi.relative(root, target);
+  if (!relation || relation.startsWith(`..${receiptPathApi.sep}`) || relation === "..") {
     throw new Error("functional_uat_browser_receipt_path_outside_local_state");
   }
   return target;
+}
+
+/**
+ * The local Backend wrapper passes its native path.  Tests also exercise a
+ * Windows receipt path on Linux CI, so choose the path rules from the input
+ * rather than from the operating system running the test process.
+ */
+function pathFor(value: string): typeof path {
+  return path.isAbsolute(value) || !path.win32.isAbsolute(value) ? path : path.win32;
 }
