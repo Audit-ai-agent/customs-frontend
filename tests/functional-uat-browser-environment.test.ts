@@ -25,6 +25,13 @@ describe("functional UAT browser environment", () => {
     expect(loaded.transientOutputPath).toContain("_local\\state\\e2e-runs\\test-run\\.playwright-transient");
   });
 
+  it("keeps a POSIX local receipt path inside the same narrow boundary", () => {
+    const loaded = loadFunctionalUatBrowserEnvironment(environment({
+      CUSTOMS_FUNCTIONAL_UAT_BROWSER_RECEIPT_PATH: "/workspace/_local/state/e2e-runs/test-run/receipt.json",
+    }));
+    expect(loaded.transientOutputPath).toMatch(/_local[\\/]state[\\/]e2e-runs[\\/]test-run[\\/]\.playwright-transient/u);
+  });
+
   it("rejects non-loopback URLs and receipt paths outside local state", () => {
     expect(() => loadFunctionalUatBrowserEnvironment(environment({
       CUSTOMS_FUNCTIONAL_UAT_BROWSER_BASE_URL: "http://localhost:5173",

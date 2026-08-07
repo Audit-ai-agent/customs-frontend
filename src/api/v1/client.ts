@@ -45,6 +45,11 @@ import { stableApiErrorMessage, technicalApiErrorDetail } from "../user-facing-e
 const API_BASE = "/api/v1" as const;
 const MAX_JSON_BODY_BYTES = 4 * 1024 * 1024;
 const REQUEST_TIMEOUT_MS = 30_000;
+// A review can legitimately wait for the bounded Agent workflow and one
+// provider response.  Keep ordinary workbench reads/actions responsive, but
+// do not abandon a real review before the Backend has had a fair chance to
+// return its terminal Job projection.
+const REVIEW_EXECUTION_TIMEOUT_MS = 120_000;
 
 type Decoder<T> = (value: unknown) => T;
 type AccessTokenProvider = () => string | undefined | Promise<string | undefined>;
@@ -177,11 +182,17 @@ export class ApiClient {
     const init = this.json("POST", canonicalPayload);
     const headers = new Headers(init.headers);
     headers.set("Idempotency-Key", idempotencyKey);
-    return this.request(`/cases/${segment(caseId)}/reviews`, { ...init, headers }, (value) => {
-      const job = decodeJobEnvelope(value);
-      this.assertIdentity(job.case_id, caseId, "Review Job Case");
-      return job;
-    });
+    return this.request(
+      `/cases/${segment(caseId)}/reviews`,
+      { ...init, headers },
+      (value) => {
+        const job = decodeJobEnvelope(value);
+        this.assertIdentity(job.case_id, caseId, "Review Job Case");
+        return job;
+      },
+      true,
+      REVIEW_EXECUTION_TIMEOUT_MS,
+    );
   }
 
   async getJob(jobId: string): Promise<JobRecord> {
@@ -352,6 +363,8 @@ export class ApiClient {
       `/review-runs/${segment(reviewRunId)}/revisions`,
       { ...init, headers },
       decodeJobEnvelope,
+      true,
+      REVIEW_EXECUTION_TIMEOUT_MS,
     );
   }
 
@@ -368,6 +381,7 @@ export class ApiClient {
     init: RequestInit,
     decoder: Decoder<T>,
     authenticate = true,
+    timeoutMs = REQUEST_TIMEOUT_MS,
   ): Promise<T> {
     const headers = new Headers(init.headers);
     headers.set("Accept", "application/json");
@@ -385,7 +399,7 @@ export class ApiClient {
         credentials: "same-origin",
         redirect: "error",
         referrerPolicy: "same-origin",
-        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+        signal: AbortSignal.timeout(timeoutMs),
       });
     } catch {
       throw new ApiError("Backend request failed before a response", 503);

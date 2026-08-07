@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { ApiClient } from "../src/api/v1/client";
 
 function json(value: unknown, status = 200): Response {
@@ -72,12 +72,15 @@ describe("Backend API client", () => {
     const calls: Array<[RequestInfo | URL, RequestInit | undefined]> = [];
     const replies = [
       json({ subject: "reviewer", org_id: "org-a", roles: ["reviewer"] }),
-      json({ items: [{ case_id: "case-1", org_id: "org-a", title: "입항 서류", status: "open", revision: 0, updated_at: "2026-08-05T00:00:00Z" }] }),
+      json({ items: [{ case_id: "case-1", org_id: "org-a", title: "입항 서류", status: "open", revision: 0, metadata: { system_case_kind: "functional_uat_matrix", system_scenario: "all-documents-match" }, updated_at: "2026-08-05T00:00:00Z" }] }),
     ];
     const fetcher: typeof fetch = async (input, init) => { calls.push([input, init]); return replies.shift() ?? json({}); };
     const api = new ApiClient(fetcher, async () => "local-token");
     await api.getSession();
-    await expect(api.listCases()).resolves.toMatchObject({ items: [expect.objectContaining({ case_id: "case-1" })] });
+    await expect(api.listCases()).resolves.toMatchObject({ items: [expect.objectContaining({
+      case_id: "case-1",
+      metadata: { system_case_kind: "functional_uat_matrix", system_scenario: "all-documents-match" },
+    })] });
     for (const [url, init] of calls) {
       expect(String(url)).toMatch(/^\/api\/v1\//u);
       expect(new Headers(init?.headers).get("Authorization")).toBe("Bearer local-token");
@@ -97,6 +100,32 @@ describe("Backend API client", () => {
     expect(JSON.parse(String(requests[0]?.init?.body))).toEqual({ trade_type: "import" });
     expect(requests[1]?.url).toBe("/api/v1/review-runs/run-1/findings/finding-1/decision");
     expect(requests[1]?.init?.method).toBe("PUT");
+  });
+
+  it("waits longer only for bounded review and revision execution", async () => {
+    const timeout = vi.spyOn(AbortSignal, "timeout");
+    const fetcher: typeof fetch = async (input) => {
+      const url = String(input);
+      if (url.endsWith("/reviews")) {
+        return json({ job: { job_id: "job-review-1", case_id: "case-1", review_run_id: "run-1", status: "queued", created_by: "reviewer", created_at: "2026-08-05T00:00:00Z", updated_at: "2026-08-05T00:00:00Z" }, idempotency_reused: false }, 202);
+      }
+      if (url.endsWith("/revisions")) {
+        return json({ job: { job_id: "job-revision-1", case_id: "case-1", review_run_id: "run-2", status: "queued", created_by: "reviewer", created_at: "2026-08-05T00:00:00Z", updated_at: "2026-08-05T00:00:00Z" }, idempotency_reused: false }, 202);
+      }
+      if (url.endsWith("/jobs/job-review-1")) {
+        return json({ job_id: "job-review-1", case_id: "case-1", review_run_id: "run-1", status: "succeeded", created_by: "reviewer", created_at: "2026-08-05T00:00:00Z", updated_at: "2026-08-05T00:00:00Z" });
+      }
+      return json({ detail: "unexpected request" }, 500);
+    };
+    const api = new ApiClient(fetcher, async () => "local-token");
+    try {
+      await api.enqueueReview("case-1", { trade_type: "import" }, "review-timeout-key");
+      await api.enqueueRevision("run-1", { proposal_ids: ["proposal-1"] }, "revision-timeout-key");
+      await api.getJob("job-review-1");
+      expect(timeout.mock.calls.map(([milliseconds]) => milliseconds)).toEqual([120_000, 120_000, 30_000]);
+    } finally {
+      timeout.mockRestore();
+    }
   });
 
   it("decodes the structured V3.2 human-review projection including human-provided facts", async () => {
