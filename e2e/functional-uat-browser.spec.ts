@@ -182,10 +182,19 @@ async function signedInPage(
   const page = await context.newPage();
   networkBoundary.attach(page);
   await page.goto(environment.baseUrl);
-  await expect(page.locator('input[name="username"]')).toBeVisible();
-  await page.locator('input[name="username"]').fill(actor === "reviewer" ? environment.reviewerUsername : environment.approverUsername);
-  await page.locator('input[name="password"]').fill(actor === "reviewer" ? environment.reviewerPassword : environment.approverPassword);
-  await page.locator("#kc-login").click();
+  await expect(page.getByText("통관 AI 사전심사 작업대", { exact: true })).toBeVisible();
+  const username = page.locator('input[name="username"]');
+  const password = page.locator('input[name="password"]');
+  const login = page.locator("#kc-login");
+  await expect(username).toBeVisible();
+  await expect(username).toHaveAccessibleName(/^(사용자 이름|사용자 이름 또는 이메일)$/u);
+  await expect(password).toBeVisible();
+  await expect(password).toHaveAccessibleName("비밀번호");
+  await expect(login).toBeVisible();
+  await expect(login).toHaveAccessibleName("로그인");
+  await username.fill(actor === "reviewer" ? environment.reviewerUsername : environment.approverUsername);
+  await password.fill(actor === "reviewer" ? environment.reviewerPassword : environment.approverPassword);
+  await login.click();
   await expect(page.locator('[data-e2e="workspace-root"]')).toBeVisible();
   return page;
 }
