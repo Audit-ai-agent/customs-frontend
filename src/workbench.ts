@@ -1415,7 +1415,7 @@ export class CommercialReviewWorkspace {
           on: { click: () => void this.focusSource(source) },
         }) : null,
         finding.evidence_ids.length ? element("button", {
-          className: "text-link", text: `연결된 법령 근거 ${finding.evidence_ids.length}건`, attributes: { type: "button" },
+          className: "text-link", text: `법령 근거 보기 · ${finding.evidence_ids.length}건`, attributes: { type: "button" },
           on: { click: () => this.setRoute(this.requireCase().case_id, "evidence") },
         }) : null,
         this.createDecisionPanel(finding, decision),
