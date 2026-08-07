@@ -120,7 +120,7 @@ test("실제 기능 UAT에서 사건 작업대의 사람 검토 여정을 완료
       await expect(selection).toBeVisible();
       await selection.check();
       await approver.locator('[data-e2e="revision-start"]').click();
-      await expect(approver.locator('[data-e2e="analysis-content"]')).toBeVisible();
+      await waitForReviewPresentation(approver);
       await openHistory(approver);
       const child = approver.locator('[data-e2e="review-run"].is-selected');
       childRunId = await reviewRunId(child);
@@ -257,7 +257,27 @@ async function addDocument(
 
 async function runReview(page: Page): Promise<void> {
   await page.locator('[data-e2e="review-start"]').click();
-  await expect(page.locator('[data-e2e="analysis-content"]')).toBeVisible();
+  await waitForReviewPresentation(page);
+}
+
+async function waitForReviewPresentation(page: Page): Promise<void> {
+  const analysis = page.locator('[data-e2e="analysis-content"]');
+  const alert = page.locator('[role="alert"]').first();
+  let outcome: "analysis" | "alert";
+  try {
+    outcome = await Promise.race([
+      analysis.waitFor({ state: "visible", timeout: 90_000 }).then(() => "analysis" as const),
+      alert.waitFor({ state: "visible", timeout: 90_000 }).then(() => "alert" as const),
+    ]);
+  } catch {
+    throw new Error("functional_uat_browser_result_display_timed_out");
+  }
+  if (outcome === "analysis") return;
+  const message = await alert.textContent();
+  if (message?.includes("심사 결과가 아직 화면에 준비되지 않았습니다.")) {
+    throw new Error("functional_uat_browser_result_visibility_timed_out");
+  }
+  throw new Error("functional_uat_browser_result_display_failed");
 }
 
 async function openHistory(page: Page): Promise<void> {

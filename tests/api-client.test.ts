@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { ApiClient } from "../src/api/v1/client";
 
 function json(value: unknown, status = 200): Response {
@@ -100,6 +100,32 @@ describe("Backend API client", () => {
     expect(JSON.parse(String(requests[0]?.init?.body))).toEqual({ trade_type: "import" });
     expect(requests[1]?.url).toBe("/api/v1/review-runs/run-1/findings/finding-1/decision");
     expect(requests[1]?.init?.method).toBe("PUT");
+  });
+
+  it("waits longer only for bounded review and revision execution", async () => {
+    const timeout = vi.spyOn(AbortSignal, "timeout");
+    const fetcher: typeof fetch = async (input) => {
+      const url = String(input);
+      if (url.endsWith("/reviews")) {
+        return json({ job: { job_id: "job-review-1", case_id: "case-1", review_run_id: "run-1", status: "queued", created_by: "reviewer", created_at: "2026-08-05T00:00:00Z", updated_at: "2026-08-05T00:00:00Z" }, idempotency_reused: false }, 202);
+      }
+      if (url.endsWith("/revisions")) {
+        return json({ job: { job_id: "job-revision-1", case_id: "case-1", review_run_id: "run-2", status: "queued", created_by: "reviewer", created_at: "2026-08-05T00:00:00Z", updated_at: "2026-08-05T00:00:00Z" }, idempotency_reused: false }, 202);
+      }
+      if (url.endsWith("/jobs/job-review-1")) {
+        return json({ job_id: "job-review-1", case_id: "case-1", review_run_id: "run-1", status: "succeeded", created_by: "reviewer", created_at: "2026-08-05T00:00:00Z", updated_at: "2026-08-05T00:00:00Z" });
+      }
+      return json({ detail: "unexpected request" }, 500);
+    };
+    const api = new ApiClient(fetcher, async () => "local-token");
+    try {
+      await api.enqueueReview("case-1", { trade_type: "import" }, "review-timeout-key");
+      await api.enqueueRevision("run-1", { proposal_ids: ["proposal-1"] }, "revision-timeout-key");
+      await api.getJob("job-review-1");
+      expect(timeout.mock.calls.map(([milliseconds]) => milliseconds)).toEqual([120_000, 120_000, 30_000]);
+    } finally {
+      timeout.mockRestore();
+    }
   });
 
   it("decodes the structured V3.2 human-review projection including human-provided facts", async () => {
