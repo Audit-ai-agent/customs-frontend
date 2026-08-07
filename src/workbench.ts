@@ -71,6 +71,7 @@ import {
 export type FrontendRuntimeMode = "local-development" | "functional-uat";
 type WorkspaceTab = "documents" | "analysis" | "assistant" | "evidence" | "history";
 type CaseFilter = "all" | "open" | "in_review" | "closed" | "functional_uat";
+type JobPurpose = "review" | "revision";
 
 interface WorkbenchState {
   session: Session | null;
@@ -83,6 +84,7 @@ interface WorkbenchState {
   sourceFocus: SourceReference | null;
   factFocusId: string | null;
   activeJob: JobRecord | null;
+  activeJobPurpose: JobPurpose | null;
   activeTab: WorkspaceTab;
   comparisonFocusId: string | null;
   evidenceFocusId: string | null;
@@ -118,6 +120,8 @@ interface CorrectionFactTarget {
 
 const DOCUMENT_TYPES: readonly DocumentType[] = ["CI", "PL", "BL", "CO", "UNKNOWN"];
 const ACTIVE_JOB_STATES = new Set(["queued", "running"]);
+const REVIEW_FAILURE_MESSAGE = "심사를 완료하지 못했습니다. 입력 문서와 서비스 상태를 확인한 뒤 다시 시도해 주십시오. 기존 심사 결과는 변경되지 않았습니다.";
+const REVISION_FAILURE_MESSAGE = "수정 반영 재심사를 완료하지 못했습니다. 승인된 정정 제안을 다시 선택한 뒤 재시도해 주십시오. 기존 심사 결과는 변경되지 않았습니다.";
 const TABS: readonly { id: WorkspaceTab; label: string }[] = [
   { id: "documents", label: "문서" },
   { id: "analysis", label: "AI 심사" },
@@ -142,6 +146,7 @@ export class CommercialReviewWorkspace {
     sourceFocus: null,
     factFocusId: null,
     activeJob: null,
+    activeJobPurpose: null,
     activeTab: "documents",
     comparisonFocusId: null,
     evidenceFocusId: null,
@@ -271,6 +276,7 @@ export class CommercialReviewWorkspace {
     this.state.sourceFocus = null;
     this.state.factFocusId = null;
     this.state.activeJob = null;
+    this.state.activeJobPurpose = null;
     this.resetRunAttachments();
     if (runSummaries[0]) await this.openRun(runSummaries[0].review_run_id);
   }
@@ -499,10 +505,13 @@ export class CommercialReviewWorkspace {
       const job = await this.api.enqueueRevision(run.review_run_id, { proposal_ids: proposalIds }, crypto.randomUUID());
       this.state.selectedCorrectionProposalIds.clear();
       this.state.activeJob = job;
+      this.state.activeJobPurpose = "revision";
       if (job.status === "succeeded") await this.showSucceededReview(job);
-      else {
+      else if (ACTIVE_JOB_STATES.has(job.status)) {
         this.state.notice = "승인된 정정 제안을 반영하는 수정 반영 재심사를 요청했습니다. 완료되면 새 심사 이력으로 이동합니다.";
         this.scheduleJobPoll(job);
+      } else {
+        this.showFailedJob(job);
       }
     });
   }
@@ -607,11 +616,14 @@ export class CommercialReviewWorkspace {
     await this.withBusy(async () => {
       const job = await this.api.enqueueReview(current.case_id, { trade_type: "import" }, crypto.randomUUID());
       this.state.activeJob = job;
+      this.state.activeJobPurpose = "review";
       if (job.status === "succeeded") {
         await this.showSucceededReview(job);
-      } else {
+      } else if (ACTIVE_JOB_STATES.has(job.status)) {
         this.state.notice = "심사를 요청했습니다. 완료 상태가 확인되면 결과를 표시합니다.";
         this.scheduleJobPoll(job);
+      } else {
+        this.showFailedJob(job);
       }
     });
   }
@@ -629,9 +641,9 @@ export class CommercialReviewWorkspace {
       this.state.activeJob = job;
       if (ACTIVE_JOB_STATES.has(job.status)) this.scheduleJobPoll(job);
       else if (job.status === "succeeded") await this.showSucceededReview(job);
-      else this.state.error = "심사가 완료되지 않았습니다. Job 상태와 서비스 로그를 확인하십시오.";
+      else this.showFailedJob(job);
     } catch (error) {
-      this.state.error = userMessage(error, "Job 상태를 확인하지 못했습니다.");
+      this.state.error = userMessage(error, "심사 진행 상태를 확인하지 못했습니다. 잠시 후 이력에서 다시 확인해 주십시오.");
     } finally {
       this.render();
     }
@@ -643,6 +655,19 @@ export class CommercialReviewWorkspace {
     this.state.activeTab = "analysis";
     this.state.notice = "심사가 완료되었습니다. 결과는 자동 승인되지 않으며 담당자 검토가 필요합니다.";
     this.setRoute(job.case_id, "analysis");
+  }
+
+  private showFailedJob(job: JobRecord): void {
+    const purpose = this.state.activeJobPurpose;
+    this.state.notice = null;
+    if (purpose === "revision") {
+      this.state.activeJob = null;
+      this.state.activeJobPurpose = null;
+      this.state.error = REVISION_FAILURE_MESSAGE;
+      return;
+    }
+    this.state.activeJob = job;
+    this.state.error = null;
   }
 
   private async decideFinding(form: HTMLFormElement, findingId: string): Promise<void> {
@@ -829,14 +854,36 @@ export class CommercialReviewWorkspace {
           this.createReviewButton(),
         ),
       ),
-      this.state.activeJob ? element("section", { className: "processing-notice", attributes: { role: "status" } },
-        element("strong", { text: "심사 요청 처리 중" }),
-        element("span", { text: `${jobStatusLabel(this.state.activeJob.status)}입니다. 실제 완료 결과가 도착한 뒤 심사 진행 과정을 표시합니다.` }),
-      ) : null,
+      this.createJobStatusNotice(),
       this.createTabs(),
       this.createActiveTab(),
       ),
       this.createCaseContext(current, presentation.kind),
+    );
+  }
+
+  private createJobStatusNotice(): HTMLElement | null {
+    const job = this.state.activeJob;
+    if (!job) return null;
+    if (ACTIVE_JOB_STATES.has(job.status)) {
+      return element("section", { className: "processing-notice", attributes: { role: "status" } },
+        element("strong", { text: "심사 요청 처리 중" }),
+        element("span", { text: `${jobStatusLabel(job.status)}입니다. 실제 완료 결과가 도착한 뒤 심사 진행 과정을 표시합니다.` }),
+      );
+    }
+    if (job.status !== "failed") return null;
+    const canRetry = this.hasRole("reviewer") && this.activeDocuments().length > 0 && !this.state.busy;
+    return element("section", { className: "review-failure-notice", attributes: { role: "alert", "data-e2e": "review-failure" } },
+      element("div", {},
+        element("strong", { text: "심사 결과를 만들지 못했습니다." }),
+        element("span", { text: REVIEW_FAILURE_MESSAGE }),
+      ),
+      canRetry ? element("button", {
+        className: "button button--secondary",
+        text: "다시 심사하기",
+        attributes: { type: "button", "data-e2e": "review-retry" },
+        on: { click: () => void this.startReview() },
+      }) : null,
     );
   }
 

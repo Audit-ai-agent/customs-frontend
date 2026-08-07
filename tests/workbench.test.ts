@@ -153,6 +153,40 @@ describe("commercial review workspace", () => {
     app.destroy();
   });
 
+  it("shows a Korean retry state for a synchronously failed review without polling or exposing internal identifiers", async () => {
+    window.location.hash = "#/cases/case-1/documents";
+    const root = document.createElement("div");
+    const caseDetail = { case_id: "case-1", org_id: "local-org", title: "입항 서류", status: "in_review" as const, revision: 1, updated_at: "2026-08-05T00:00:00Z" };
+    const failedJob = { job_id: "job-internal-error-42", case_id: "case-1", review_run_id: "run-internal-error-42", status: "failed" as const, created_by: "local-reviewer", created_at: "2026-08-05T00:00:00Z", updated_at: "2026-08-05T00:00:00Z" };
+    const api = {
+      getSession: vi.fn(async () => ({ subject: "local-reviewer", org_id: "local-org", roles: ["reviewer"] })),
+      listCases: vi.fn(async () => ({ items: [caseDetail] })),
+      getCase: vi.fn(async () => caseDetail),
+      listDocuments: vi.fn(async () => [{ document_id: "document-1", case_id: "case-1", document_type: "CI" as const, filename: "invoice.txt", media_type: "text/plain" as const, content_sha256: "a".repeat(64), byte_size: 12, character_count: 12, created_by: "local-reviewer", created_at: "2026-08-05T00:00:00Z" }]),
+      listReviewRuns: vi.fn(async () => []),
+      enqueueReview: vi.fn(async () => failedJob),
+      getJob: vi.fn(async () => { throw new Error("a synchronously failed Job must not be polled"); }),
+    };
+    const auth = { logout: async () => undefined, freshAccessToken: async () => "token", isAuthenticated: () => true };
+    const app = new LightweightWorkbench(root, api as never, auth, "functional-uat");
+    await app.start();
+    await (app as unknown as { startReview(): Promise<void> }).startReview();
+
+    expect(api.getJob).not.toHaveBeenCalled();
+    expect(root.querySelector('[data-e2e="review-failure"]')).not.toBeNull();
+    expect(root.querySelector<HTMLButtonElement>('[data-e2e="review-retry"]')?.textContent).toBe("다시 심사하기");
+    expect(root.textContent).toContain("심사 결과를 만들지 못했습니다.");
+    expect(root.textContent).toContain("기존 심사 결과는 변경되지 않았습니다.");
+    expect(root.textContent).not.toContain("심사 요청 처리 중");
+    expect(root.textContent).not.toContain("job-internal-error-42");
+    expect(root.textContent).not.toContain("run-internal-error-42");
+
+    root.querySelector<HTMLButtonElement>('[data-e2e="review-retry"]')?.click();
+    await Promise.resolve();
+    expect(api.enqueueReview).toHaveBeenCalledTimes(2);
+    app.destroy();
+  });
+
   it("opens the assistant route, preserves conversation history, sends a question, and follows evidence citations", async () => {
     window.location.hash = "#/cases/case-1/assistant";
     const root = document.createElement("div");

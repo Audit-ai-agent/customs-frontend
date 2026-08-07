@@ -150,6 +150,9 @@ small { color: var(--muted); }
 .human-review-badge { padding: .36rem .58rem; color: #6c5000; background: var(--warning-bg); border: 1px solid #e7c76b; border-radius: 999px; font-size: .76rem; font-weight: 800; white-space: nowrap; }
 .processing-notice { display: grid; gap: .2rem; padding: .8rem 1rem; color: #2d5a78; background: #eaf5fb; border: 1px solid #badcec; border-radius: .75rem; }
 .processing-notice span { font-size: .86rem; line-height: 1.5; }
+.review-failure-notice { display: flex; align-items: center; justify-content: space-between; gap: .9rem; padding: .8rem 1rem; color: #7c2934; background: #fff1f2; border: 1px solid #efbcc3; border-radius: .75rem; }
+.review-failure-notice > div { display: grid; gap: .2rem; }
+.review-failure-notice span { font-size: .86rem; line-height: 1.5; }
 
 .workspace-tabs { display: flex; gap: .25rem; overflow-x: auto; padding: .35rem; background: #eaf0f6; border-radius: .75rem; }
 .workspace-tab { flex: 1 0 max-content; padding: .62rem .8rem; color: #5a6d83; background: transparent; border: 1px solid transparent; border-radius: .55rem; font-size: .88rem; font-weight: 750; }
