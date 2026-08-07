@@ -10,6 +10,7 @@ import type {
   JobStatus,
   ReviewComparison,
   ReviewFinding,
+  ReportSectionName,
   ReviewRunSummary,
   ReviewerDecision,
   SourceReference,
@@ -127,6 +128,22 @@ const KNOWN_TECHNICAL_NARRATIVES: Record<string, string> = {
   "no issues detected": "주요 확인 사항 없음",
   "evidence를 열었습니다": "법령 근거를 열었습니다.",
 };
+
+const SAFE_ACRONYMS = new Set([
+  "AI", "BL", "CO", "HS", "KG", "OCR", "PDF", "PL", "USD",
+]);
+// Do not use `\b`: JavaScript word boundaries are ASCII-oriented, so a
+// Korean postposition immediately after `.txt` would otherwise evade it.
+const RAW_FILENAME = /[^\s()]+\.txt(?=$|[^A-Za-z0-9_.-])/iu;
+const INTERNAL_REFERENCE = /\b(?:case|claim|comparison|document|evidence|fact|finding|inspect|job|run)(?:[-_][a-z0-9]+){1,}\b/iu;
+const OPAQUE_IDENTIFIER = /\b[a-f0-9]{16,}\b/iu;
+const UUID_IDENTIFIER = /\b[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}\b/iu;
+const SECRET_ASSIGNMENT = /(api[ _-]?key|authorization|cookie|dsn|password|secret|token)\b\s*[:=]\s*[^\s,;]+/giu;
+const BEARER_CREDENTIAL = /\bbearer\s+[^\s,;]+/giu;
+const CONNECTION_STRING = /\b(?:postgres(?:ql)?|mysql|redis|mongodb(?:\+srv)?)?:\/\/[^\s,;]+/giu;
+const KNOWN_API_KEY = /\b(?:sk-ant-|sk-|api[_-]?key[-_:])[A-Za-z0-9_\-]{8,}\b/giu;
+const JWT_CREDENTIAL = /\beyJ[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+\b/gu;
+const PROVIDER_ERROR = /(?:\b(?:anthropic|claude|openai|provider)[^\r\n]{0,120}\b(?:error|exception|failed|failure|status(?:\s*code)?|request[ _-]?id)\b|\b(?:provider[ _-]?error|model[ _-]?provider[ _-]?error)\b)/iu;
 
 function normalized(value: string): string {
   return value.trim().toLocaleLowerCase();
@@ -413,10 +430,202 @@ export function displayValue(value: string | null | undefined): string {
 }
 
 /**
- * Keeps a few known legacy fixture/runtime messages out of the reviewer UI.
- * New Agent prose remains untouched here: translating a legal conclusion in
- * the browser would be unsafe, so that responsibility stays with the Agent.
+ * Structured facts and comparison values can legitimately be numeric values,
+ * currencies, units, or business document numbers.  Unlike a narrative, they
+ * do not need Korean prose, but they still must not leak a file name, an
+ * internal identifier, a credential-shaped value, or arbitrary English text.
  */
-export function reviewerNarrative(value: string): string {
-  return KNOWN_TECHNICAL_NARRATIVES[narrativeKey(value)] ?? value;
+export function controlledStructuredValue(
+  value: string | null | undefined,
+  fallback = "추가 확인 필요",
+): string {
+  const displayed = displayValue(value);
+  return requiresControlledStructuredValue(displayed) ? fallback : displayed;
+}
+
+/** A protected rendering for a collapsed verification detail; never raw. */
+export function redactedStructuredVerificationValue(value: string | null | undefined): string {
+  const displayed = displayValue(value);
+  return requiresControlledStructuredValue(displayed) ? "표시 제한된 값" : reviewerNarrativeOriginal(displayed);
+}
+
+/**
+ * Keeps legacy fixture/runtime messages and unsafe legacy prose out of the
+ * primary reviewer UI. New Korean Agent prose remains untouched. The Browser
+ * never translates a legal conclusion; it only substitutes a bounded Korean
+ * status statement when the stored text is not safe to present as-is.
+ */
+export function reviewerNarrative(value: string, fallback = "이번 심사 결과의 근거를 바탕으로 담당자 확인이 필요합니다."): string {
+  const known = KNOWN_TECHNICAL_NARRATIVES[narrativeKey(value)];
+  if (known) return known;
+  return requiresControlledNarrative(value) ? fallback : value;
+}
+
+/**
+ * User-visible report and assistant text must not expose legacy file names,
+ * machine references, or unreviewed English prose.  The raw value remains in
+ * the caller's collapsed "이전 실행 원문" area whenever this returns true.
+ */
+export function requiresControlledNarrative(value: string): boolean {
+  if (
+    RAW_FILENAME.test(value)
+    || INTERNAL_REFERENCE.test(value)
+    || OPAQUE_IDENTIFIER.test(value)
+    || UUID_IDENTIFIER.test(value)
+    || hasSensitiveNarrative(value)
+  ) return true;
+  const englishWords = value.match(/\b[A-Za-z]{3,}\b/gu) ?? [];
+  if (englishWords.some((word) => !SAFE_ACRONYMS.has(word.toUpperCase()))) return true;
+  return value.trim().length > 0 && !/[가-힣]/u.test(value);
+}
+
+export function requiresControlledStructuredValue(value: string): boolean {
+  if (
+    RAW_FILENAME.test(value)
+    || INTERNAL_REFERENCE.test(value)
+    || OPAQUE_IDENTIFIER.test(value)
+    || UUID_IDENTIFIER.test(value)
+    || hasSensitiveNarrative(value)
+  ) return true;
+  const englishWords = value.match(/\b[A-Za-z]{3,}\b/gu) ?? [];
+  return englishWords.some((word) => !isSafeStructuredWord(word));
+}
+
+function isSafeStructuredWord(word: string): boolean {
+  if (SAFE_ACRONYMS.has(word.toUpperCase())) return true;
+  // Business identifiers such as INV-001 or BL-MATCH-001 are useful values,
+  // unlike a lower-case internal code or a prose phrase.
+  return /^[A-Z]{2,8}$/.test(word);
+}
+
+/**
+ * A persisted legacy result can contain a provider error or credential-shaped
+ * value. Keep its Korean fallback, but never render that raw body in a
+ * collapsed detail either.
+ */
+export function reviewerNarrativeOriginal(value: string): string {
+  if (PROVIDER_ERROR.test(value)) return "외부 AI 제공자 오류 원문은 화면에 표시하지 않습니다.";
+  return value
+    .replace(SECRET_ASSIGNMENT, "$1: [비공개]")
+    .replace(BEARER_CREDENTIAL, "Bearer [비공개]")
+    .replace(CONNECTION_STRING, "[연결 정보 비공개]")
+    .replace(KNOWN_API_KEY, "[API 키 비공개]")
+    .replace(JWT_CREDENTIAL, "[인증 정보 비공개]");
+}
+
+function hasSensitiveNarrative(value: string): boolean {
+  return matches(SECRET_ASSIGNMENT, value)
+    || matches(BEARER_CREDENTIAL, value)
+    || matches(CONNECTION_STRING, value)
+    || matches(KNOWN_API_KEY, value)
+    || matches(JWT_CREDENTIAL, value)
+    || matches(PROVIDER_ERROR, value);
+}
+
+function matches(expression: RegExp, value: string): boolean {
+  expression.lastIndex = 0;
+  const matched = expression.test(value);
+  expression.lastIndex = 0;
+  return matched;
+}
+
+/** Keep stored legacy suggestion text out of the normal chat surface. */
+export function assistantSuggestionLabel(value: string): string {
+  if (!requiresControlledNarrative(value)) return value;
+  return "현재 심사 결과에서 확인이 필요한 항목을 설명해 주세요.";
+}
+
+export function reportSummaryFallback(
+  assessment: "no_issue_detected" | "issues_detected" | "indeterminate",
+  findingCount: number,
+): string {
+  if (assessment === "no_issue_detected") return "주요 문서 비교 결과는 확인되었지만, 자동 완료하지 않고 담당자 검토가 필요합니다.";
+  if (assessment === "indeterminate") return "현재 입력과 연결된 근거만으로는 심사 결과를 확정하기 어렵습니다. 담당자 확인이 필요합니다.";
+  return findingCount > 0
+    ? `심사 결과에서 담당자 확인이 필요한 항목이 ${findingCount}건 있습니다.`
+    : "심사 결과에서 담당자 확인이 필요한 항목이 있습니다.";
+}
+
+export function reportDisclaimerFallback(): string {
+  return "이 결과는 등록된 텍스트 문서와 연결된 법령 근거를 기준으로 한 사전심사 보조 정보이며, 자동 승인으로 이어지지 않습니다.";
+}
+
+export function reportClaimFallback(
+  section: ReportSectionName,
+  assessment: "no_issue_detected" | "issues_detected" | "indeterminate",
+  findingCount: number,
+  comparisonCount: number,
+  evidenceCount: number,
+): string {
+  switch (section) {
+    case "conclusion":
+      return reportSummaryFallback(assessment, findingCount);
+    case "execution_process":
+      return "문서 정보 추출, 값 정리, 문서·품목 대응, 문서 간 비교와 법령 근거 조회를 정해진 순서로 수행했습니다.";
+    case "document_comparison":
+      return comparisonCount
+        ? "연결된 문서의 비교 결과를 확인했습니다. 세부 값과 상태는 아래 문서 비교에서 확인할 수 있습니다."
+        : "비교할 수 있는 문서 정보가 충분한지 담당자가 확인해야 합니다.";
+    case "issues_and_causes":
+      return "문서 정보 또는 비교 결과에서 추가 확인이 필요한 항목이 있습니다.";
+    case "legal_evidence":
+      return evidenceCount
+        ? "이번 심사 항목과 연결된 법령 근거를 확인했습니다. 세부 수입 요건은 법령 근거 탭에서 확인할 수 있습니다."
+        : "현재 입력 기준으로 연결된 법령 근거를 확인하지 못했습니다.";
+    case "impact":
+      return "담당자 확인이 끝날 때까지 이 심사 결과는 자동으로 완료되지 않습니다.";
+    case "next_actions":
+      return "확인 사항과 법령 근거를 검토한 뒤 필요한 문서 보완 여부를 결정해야 합니다.";
+    case "limitations":
+      return "이번 심사는 등록된 텍스트 문서와 현재 연결된 법령 근거 범위에서만 수행했습니다.";
+  }
+}
+
+export function comparisonNarrativeFallback(comparison: Pick<ReviewComparison, "rule_code" | "status">): string {
+  const label = comparisonRuleLabel(comparison.rule_code);
+  return ({
+    pass: `${label} 결과가 일치합니다.`,
+    mismatch: `${label} 결과가 일치하지 않아 담당자 확인이 필요합니다.`,
+    needs_review: `${label}에 필요한 값 또는 대응 관계를 추가로 확인해야 합니다.`,
+    skip: `${label}의 비교 대상이 충분하지 않아 이번 심사에서는 비교하지 않았습니다.`,
+  })[comparison.status];
+}
+
+export function findingNarrativeFallback(finding: Pick<ReviewFinding, "code" | "comparison_id">): string {
+  return `${findingTitle(finding)} 항목을 담당자가 문서와 연결된 근거를 기준으로 확인해야 합니다.`;
+}
+
+export function requiredActionNarrativeFallback(actionCode: string): string {
+  return `${requiredActionLabel(actionCode)}을 진행한 뒤 담당자 판단을 기록하십시오.`;
+}
+
+export function workflowNarrativeFallback(stage: string, status: "completed" | "skipped" | "needs_review" | "failed"): string {
+  const stageLabel = workflowStageLabel(stage);
+  return ({
+    completed: `${stageLabel}을 완료했습니다.`,
+    skipped: `${stageLabel} 대상이 없어 이번 심사에서는 진행하지 않았습니다.`,
+    needs_review: `${stageLabel} 결과를 담당자가 추가로 확인해야 합니다.`,
+    failed: `${stageLabel}을 완료하지 못했습니다. 입력 정보와 연결 상태를 확인한 뒤 다시 시도하십시오.`,
+  })[status];
+}
+
+export function plannerNarrativeFallback(action: string, status: "completed" | "skipped" | "needs_review" | "failed"): string {
+  const actionLabel = plannerActionLabel(action);
+  return ({
+    completed: `${actionLabel}을 수행했습니다.`,
+    skipped: `${actionLabel} 대상이 없어 진행하지 않았습니다.`,
+    needs_review: `${actionLabel} 결과를 추가로 확인해야 합니다.`,
+    failed: `${actionLabel}을 완료하지 못했습니다.`,
+  })[status];
+}
+
+export function assistantNarrativeFallback(scope: NonNullable<AssistantMessage["answer_scope"]>): string {
+  return ({
+    case_grounded: "현재 심사 결과에 연결된 문서와 비교 결과를 바탕으로 담당자 확인이 필요합니다.",
+    evidence_grounded: "현재 심사 항목과 연결된 법령 근거를 바탕으로 담당자 확인이 필요합니다.",
+    general_customs_guidance: "일반 통관 안내입니다. 현재 사건의 판단이나 결론에는 직접 적용되지 않습니다.",
+    clarification_needed: "질문의 대상 문서, 비교 항목 또는 법령 근거를 조금 더 구체적으로 알려주십시오.",
+    insufficient_evidence: "현재 심사 입력과 연결된 근거만으로는 이 내용을 확인할 수 없습니다.",
+    out_of_scope: "현재 AI 도우미가 안내할 수 있는 범위를 벗어난 질문입니다.",
+  })[scope];
 }

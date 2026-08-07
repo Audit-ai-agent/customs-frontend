@@ -250,6 +250,12 @@ textarea { min-height: 7rem; resize: vertical; line-height: 1.55; }
 .finding-card--critical, .finding-card--high { border-left-color: var(--danger); }
 .finding-card--medium { border-left-color: #c08700; }
 .finding-card--low { border-left-color: #4b8a7d; }
+.regulatory-requirement-card { background: #f8fcfe; border-left-color: #17769a; }
+.regulatory-requirement-card__documents { margin: .7rem 0 0; color: #45677f; font-size: .84rem; line-height: 1.5; }
+.regulatory-requirement-details { margin-top: .75rem; padding: .55rem .65rem; background: #fff; border: 1px solid #dce8ef; border-radius: .52rem; }
+.regulatory-requirement-details[open] > summary { margin-bottom: .65rem; }
+.regulatory-requirement-details__item { padding: .6rem 0; border-top: 1px solid #e6edf2; }
+.regulatory-requirement-details__item:first-of-type { border-top: 0; }
 .finding-heading { display: grid; grid-template-columns: auto 1fr; gap: .7rem; align-items: flex-start; }
 .finding-heading p { margin: .2rem 0 0; color: #425870; line-height: 1.55; }
 .severity { display: inline-flex; align-items: center; min-width: 3.1rem; justify-content: center; padding: .28rem .42rem; border-radius: 999px; font-size: .72rem; font-weight: 850; }
@@ -290,6 +296,11 @@ textarea { min-height: 7rem; resize: vertical; line-height: 1.55; }
 
 .evidence-surface { min-height: 30rem; }
 .evidence-list { display: grid; gap: .8rem; }
+.evidence-retrieval-status { margin: .1rem 0 .9rem; padding: .65rem .72rem; color: #3f5e75; background: #f3f8fb; border: 1px solid #d7e6ef; border-radius: .55rem; font-size: .84rem; line-height: 1.55; }
+.evidence-retrieval-status > p { margin: 0; }
+.evidence-retrieval-status > p + p { margin-top: .42rem; padding-top: .42rem; border-top: 1px solid currentColor; }
+.evidence-retrieval-status--input-hs-insufficient, .evidence-retrieval-status--retrieval-partial, .evidence-retrieval-status--input-hs-and-retrieval-partial { color: #755819; background: #fff9e8; border-color: #ead69a; }
+.evidence-retrieval-status--retrieval-failed, .evidence-retrieval-status--input-hs-and-retrieval-failed { color: #8b2d39; background: #fff1f2; border-color: #efc4c9; }
 .evidence-card { padding: .95rem; border: 1px solid #dde7ef; border-radius: .75rem; background: #fff; }
 .evidence-card header { display: flex; align-items: center; gap: .55rem; }
 .evidence-card h3 { margin: 0; }
@@ -297,6 +308,7 @@ textarea { min-height: 7rem; resize: vertical; line-height: 1.55; }
 .evidence-law { margin: .4rem 0; color: #35617e; font-size: .83rem; font-weight: 700; }
 .evidence-card > p:not(.evidence-law) { margin-bottom: .75rem; color: #475d74; line-height: 1.62; white-space: pre-wrap; }
 .evidence-footer { display: flex; align-items: center; justify-content: space-between; gap: .8rem; padding-top: .55rem; border-top: 1px solid #e9eef3; color: var(--muted); font-size: .78rem; }
+.evidence-card__group-note { margin: .6rem 0 0; color: #516d82; font-size: .78rem; line-height: 1.45; }
 .muted { color: var(--muted); font-size: .8rem; }
 
 .history-layout { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(16rem, .55fr); gap: 1rem; align-items: start; }
@@ -353,6 +365,7 @@ textarea { min-height: 7rem; resize: vertical; line-height: 1.55; }
 .next-step-list { display: grid; gap: .5rem; padding: 0; margin: 0; list-style: none; }
 .next-step-list li { display: grid; grid-template-columns: minmax(10rem, .5fr) 1fr; gap: .65rem; padding: .62rem .7rem; color: #455d75; background: var(--surface-muted); border: 1px solid #e5edf3; border-radius: .52rem; font-size: .86rem; line-height: 1.5; }
 .next-step-list strong { color: #245779; overflow-wrap: anywhere; }
+.next-step-list__regulatory { background: #f4fafc; border-color: #cfe1ea; }
 
 /* Assistant: only Browser -> Backend requests; citations return to existing views. */
 .assistant-layout { display: grid; grid-template-columns: minmax(14rem, .34fr) minmax(0, 1fr); gap: 1rem; align-items: stretch; min-height: 36rem; }

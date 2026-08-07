@@ -1,4 +1,5 @@
 import { expect, test, type Browser, type Page } from "@playwright/test";
+import { requiresControlledNarrative, requiresControlledStructuredValue } from "../src/presentation";
 import {
   FUNCTIONAL_UAT_BROWSER_CHECKS,
   loadFunctionalUatBrowserEnvironment,
@@ -68,10 +69,22 @@ test("실제 기능 UAT에서 사건 작업대의 사람 검토 여정을 완료
       await expect(reviewer.locator("[data-report-section]")).toHaveCount(8);
       checks.add("analysis_displayed");
 
+      await assertKoreanUserProse(reviewer, '[data-e2e="analysis-content"]');
+      checks.add("korean_user_prose");
+      await assertRawFilenameHidden(reviewer, '[data-e2e="analysis-content"]');
+      checks.add("raw_filename_hidden");
+      await expect(reviewer.locator('[data-e2e="regulatory-requirement-card"]')).toHaveCount(1);
+      await expect(reviewer.locator('[data-e2e="regulatory-required-action"]')).toHaveCount(1);
+      checks.add("regulatory_requirement_deduplicated");
+
       await reviewer.locator('[data-e2e="workspace-tab-evidence"]').click();
       await expect(reviewer.locator('[data-e2e="evidence-content"]')).toBeVisible();
       await expect(reviewer.locator('[data-e2e="evidence-card"]').first()).toBeVisible();
       checks.add("evidence_displayed");
+      const retrievalStatus = reviewer.locator('[data-e2e="data-retrieval-status"]');
+      await expect(retrievalStatus).toHaveAttribute("data-retrieval-semantics", "retrieval-complete");
+      await expect(retrievalStatus).not.toContainText("Data Evidence 일부가 준비되지 않아");
+      checks.add("data_retrieval_semantics");
 
       await reviewer.locator('[data-e2e="workspace-tab-analysis"]').click();
       const evidenceCitation = reviewer.getByRole("button", { name: "법령 근거 보기" }).first();
@@ -88,6 +101,8 @@ test("실제 기능 UAT에서 사건 작업대의 사람 검토 여정을 완료
       await assistantForm.locator('textarea[name="assistant_message"]').fill("현재 심사 건의 문서 비교 결과와 확인할 사항을 간단히 설명해 주세요.");
       await assistantForm.getByRole("button", { name: "질문 보내기" }).click();
       await expect(reviewer.locator('[data-e2e="assistant-message"][data-message-role="assistant"]')).toHaveCount(1);
+      await assertKoreanUserProse(reviewer, '[data-e2e="assistant-message"][data-message-role="assistant"]');
+      await assertRawFilenameHidden(reviewer, '[data-e2e="assistant-message"][data-message-role="assistant"]');
       checks.add("assistant_conversation");
 
       await reviewer.locator('[data-e2e="workspace-tab-analysis"]').click();
@@ -337,6 +352,29 @@ async function reviewRunId(locator: ReturnType<Page["locator"]>): Promise<string
   const runId = await locator.getAttribute("data-review-run-id");
   if (!runId || !RUN_ID.test(runId)) throw new Error("functional_uat_browser_review_run_id_invalid");
   return runId;
+}
+
+async function assertKoreanUserProse(page: Page, scope: string): Promise<void> {
+  const narratives = page.locator(`${scope} [data-e2e="reviewer-narrative"]`);
+  const values = await narratives.allTextContents();
+  if (!values.length || values.some((value) => !/[가-힣]/u.test(value))) {
+    throw new Error("functional_uat_browser_korean_user_prose_missing");
+  }
+  if (values.some((value) => requiresControlledNarrative(value))) {
+    throw new Error("functional_uat_browser_korean_user_prose_english_leak");
+  }
+}
+
+async function assertRawFilenameHidden(page: Page, scope: string): Promise<void> {
+  const narratives = page.locator(`${scope} [data-e2e="reviewer-narrative"]`);
+  const narrativeValues = await narratives.allTextContents();
+  const structuredValues = await page.locator(`${scope} [data-e2e="reviewer-structured-value"]`).allTextContents();
+  if (
+    narrativeValues.some((value) => requiresControlledNarrative(value))
+    || structuredValues.some((value) => requiresControlledStructuredValue(value))
+  ) {
+    throw new Error("functional_uat_browser_raw_filename_or_identifier_visible");
+  }
 }
 
 interface NetworkBoundary {

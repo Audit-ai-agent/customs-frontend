@@ -3,12 +3,16 @@ import { isDocumentSource } from "./api/v1/types";
 import { userFacingErrorMessage } from "./api/user-facing-errors";
 import {
   assessmentLabel,
+  assistantNarrativeFallback,
+  assistantSuggestionLabel,
   casePresentation,
   caseReferenceLabel,
   caseStatusLabel,
   citationLabel,
   comparisonRuleLabel,
+  comparisonNarrativeFallback,
   comparisonStatusLabel,
+  controlledStructuredValue,
   correctionFieldChoices,
   correctionHistoryLabel,
   correctionStatusLabel,
@@ -22,18 +26,28 @@ import {
   fieldLabel,
   fieldValueLabel,
   findingTitle,
+  findingNarrativeFallback,
   isFunctionalUatCase,
   jobStatusLabel,
   plannerActionLabel,
+  plannerNarrativeFallback,
+  reportClaimFallback,
+  reportDisclaimerFallback,
   reportSectionDescription,
   reportSectionLabel,
+  reportSummaryFallback,
+  redactedStructuredVerificationValue,
   requiredActionLabel,
+  requiredActionNarrativeFallback,
   reviewerDecisionLabel,
   reviewRunRelationLabel,
   reviewerNarrative,
+  reviewerNarrativeOriginal,
+  requiresControlledNarrative,
   roleSummary,
   technicalLine,
   workflowStageLabel,
+  workflowNarrativeFallback,
   workflowStatusLabel,
   assistantScopeLabel,
 } from "./presentation";
@@ -50,8 +64,10 @@ import type {
   CreateCorrectionProposalRequest,
   DocumentType,
   DocumentFact,
+  EvidenceItem,
   FindingDecisionRequest,
   JobRecord,
+  RequiredAction,
   ReviewComparison,
   ReportClaim,
   ReportSection,
@@ -1076,8 +1092,8 @@ export class CommercialReviewWorkspace {
       element("header", { className: "surface report-intro" },
         element("p", { className: "eyebrow", text: "AI 심사 결과" }),
         element("h2", { text: "근거 기반 심사 보고서" }),
-        reviewerNarrativeElement("p", "summary-copy", run.report.summary),
-        reviewerNarrativeElement("p", "disclaimer", run.report.disclaimer),
+        reviewerNarrativeElement("p", "summary-copy", run.report.summary, reportSummaryFallback(run.assessment, run.findings.length)),
+        reviewerNarrativeElement("p", "disclaimer", run.report.disclaimer, reportDisclaimerFallback()),
         element("p", { className: "report-source-note", text: "아래 항목은 이번 심사에서 확인한 내용과 근거를 연결해 보여줍니다. 근거 버튼을 누르면 문서 사실, 문서 비교 또는 법령 근거로 이동합니다." }),
       ),
       ...sections,
@@ -1086,7 +1102,7 @@ export class CommercialReviewWorkspace {
         element("div", { className: "review-metrics" },
           metric("확인 사항", String(run.findings.length)),
           metric("문서 비교", String(run.comparisons.length)),
-          metric("법령 근거", String(run.evidence.length)),
+          metric("법령 근거", String(groupEvidenceForDisplay(run.evidence).length)),
           metric("담당자 판단", String(run.reviewer_decisions.length)),
         ),
         this.createReportDocuments(run),
@@ -1102,7 +1118,7 @@ export class CommercialReviewWorkspace {
 
   private createAgentReportSection(run: ReviewRun, section: ReportSection, index: number): HTMLElement {
     const claims = element("ol", { className: "report-claim-list", attributes: { "data-report-claim-section": section.section } });
-    for (const claim of section.claims) claims.append(this.createReportClaim(claim));
+    for (const claim of section.claims) claims.append(this.createReportClaim(run, section, claim));
     return reportSection(
       String(index + 1).padStart(2, "0"),
       reportSectionLabel(section.section),
@@ -1112,7 +1128,7 @@ export class CommercialReviewWorkspace {
     );
   }
 
-  private createReportClaim(claim: ReportClaim): HTMLElement {
+  private createReportClaim(run: ReviewRun, section: ReportSection, claim: ReportClaim): HTMLElement {
     const citations = groundedCitations(claim);
     const citationControls = element("div", { className: "report-claim-citations", attributes: { "aria-label": "보고서 주장 근거" } },
       element("span", { text: "근거" }),
@@ -1124,7 +1140,12 @@ export class CommercialReviewWorkspace {
       })),
     );
     return element("li", { className: "report-claim", attributes: { "data-report-claim-id": claim.claim_id } },
-      reviewerNarrativeElement("p", undefined, claim.text),
+      reviewerNarrativeElement(
+        "p",
+        undefined,
+        claim.text,
+        reportClaimFallback(section.section, run.assessment, run.findings.length, claim.comparison_ids.length, claim.evidence_ids.length),
+      ),
       citationControls,
     );
   }
@@ -1154,9 +1175,10 @@ export class CommercialReviewWorkspace {
     const list = element("dl", { className: "report-fact-list" });
     for (const { analysis, fact } of facts) {
       const source = fact.source;
+      const value = factValuePresentation(fact);
       const item = element("div", { className: "report-fact" },
         element("dt", { text: `${documentAnalysisDisplayName(analysis)} · ${fieldValueLabel(fact)}` }),
-        element("dd", { text: `${fact.raw_value}${fact.normalized_value && fact.normalized_value !== fact.raw_value ? ` → ${fact.normalized_value}` : ""}${fact.unit ? ` ${fact.unit}` : ""}` }),
+        element("dd", {}, element("span", { text: value.text, attributes: { "data-e2e": "reviewer-structured-value" } }), value.details),
         isDocumentSource(source)
           ? element("button", { className: "text-link", text: "원문 인용 보기", attributes: { type: "button" }, on: { click: () => void this.focusSource(source) } })
           : element("small", { className: "human-provided-fact", text: `담당자 제공 값 · ${source.reason} · 원문 인용은 변경하지 않습니다.` }),
@@ -1177,7 +1199,8 @@ export class CommercialReviewWorkspace {
   private createReportEvidence(run: ReviewRun): HTMLElement {
     if (!run.evidence.length) return element("p", { className: "empty-copy", text: "이번 실행에서 연결된 법령 근거가 없습니다." });
     const list = element("div", { className: "report-evidence-list" });
-    for (const evidence of run.evidence) {
+    for (const group of groupEvidenceForDisplay(run.evidence)) {
+      const evidence = group.representative;
       list.append(element("button", {
         className: "report-evidence-row",
         attributes: { type: "button" },
@@ -1185,7 +1208,7 @@ export class CommercialReviewWorkspace {
       },
       element("strong", { text: evidenceDisplayTitle(evidence) }),
       element("span", { text: evidenceSummary(evidence) }),
-      element("small", { text: "법령 근거 탭에서 상세를 확인할 수 있습니다." })));
+      element("small", { text: group.items.length > 1 ? `같은 요건 ${group.items.length}건을 묶어 표시합니다.` : "법령 근거 탭에서 상세를 확인할 수 있습니다." })));
     }
     return list;
   }
@@ -1195,8 +1218,24 @@ export class CommercialReviewWorkspace {
     const actions = run.required_actions.length
       ? run.required_actions
       : [{ action_code: "human_review_required", message: "자동 완료하지 않습니다. 담당자가 문서와 법령 근거를 확인해야 합니다.", finding_ids: [] }];
-    for (const action of actions) {
-      list.append(element("li", {}, element("strong", { text: requiredActionLabel(action.action_code) }), reviewerNarrativeElement("span", undefined, action.message)));
+    for (const actionGroup of groupRequiredActions(run, actions)) {
+      if (actionGroup.kind === "regulatory") {
+        const linkedDocuments = documentLabelsForFindings(run, actionGroup.findings);
+        const requirement = regulatoryRequirementLabel(run, actionGroup.findings);
+        list.append(element("li", {
+          className: "next-step-list__regulatory",
+          attributes: { "data-e2e": "regulatory-required-action" },
+        },
+        element("strong", { text: "수입 요건 확인" }),
+        element("span", { text: `${requirement ? `필수 확인 항목: ${requirement}. ` : ""}${linkedDocuments.length ? `${linkedDocuments.join("·")}의 ` : "연결된 문서의 "}수입 요건과 제출 자료를 한 번에 확인하십시오.` })));
+        continue;
+      }
+      const action = actionGroup.actions[0];
+      if (!action) continue;
+      list.append(element("li", {},
+        element("strong", { text: requiredActionLabel(action.action_code) }),
+        reviewerNarrativeElement("span", undefined, action.message, requiredActionNarrativeFallback(action.action_code)),
+      ));
     }
     const assist = element("button", {
       className: "button button--secondary",
@@ -1294,8 +1333,8 @@ export class CommercialReviewWorkspace {
       suggestions.length ? element("div", { className: "assistant-suggestions", attributes: { "aria-label": "추천 질문" } },
         element("span", { text: "추천 질문" }),
         ...suggestions.map((question) => element("button", {
-          className: "text-link", text: question, attributes: { type: "button", disabled: this.state.assistantSending ? "" : undefined },
-          on: { click: () => void this.sendAssistantMessage(question) },
+          className: "text-link", text: assistantSuggestionLabel(question), attributes: { type: "button", disabled: this.state.assistantSending ? "" : undefined },
+          on: { click: () => void this.sendAssistantMessage(assistantSuggestionLabel(question)) },
         })),
       ) : null,
       form,
@@ -1318,8 +1357,8 @@ export class CommercialReviewWorkspace {
     const suggestions = item.role === "assistant" && item.suggested_questions.length
       ? element("div", { className: "assistant-message-suggestions" },
         ...item.suggested_questions.map((question) => element("button", {
-          className: "text-link", text: question, attributes: { type: "button", disabled: this.state.assistantSending ? "" : undefined },
-          on: { click: () => void this.sendAssistantMessage(question) },
+          className: "text-link", text: assistantSuggestionLabel(question), attributes: { type: "button", disabled: this.state.assistantSending ? "" : undefined },
+          on: { click: () => void this.sendAssistantMessage(assistantSuggestionLabel(question)) },
         })),
       ) : null;
     const correction = item.role === "assistant" && item.correction_draft
@@ -1334,7 +1373,14 @@ export class CommercialReviewWorkspace {
       : null;
     return element("li", { className: `assistant-message assistant-message--${item.role}`, attributes: { "data-e2e": "assistant-message", "data-message-role": item.role } },
       element("header", {}, element("strong", { text: label }), metadata, element("small", { text: formatDate(item.created_at) })),
-      reviewerNarrativeElement("p", "assistant-message__content", item.content),
+      reviewerNarrativeElement(
+        "p",
+        "assistant-message__content",
+        item.content,
+        item.role === "assistant"
+          ? assistantNarrativeFallback(item.answer_scope ?? "case_grounded")
+          : undefined,
+      ),
       citations,
       suggestions,
       correction,
@@ -1373,7 +1419,11 @@ export class CommercialReviewWorkspace {
   }
 
   private focusEvidence(evidenceId: string): void {
-    this.state.evidenceFocusId = evidenceId;
+    const run = this.state.selectedRun;
+    const representative = run
+      ? groupEvidenceForDisplay(run.evidence).find((group) => group.items.some((item) => item.evidence_id === evidenceId))?.representative
+      : undefined;
+    this.state.evidenceFocusId = representative?.evidence_id ?? evidenceId;
     this.setRoute(this.requireCase().case_id, "evidence");
   }
 
@@ -1384,7 +1434,7 @@ export class CommercialReviewWorkspace {
         element("span", { className: "workflow-dot", attributes: { "aria-hidden": "true" } }),
         element("div", {},
           element("strong", { text: workflowStageLabel(stage.stage) }),
-          reviewerNarrativeElement("p", undefined, stage.summary),
+          reviewerNarrativeElement("p", undefined, stage.summary, workflowNarrativeFallback(stage.stage, stage.status)),
           element("small", { text: `처리 상태: ${workflowStatusLabel(stage.status)} · 확인 ${stage.attempt_count}회` }),
         ),
       ));
@@ -1395,7 +1445,7 @@ export class CommercialReviewWorkspace {
         element("li", { className: `planner-action planner-action--${action.status}` },
           element("span", { text: `${action.cycle}차` }),
           element("strong", { text: plannerActionLabel(action.action) }),
-          reviewerNarrativeElement("span", undefined, action.summary),
+          reviewerNarrativeElement("span", undefined, action.summary, plannerNarrativeFallback(action.action, action.status)),
           action.correction_proposal_ids.length
             ? element("small", { text: `반영한 정정 제안 ${action.correction_proposal_ids.length}건` })
             : null,
@@ -1415,41 +1465,98 @@ export class CommercialReviewWorkspace {
     if (!findings.length) return emptyState("등록된 확인 사항이 없습니다.", "그래도 결과는 자동 완료되지 않으며 담당자 검토가 필요합니다.");
     const run = this.requireRun();
     const list = element("div", { className: "finding-list" });
-    for (const finding of findings) {
-      const decision = run.reviewer_decisions.find((item) => item.finding_id === finding.finding_id);
-      const comparison = finding.comparison_id ? run.comparisons.find((item) => item.comparison_id === finding.comparison_id) : undefined;
-      const source = sourceForFinding(run, finding);
-      const card = element("article", { className: `finding-card finding-card--${finding.severity}`, attributes: { "data-e2e": "finding-card", "data-finding-id": finding.finding_id } },
-        element("header", { className: "finding-heading" },
-          element("span", { className: `severity severity--${finding.severity}`, text: severityLabel(finding.severity) }),
-          element("div", {}, element("strong", { text: findingTitle(finding) }), reviewerNarrativeElement("p", undefined, finding.message)),
-        ),
-        comparison ? this.createComparisonDetail(comparison) : null,
-        source ? element("button", {
-          className: "text-link", text: "문서 원문 인용 보기", attributes: { type: "button" },
-          on: { click: () => void this.focusSource(source) },
-        }) : null,
-        finding.evidence_ids.length ? element("button", {
-          className: "text-link", text: `법령 근거 보기 · ${finding.evidence_ids.length}건`, attributes: { type: "button" },
-          on: { click: () => this.setRoute(this.requireCase().case_id, "evidence") },
-        }) : null,
-        this.createDecisionPanel(finding, decision),
-        this.createCorrectionProposalPanel(finding, source),
-      );
-      list.append(card);
+    for (const group of groupFindingsForDisplay(run, findings)) {
+      if (group.kind === "regulatory") {
+        list.append(this.createRegulatoryRequirementCard(group.findings));
+      } else {
+        const finding = group.findings[0];
+        if (finding) list.append(this.createFindingCard(finding));
+      }
     }
     return list;
   }
 
+  private createFindingCard(finding: ReviewFinding): HTMLElement {
+    const run = this.requireRun();
+    const decision = run.reviewer_decisions.find((item) => item.finding_id === finding.finding_id);
+    const comparison = finding.comparison_id ? run.comparisons.find((item) => item.comparison_id === finding.comparison_id) : undefined;
+    const source = sourceForFinding(run, finding);
+    return element("article", { className: `finding-card finding-card--${finding.severity}`, attributes: { "data-e2e": "finding-card", "data-finding-id": finding.finding_id } },
+      element("header", { className: "finding-heading" },
+        element("span", { className: `severity severity--${finding.severity}`, text: severityLabel(finding.severity) }),
+        element("div", {}, element("strong", { text: findingTitle(finding) }), reviewerNarrativeElement("p", undefined, finding.message, findingNarrativeFallback(finding))),
+      ),
+      comparison ? this.createComparisonDetail(comparison) : null,
+      source ? element("button", {
+        className: "text-link", text: "문서 원문 인용 보기", attributes: { type: "button" },
+        on: { click: () => void this.focusSource(source) },
+      }) : null,
+      finding.evidence_ids.length ? element("button", {
+        className: "text-link", text: `법령 근거 보기 · ${finding.evidence_ids.length}건`, attributes: { type: "button" },
+        on: { click: () => this.setRoute(this.requireCase().case_id, "evidence") },
+      }) : null,
+      this.createDecisionPanel(finding, decision),
+      this.createCorrectionProposalPanel(finding, source),
+    );
+  }
+
+  private createRegulatoryRequirementCard(findings: readonly ReviewFinding[]): HTMLElement {
+    const run = this.requireRun();
+    const linkedDocuments = documentLabelsForFindings(run, findings);
+    const requirement = regulatoryRequirementLabel(run, findings);
+    const evidenceCount = new Set(findings.flatMap((finding) => finding.evidence_ids)).size;
+    const severity = findings.reduce((current, finding) =>
+      severityWeight(finding.severity) > severityWeight(current) ? finding.severity : current,
+    findings[0]?.severity ?? "medium");
+    const detailItems = findings.map((finding) => {
+      const decision = run.reviewer_decisions.find((item) => item.finding_id === finding.finding_id);
+      const source = sourceForFinding(run, finding);
+      return element("section", { className: "regulatory-requirement-details__item" },
+        element("strong", { text: findingTitle(finding) }),
+        reviewerNarrativeElement("p", undefined, finding.message, findingNarrativeFallback(finding)),
+        this.createDecisionPanel(finding, decision),
+        this.createCorrectionProposalPanel(finding, source),
+      );
+    });
+    return element("article", {
+      className: `finding-card finding-card--${severity} regulatory-requirement-card`,
+      attributes: { "data-e2e": "regulatory-requirement-card" },
+    },
+    element("header", { className: "finding-heading" },
+      element("span", { className: `severity severity--${severity}`, text: severityLabel(severity) }),
+      element("div", {},
+        element("strong", { text: "수입 요건 확인 필요" }),
+        element("p", { text: `${requirement ? `필수 확인 항목은 ${requirement}입니다. ` : ""}같은 법령 근거에 연결된 확인 사항을 하나로 묶었습니다. 담당자가 제출 자료와 연결 문서를 함께 확인해야 합니다.` }),
+      ),
+    ),
+    linkedDocuments.length ? element("p", { className: "regulatory-requirement-card__documents", text: `연결 문서: ${linkedDocuments.join(" · ")}` }) : null,
+    evidenceCount ? element("button", {
+      className: "text-link", text: `법령 근거 보기 · ${evidenceCount}건`, attributes: { type: "button" },
+      on: { click: () => this.setRoute(this.requireCase().case_id, "evidence") },
+    }) : null,
+    element("details", { className: "regulatory-requirement-details" },
+      element("summary", { text: `연결된 개별 확인 사항 ${findings.length}건` }),
+      ...detailItems,
+    ),
+    );
+  }
+
   private createComparisonDetail(comparison: ReviewComparison): HTMLElement {
+    const expected = comparison.expected_value ?? comparison.left.display_value;
+    const observed = comparison.observed_value ?? comparison.right.display_value;
     return element("div", { className: `comparison-detail comparison-detail--${comparison.status}` },
       element("span", { text: `${comparisonRuleLabel(comparison.rule_code)} · ${comparisonStatusLabel(comparison.status)}` }),
-      reviewerNarrativeElement("p", undefined, comparison.message),
+      reviewerNarrativeElement("p", undefined, comparison.message, comparisonNarrativeFallback(comparison)),
       element("dl", { className: "comparison-values" },
-        definition("기준", displayValue(comparison.expected_value ?? comparison.left.display_value)),
-        definition("관측", displayValue(comparison.observed_value ?? comparison.right.display_value)),
-        comparison.unit ? definition("단위", comparison.unit) : null,
+        structuredDefinition("기준", controlledStructuredValue(expected)),
+        structuredDefinition("관측", controlledStructuredValue(observed)),
+        comparison.unit ? structuredDefinition("단위", controlledStructuredValue(comparison.unit, "단위 확인 필요")) : null,
       ),
+      protectedStructuredDetails([
+        ["기준 원본 값", expected],
+        ["관측 원본 값", observed],
+        ["단위 원본 값", comparison.unit],
+      ]),
     );
   }
 
@@ -1531,14 +1638,22 @@ export class CommercialReviewWorkspace {
     ));
     for (const comparison of comparisons) {
       const hasLinkedSource = sourceForOperand(this.requireRun(), comparison.left) !== null || sourceForOperand(this.requireRun(), comparison.right) !== null;
+      const left = controlledStructuredValue(comparison.left.display_value);
+      const right = controlledStructuredValue(comparison.right.display_value);
       table.append(element("div", {
         className: `comparison-row comparison-row--${comparison.status}${this.state.comparisonFocusId === comparison.comparison_id ? " is-focused" : ""}`,
         attributes: { role: "row", "data-comparison-id": comparison.comparison_id },
       },
       element("span", { text: comparisonRuleLabel(comparison.rule_code) }),
       element("span", { text: comparisonStatusLabel(comparison.status) }),
-      element("span", { text: `${displayValue(comparison.left.display_value)} ↔ ${displayValue(comparison.right.display_value)}` }),
-      reviewerNarrativeElement("span", undefined, comparison.message),
+      element("span", {},
+        element("span", { text: `${left} ↔ ${right}`, attributes: { "data-e2e": "reviewer-structured-value" } }),
+        protectedStructuredDetails([
+          ["왼쪽 비교 원본 값", comparison.left.display_value],
+          ["오른쪽 비교 원본 값", comparison.right.display_value],
+        ]),
+      ),
+      reviewerNarrativeElement("span", undefined, comparison.message, comparisonNarrativeFallback(comparison)),
       hasLinkedSource
         ? element("button", { className: "text-link comparison-row__source", text: "연결 문서 보기", attributes: { type: "button" }, on: { click: () => void this.focusComparison(comparison) } })
         : element("span", { className: "muted", text: "연결 문서 없음" })));
@@ -1569,10 +1684,20 @@ export class CommercialReviewWorkspace {
   private createEvidenceTab(): HTMLElement {
     const run = this.state.selectedRun;
     if (!run) return emptyState("아직 법령 근거가 없습니다.", "심사를 완료하면 AI가 법령 근거를 연결합니다.");
-    if (!run.evidence.length) return emptyState("연결된 법령 근거가 없습니다.", "현재 문서와 품목 기준으로 확인할 수 있는 근거가 없었습니다.");
+    const retrievalStatus = this.createEvidenceRetrievalStatus(run);
+    if (!run.evidence.length) {
+      return element("section", { className: "surface evidence-surface", attributes: { "data-e2e": "evidence-content" } },
+        sectionHeading("법령 근거", "이번 심사 항목과 연결된 법령·수입 요건을 확인합니다."),
+        retrievalStatus,
+        element("p", { className: "empty-copy", text: "현재 문서와 품목 기준으로 연결된 법령 근거가 없습니다." }),
+      );
+    }
     const evidence = element("div", { className: "evidence-list" });
-    for (const item of run.evidence) {
-      const linked = run.findings.filter((finding) => finding.evidence_ids.includes(item.evidence_id));
+    for (const group of groupEvidenceForDisplay(run.evidence)) {
+      const item = group.representative;
+      const itemIds = new Set(group.items.map((evidenceItem) => evidenceItem.evidence_id));
+      const linked = run.findings.filter((finding) => finding.evidence_ids.some((id) => itemIds.has(id)));
+      const linkedDocuments = documentLabelsForFindings(run, linked);
       evidence.append(element("article", {
         className: `evidence-card${this.state.evidenceFocusId === item.evidence_id ? " is-focused" : ""}`,
         attributes: { "data-e2e": "evidence-card", "data-evidence-id": item.evidence_id },
@@ -1580,9 +1705,10 @@ export class CommercialReviewWorkspace {
         element("header", {}, element("span", { className: "evidence-type", text: evidenceSourceLabel(item.source_type) }), element("h3", { text: evidenceDisplayTitle(item) })),
         element("p", { className: "evidence-law", text: evidenceSummary(item) }),
         element("div", { className: "evidence-footer" },
-          element("span", { text: `연결된 확인 사항 ${linked.length}건` }),
+          element("span", { text: linkedDocuments.length ? `연결 문서 ${linkedDocuments.join(" · ")}` : `연결된 확인 사항 ${linked.length}건` }),
           safeExternalLink(item.source_uri),
         ),
+        group.items.length > 1 ? element("p", { className: "evidence-card__group-note", text: `같은 수입 요건 ${group.items.length}건을 하나로 묶어 표시합니다.` }) : null,
         verificationDetails([
           technicalLine("법령 근거 식별번호", item.evidence_id),
           technicalLine("원본 제목", item.title),
@@ -1599,7 +1725,44 @@ export class CommercialReviewWorkspace {
         (item) => item.dataset.evidenceId === focusedId,
       )));
     }
-    return element("section", { className: "surface evidence-surface", attributes: { "data-e2e": "evidence-content" } }, sectionHeading("법령 근거", "이번 심사 항목과 연결된 법령·수입 요건을 확인합니다."), evidence);
+    return element("section", { className: "surface evidence-surface", attributes: { "data-e2e": "evidence-content" } },
+      sectionHeading("법령 근거", "이번 심사 항목과 연결된 법령·수입 요건을 확인합니다."),
+      retrievalStatus,
+      evidence,
+    );
+  }
+
+  private createEvidenceRetrievalStatus(run: ReviewRun): HTMLElement {
+    const retrieval = run.workflow.stages.find((stage) => stage.stage === "retrieve_evidence");
+    const hasHsInputGap = hasDocumentHsInputGap(run);
+    const dataFailure = retrieval?.status === "failed";
+    const dataPartial = retrieval?.status === "needs_review"
+      || (retrieval === undefined && run.execution_status === "partial" && !hasHsInputGap);
+    const semantics = dataFailure && hasHsInputGap
+      ? "input-hs-and-retrieval-failed"
+      : dataFailure
+        ? "retrieval-failed"
+        : dataPartial && hasHsInputGap
+          ? "input-hs-and-retrieval-partial"
+          : dataPartial
+            ? "retrieval-partial"
+            : hasHsInputGap
+              ? "input-hs-insufficient"
+              : "retrieval-complete";
+    const messages: string[] = [];
+    if (hasHsInputGap) {
+      messages.push("일부 문서에서 HS 코드를 확인할 수 없어 해당 문서의 수입 요건을 확인하지 못했습니다. 문서를 보완한 뒤 다시 심사하십시오.");
+    }
+    if (dataFailure) {
+      messages.push("법령 근거 조회를 완료하지 못했습니다. 연결 상태를 확인한 뒤 다시 시도하거나 담당자가 직접 확인하십시오.");
+    } else if (dataPartial) {
+      messages.push("일부 품목의 법령 근거를 확인하지 못했습니다. 담당자가 입력 정보와 법령 근거를 함께 확인해야 합니다.");
+    }
+    if (!messages.length) messages.push("법령 근거 조회를 완료했습니다. 연결된 수입 요건과 제출 자료를 함께 확인하십시오.");
+    return element("div", {
+      className: `evidence-retrieval-status evidence-retrieval-status--${semantics}`,
+      attributes: { "data-e2e": "data-retrieval-status", "data-retrieval-semantics": semantics },
+    }, ...messages.map((messageText) => element("p", { text: messageText })));
   }
 
   private createHistoryTab(): HTMLElement {
@@ -1870,6 +2033,46 @@ function definition(label: string, value: string): HTMLElement {
   return element("div", {}, element("dt", { text: label }), element("dd", { text: value }));
 }
 
+function structuredDefinition(label: string, value: string): HTMLElement {
+  return element("div", {},
+    element("dt", { text: label }),
+    element("dd", {}, element("span", { text: value, attributes: { "data-e2e": "reviewer-structured-value" } })),
+  );
+}
+
+function factValuePresentation(fact: DocumentFact): { text: string; details: HTMLElement | null } {
+  const raw = controlledStructuredValue(fact.raw_value);
+  const normalized = fact.normalized_value && fact.normalized_value !== fact.raw_value
+    ? controlledStructuredValue(fact.normalized_value)
+    : null;
+  const unit = fact.unit ? controlledStructuredValue(fact.unit, "단위 확인 필요") : null;
+  return {
+    text: `${raw}${normalized ? ` → ${normalized}` : ""}${unit ? ` ${unit}` : ""}`,
+    details: protectedStructuredDetails([
+      ["추출 원본 값", fact.raw_value],
+      ["정규화 원본 값", fact.normalized_value],
+      ["단위 원본 값", fact.unit],
+    ]),
+  };
+}
+
+/**
+ * Basic reviewer surfaces never render an unsafe structured value.  If one is
+ * present, the collapsed detail records only that a value was protected; it
+ * does not reveal a filename, internal ID, credential, or arbitrary prose.
+ */
+function protectedStructuredDetails(
+  entries: Array<readonly [string, string | null | undefined]>,
+): HTMLElement | null {
+  const protectedEntries = entries.flatMap(([label, value]) => {
+    const displayed = displayValue(value);
+    return controlledStructuredValue(value) === displayed
+      ? []
+      : [[label, redactedStructuredVerificationValue(value)] as const];
+  });
+  return verificationDetails(protectedEntries, undefined, "검증 상세");
+}
+
 function statusChip(label: string, technicalStatus: string): HTMLElement {
   const tone = technicalStatus === "closed" || technicalStatus === "succeeded" || technicalStatus === "completed"
     ? "success"
@@ -1885,15 +2088,21 @@ function reviewerNarrativeElement(
   tag: "p" | "span",
   className: string | undefined,
   value: string,
+  fallback: string | undefined = undefined,
 ): HTMLElement {
-  const displayed = reviewerNarrative(value);
-  const primary = element(tag, { ...(className === undefined ? {} : { className }), text: displayed });
-  if (displayed === value) return primary;
+  const displayed = reviewerNarrative(value, fallback);
+  const original = reviewerNarrativeOriginal(value);
+  const primary = element(tag, {
+    ...(className === undefined ? {} : { className }),
+    text: displayed,
+    attributes: { "data-e2e": "reviewer-narrative" },
+  });
+  if (displayed === value && original === value) return primary;
   return element("div", { className: "legacy-narrative" },
     primary,
     element("details", { className: "legacy-execution-original" },
       element("summary", { text: "이전 실행 원문" }),
-      element("pre", { className: "legacy-execution-original__text", text: value }),
+      element("pre", { className: "legacy-execution-original__text", text: original }),
     ),
   );
 }
@@ -1974,6 +2183,133 @@ function renderDocumentText(content: string, source: SourceReference | null): HT
   pre.append(document.createTextNode(content.slice(index + source.quote.length)));
   queueMicrotask(() => scrollIntoViewIfAvailable(pre.querySelector("mark")));
   return pre;
+}
+
+type FindingDisplayGroup = {
+  readonly kind: "regular" | "regulatory";
+  readonly findings: readonly ReviewFinding[];
+};
+
+type RequiredActionDisplayGroup = {
+  readonly kind: "regular" | "regulatory";
+  readonly actions: readonly RequiredAction[];
+  readonly findings: readonly ReviewFinding[];
+};
+
+type EvidenceDisplayGroup = {
+  readonly representative: EvidenceItem;
+  readonly items: readonly EvidenceItem[];
+};
+
+function groupFindingsForDisplay(run: ReviewRun, findings: readonly ReviewFinding[]): FindingDisplayGroup[] {
+  const groups = new Map<string, ReviewFinding[]>();
+  for (const finding of findings) {
+    const key = finding.kind === "regulatory_finding"
+      ? `regulatory:${regulatoryRequirementKey(run, finding)}`
+      : `regular:${finding.finding_id}`;
+    const existing = groups.get(key) ?? [];
+    existing.push(finding);
+    groups.set(key, existing);
+  }
+  return [...groups.values()].map((group) => ({
+    kind: group.every((finding) => finding.kind === "regulatory_finding") ? "regulatory" : "regular",
+    findings: group,
+  }));
+}
+
+function groupRequiredActions(
+  run: ReviewRun,
+  actions: readonly RequiredAction[],
+): RequiredActionDisplayGroup[] {
+  const findingsById = new Map(run.findings.map((finding) => [finding.finding_id, finding]));
+  const groups = new Map<string, RequiredActionDisplayGroup>();
+  for (const action of actions) {
+    const linked = action.finding_ids
+      .map((findingId) => findingsById.get(findingId))
+      .filter((finding): finding is ReviewFinding => finding !== undefined);
+    const regulatory = linked.length > 0 && linked.every((finding) => finding.kind === "regulatory_finding");
+    const key = regulatory
+      ? `regulatory:${[...new Set(linked.map((finding) => regulatoryRequirementKey(run, finding)))].sort().join("|")}`
+      : `regular:${action.action_code}:${action.finding_ids.join("|")}`;
+    const existing = groups.get(key);
+    if (existing) {
+      groups.set(key, { ...existing, actions: [...existing.actions, action], findings: [...existing.findings, ...linked] });
+      continue;
+    }
+    groups.set(key, { kind: regulatory ? "regulatory" : "regular", actions: [action], findings: linked });
+  }
+  return [...groups.values()].map((group) => ({
+    ...group,
+    findings: uniqueFindings(group.findings),
+  }));
+}
+
+function groupEvidenceForDisplay(items: readonly EvidenceItem[]): EvidenceDisplayGroup[] {
+  const groups = new Map<string, EvidenceItem[]>();
+  for (const item of items) {
+    const key = [
+      item.source_type.trim().toLocaleLowerCase(),
+      item.law_id?.trim().toLocaleLowerCase() ?? "",
+      item.title.trim().toLocaleLowerCase(),
+      item.text.trim().toLocaleLowerCase(),
+    ].join("\u001f");
+    const existing = groups.get(key) ?? [];
+    existing.push(item);
+    groups.set(key, existing);
+  }
+  return [...groups.values()].map((group) => ({ representative: group[0] as EvidenceItem, items: group }));
+}
+
+function regulatoryRequirementKey(run: ReviewRun, finding: ReviewFinding): string {
+  const evidenceById = new Map(run.evidence.map((item) => [item.evidence_id, item]));
+  const evidenceKeys = finding.evidence_ids
+    .map((evidenceId) => evidenceById.get(evidenceId))
+    .filter((item): item is EvidenceItem => item !== undefined)
+    .map((item) => [
+      item.source_type.trim().toLocaleLowerCase(),
+      item.law_id?.trim().toLocaleLowerCase() ?? "",
+      item.title.trim().toLocaleLowerCase(),
+      item.text.trim().toLocaleLowerCase(),
+    ].join("\u001f"))
+    .sort();
+  if (evidenceKeys.length) return evidenceKeys.join("|");
+  return finding.code.trim().toLocaleLowerCase().replace(/(?:[-_][a-z0-9]{6,})+$/iu, "");
+}
+
+function documentLabelsForFindings(run: ReviewRun, findings: readonly ReviewFinding[]): string[] {
+  const analyses = new Map(run.document_analyses.map((analysis) => [analysis.document_id, analysis]));
+  const labels = findings.flatMap((finding) => finding.document_ids)
+    .map((documentId) => analyses.get(documentId))
+    .filter((analysis): analysis is NonNullable<typeof analysis> => analysis !== undefined)
+    .map((analysis) => documentAnalysisDisplayName(analysis));
+  return [...new Set(labels)];
+}
+
+function regulatoryRequirementLabel(run: ReviewRun, findings: readonly ReviewFinding[]): string | null {
+  const evidenceById = new Map(run.evidence.map((item) => [item.evidence_id, item]));
+  for (const evidenceId of findings.flatMap((finding) => finding.evidence_ids)) {
+    const title = evidenceById.get(evidenceId)?.title?.trim();
+    if (title && /[가-힣]/u.test(title) && !requiresControlledNarrative(title)) return title;
+  }
+  return null;
+}
+
+function hasDocumentHsInputGap(run: ReviewRun): boolean {
+  const analyses = new Map(run.document_analyses.map((analysis) => [analysis.document_id, analysis]));
+  const documentIds = run.findings
+    .filter((finding) => finding.kind === "validation_issue" && /hs[_-]?code/iu.test(finding.code))
+    .flatMap((finding) => finding.document_ids);
+  return documentIds.some((documentId) => {
+    const analysis = analyses.get(documentId);
+    if (!analysis) return false;
+    const facts = [...analysis.facts, ...analysis.line_items.flatMap((item) => item.facts)];
+    return !facts.some((fact) => /^hs_codes?$/iu.test(fact.name) && Boolean(fact.normalized_value?.trim() || fact.raw_value.trim()));
+  });
+}
+
+function uniqueFindings(findings: readonly ReviewFinding[]): ReviewFinding[] {
+  const byId = new Map(findings.map((finding) => [finding.finding_id, finding]));
+  return [...byId.values()];
 }
 
 function sourceForFinding(run: ReviewRun, finding: ReviewFinding): SourceReference | null {
