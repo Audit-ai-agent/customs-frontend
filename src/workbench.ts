@@ -1,8 +1,11 @@
 import { ApiClient } from "./api/v1/client";
-import { isDocumentSource } from "./api/v1/types";
+import { isCaseCitation, isDocumentSource } from "./api/v1/types";
+import { officialGuidanceUrl } from "./official-guidance-url";
 import { userFacingErrorMessage } from "./api/user-facing-errors";
 import {
   assessmentLabel,
+  assistantAnswerSectionDescription,
+  assistantAnswerSectionLabel,
   assistantNarrativeFallback,
   assistantSuggestionLabel,
   casePresentation,
@@ -20,6 +23,7 @@ import {
   documentAnalysisDisplayName,
   documentDisplayName,
   documentTypeLabel,
+  executionStatusLabel,
   evidenceDisplayTitle,
   evidenceSourceLabel,
   evidenceSummary,
@@ -29,6 +33,11 @@ import {
   findingNarrativeFallback,
   isFunctionalUatCase,
   jobStatusLabel,
+  guidanceCitationTitle,
+  knowledgeCoverageLabel,
+  knowledgeAnswerBoundaryNotice,
+  knowledgeSourceKindLabel,
+  knowledgeTradeTypeLabel,
   plannerActionLabel,
   plannerNarrativeFallback,
   reportClaimFallback,
@@ -40,12 +49,14 @@ import {
   requiredActionLabel,
   requiredActionNarrativeFallback,
   reviewerDecisionLabel,
+  reviewDispositionLabel,
   reviewRunRelationLabel,
   reviewerNarrative,
   reviewerNarrativeOriginal,
   requiresControlledNarrative,
   roleSummary,
   technicalLine,
+  tradeTypeLabel,
   workflowStageLabel,
   workflowNarrativeFallback,
   workflowStatusLabel,
@@ -54,10 +65,12 @@ import {
 import type { CasePresentation } from "./presentation";
 import type {
   AssistantCitation,
+  AssistantAnswerSection,
   AssistantConversation,
   AssistantCorrectionDraft,
   AssistantMessage,
   CaseDetail,
+  CaseCitation,
   CaseDocument,
   CaseSummary,
   CorrectionProposal,
@@ -66,7 +79,11 @@ import type {
   DocumentFact,
   EvidenceItem,
   FindingDecisionRequest,
+  GuidanceEvidenceCitation,
   JobRecord,
+  KnowledgeConversation,
+  KnowledgeMessage,
+  KnowledgeTradeType,
   RequiredAction,
   ReviewComparison,
   ReportClaim,
@@ -77,6 +94,7 @@ import type {
   ReviewRunSummary,
   SourceReference,
   Session,
+  TradeType,
 } from "./api/v1/types";
 import {
   supportsDevelopmentRoleSwitch,
@@ -88,10 +106,15 @@ export type FrontendRuntimeMode = "local-development" | "functional-uat";
 type WorkspaceTab = "documents" | "analysis" | "assistant" | "evidence" | "history";
 type CaseFilter = "all" | "open" | "in_review" | "closed" | "functional_uat";
 type JobPurpose = "review" | "revision";
+type WorkspaceRoute =
+  | { kind: "case"; caseId: string | null; tab: WorkspaceTab }
+  | { kind: "knowledge" };
 
 interface WorkbenchState {
   session: Session | null;
   cases: CaseSummary[];
+  /** Case summaries are never loaded just for the standalone knowledge route. */
+  casesLoaded: boolean;
   selectedCase: CaseDetail | null;
   documents: CaseDocument[];
   runs: ReviewRunSummary[];
@@ -101,6 +124,7 @@ interface WorkbenchState {
   factFocusId: string | null;
   activeJob: JobRecord | null;
   activeJobPurpose: JobPurpose | null;
+  reviewTradeType: TradeType;
   activeTab: WorkspaceTab;
   comparisonFocusId: string | null;
   evidenceFocusId: string | null;
@@ -114,6 +138,18 @@ interface WorkbenchState {
   assistantRetryContent: string | null;
   assistantRetryIdempotencyKey: string | null;
   assistantError: string | null;
+  knowledgeConversations: KnowledgeConversation[];
+  selectedKnowledgeConversation: KnowledgeConversation | null;
+  knowledgeMessages: KnowledgeMessage[];
+  knowledgeLoaded: boolean;
+  knowledgeLoading: boolean;
+  knowledgeSending: boolean;
+  knowledgeDraft: string;
+  knowledgeRetryContent: string | null;
+  knowledgeRetryIdempotencyKey: string | null;
+  knowledgeError: string | null;
+  knowledgeTradeType: KnowledgeTradeType;
+  knowledgeAsOf: string;
   correctionProposals: CorrectionProposal[];
   correctionLoadedRunId: string | null;
   correctionLoading: boolean;
@@ -134,7 +170,9 @@ interface CorrectionFactTarget {
   fieldName: string;
 }
 
-const DOCUMENT_TYPES: readonly DocumentType[] = ["CI", "PL", "BL", "CO", "UNKNOWN"];
+const DOCUMENT_TYPES: readonly DocumentType[] = [
+  "CI", "PL", "BL", "CO", "AWB", "EXPORT_DECLARATION", "SUPPORTING_EVIDENCE", "UNKNOWN",
+];
 const ACTIVE_JOB_STATES = new Set(["queued", "running"]);
 const REVIEW_FAILURE_MESSAGE = "심사를 완료하지 못했습니다. 입력 문서와 서비스 상태를 확인한 뒤 다시 시도해 주십시오. 기존 심사 결과는 변경되지 않았습니다.";
 const REVISION_FAILURE_MESSAGE = "수정 반영 재심사를 완료하지 못했습니다. 승인된 정정 제안을 다시 선택한 뒤 재시도해 주십시오. 기존 심사 결과는 변경되지 않았습니다.";
@@ -156,6 +194,7 @@ export class CommercialReviewWorkspace {
   private state: WorkbenchState = {
     session: null,
     cases: [],
+    casesLoaded: false,
     selectedCase: null,
     documents: [],
     runs: [],
@@ -165,6 +204,7 @@ export class CommercialReviewWorkspace {
     factFocusId: null,
     activeJob: null,
     activeJobPurpose: null,
+    reviewTradeType: "import",
     activeTab: "documents",
     comparisonFocusId: null,
     evidenceFocusId: null,
@@ -178,6 +218,18 @@ export class CommercialReviewWorkspace {
     assistantRetryContent: null,
     assistantRetryIdempotencyKey: null,
     assistantError: null,
+    knowledgeConversations: [],
+    selectedKnowledgeConversation: null,
+    knowledgeMessages: [],
+    knowledgeLoaded: false,
+    knowledgeLoading: false,
+    knowledgeSending: false,
+    knowledgeDraft: "",
+    knowledgeRetryContent: null,
+    knowledgeRetryIdempotencyKey: null,
+    knowledgeError: null,
+    knowledgeTradeType: "both",
+    knowledgeAsOf: "",
     correctionProposals: [],
     correctionLoadedRunId: null,
     correctionLoading: false,
@@ -206,7 +258,10 @@ export class CommercialReviewWorkspace {
     window.addEventListener("hashchange", this.hashChange);
     await this.withBusy(async () => {
       this.state.session = await this.api.getSession();
-      await this.refreshCases();
+      // A global knowledge conversation must not fetch Case summaries, review
+      // data, or document data merely because the same workbench owns both
+      // routes.  Case data is loaded only after a Case route is selected.
+      if (parseRoute(window.location.hash).kind !== "knowledge") await this.refreshCases();
       await this.followRoute(false);
     });
   }
@@ -229,9 +284,18 @@ export class CommercialReviewWorkspace {
     await this.withBusy(async () => {
       await session.switchActor(actor);
       this.state.session = await this.api.getSession();
-      const currentCaseId = this.state.selectedCase?.case_id;
-      await this.refreshCases();
-      if (currentCaseId) await this.loadCase(currentCaseId);
+      if (parseRoute(window.location.hash).kind !== "knowledge") {
+        const currentCaseId = this.state.selectedCase?.case_id;
+        await this.refreshCases();
+        if (currentCaseId) await this.loadCase(currentCaseId);
+      } else {
+        // Do not retain a previous actor's Case list while the independent
+        // knowledge route is active. It will be fetched afresh only if that
+        // actor returns to the Case workbench.
+        this.state.cases = [];
+        this.state.casesLoaded = false;
+        this.clearCaseContext();
+      }
       this.state.notice = actor === "approver"
         ? "로컬 승인자 세션으로 전환했습니다. 제안 승인·반려와 수정 반영 재심사만 수행할 수 있습니다."
         : "로컬 심사자 세션으로 전환했습니다. 문서·심사·판단·정정 제안을 기록할 수 있습니다.";
@@ -240,19 +304,24 @@ export class CommercialReviewWorkspace {
 
   private async refreshCases(): Promise<void> {
     this.state.cases = (await this.api.listCases()).items;
+    this.state.casesLoaded = true;
   }
 
   private async followRoute(render = true): Promise<void> {
     const route = parseRoute(window.location.hash);
+    if (route.kind === "knowledge") {
+      // Keep the standalone route lean and prevent previously loaded Case
+      // summaries from being retained alongside a global knowledge session.
+      this.state.cases = [];
+      this.state.casesLoaded = false;
+      this.clearCaseContext();
+      await this.ensureKnowledgeLoaded();
+      if (render) this.render();
+      return;
+    }
+    if (!this.state.casesLoaded) await this.refreshCases();
     if (route.caseId === null) {
-      this.state.selectedCase = null;
-      this.state.documents = [];
-      this.state.runs = [];
-      this.state.selectedRun = null;
-      this.state.selectedDocument = null;
-      this.state.sourceFocus = null;
-      this.state.factFocusId = null;
-      this.resetRunAttachments();
+      this.clearCaseContext();
       if (render) this.render();
       return;
     }
@@ -267,6 +336,14 @@ export class CommercialReviewWorkspace {
     const target = caseId === null ? "/cases" : `/cases/${encodeURIComponent(caseId)}/${tab}`;
     if (window.location.hash !== `#${target}`) {
       window.location.hash = target;
+      return;
+    }
+    void this.followRoute();
+  }
+
+  private setKnowledgeRoute(): void {
+    if (window.location.hash !== "#/knowledge") {
+      window.location.hash = "/knowledge";
       return;
     }
     void this.followRoute();
@@ -297,6 +374,19 @@ export class CommercialReviewWorkspace {
     this.state.activeJobPurpose = null;
     this.resetRunAttachments();
     if (runSummaries[0]) await this.openRun(runSummaries[0].review_run_id);
+  }
+
+  private clearCaseContext(): void {
+    this.state.selectedCase = null;
+    this.state.documents = [];
+    this.state.runs = [];
+    this.state.selectedRun = null;
+    this.state.selectedDocument = null;
+    this.state.sourceFocus = null;
+    this.state.factFocusId = null;
+    this.state.activeJob = null;
+    this.state.activeJobPurpose = null;
+    this.resetRunAttachments();
   }
 
   private async openRun(runId: string): Promise<void> {
@@ -446,6 +536,174 @@ export class CommercialReviewWorkspace {
     event.preventDefault();
     const input = event.currentTarget;
     if (input instanceof HTMLTextAreaElement) void this.sendAssistantMessage(input.value);
+  }
+
+  /**
+   * The knowledge assistant is intentionally Case-independent.  It only uses
+   * the Backend's dedicated knowledge boundary, never a selected Case or
+   * Review Run, so a general question cannot accidentally inherit case facts.
+   */
+  private async ensureKnowledgeLoaded(): Promise<void> {
+    if (this.state.knowledgeLoaded || this.state.knowledgeLoading) return;
+    this.state.knowledgeLoading = true;
+    this.state.knowledgeError = null;
+    this.render();
+    try {
+      const conversations = await this.api.listKnowledgeConversations();
+      this.state.knowledgeConversations = conversations;
+      this.state.selectedKnowledgeConversation = conversations[0] ?? null;
+      this.state.knowledgeMessages = this.state.selectedKnowledgeConversation
+        ? await this.api.listKnowledgeMessages(this.state.selectedKnowledgeConversation.conversation_id)
+        : [];
+      this.state.knowledgeLoaded = true;
+    } catch (error) {
+      this.state.knowledgeError = userMessage(error, "통관 지식 대화를 불러오지 못했습니다.");
+    } finally {
+      this.state.knowledgeLoading = false;
+      this.render();
+    }
+  }
+
+  private async selectKnowledgeConversation(conversation: KnowledgeConversation): Promise<void> {
+    if (this.state.knowledgeLoading || this.state.knowledgeSending) return;
+    this.state.knowledgeLoading = true;
+    this.state.knowledgeError = null;
+    this.render();
+    try {
+      this.state.knowledgeMessages = await this.api.listKnowledgeMessages(conversation.conversation_id);
+      this.state.selectedKnowledgeConversation = conversation;
+      this.state.knowledgeTradeType = conversation.trade_type;
+      this.state.knowledgeAsOf = conversation.as_of;
+    } catch (error) {
+      this.state.knowledgeError = userMessage(error, "선택한 통관 지식 대화를 열지 못했습니다.");
+    } finally {
+      this.state.knowledgeLoading = false;
+      this.render();
+    }
+  }
+
+  private async createKnowledgeConversation(title?: string): Promise<KnowledgeConversation | null> {
+    if (this.state.knowledgeLoading || this.state.knowledgeSending) return null;
+    this.state.knowledgeLoading = true;
+    this.state.knowledgeError = null;
+    this.render();
+    try {
+      const conversation = await this.api.createKnowledgeConversation({
+        ...(title ? { title } : {}),
+        trade_type: this.state.knowledgeTradeType,
+        ...(this.state.knowledgeAsOf ? { as_of: this.state.knowledgeAsOf } : {}),
+      });
+      this.state.knowledgeConversations = [conversation, ...this.state.knowledgeConversations];
+      this.state.selectedKnowledgeConversation = conversation;
+      this.state.knowledgeMessages = [];
+      this.state.knowledgeLoaded = true;
+      this.state.knowledgeDraft = "";
+      this.state.knowledgeRetryContent = null;
+      this.state.knowledgeRetryIdempotencyKey = null;
+      return conversation;
+    } catch (error) {
+      this.state.knowledgeError = userMessage(error, "새 통관 지식 대화를 만들지 못했습니다.");
+      return null;
+    } finally {
+      this.state.knowledgeLoading = false;
+      this.render();
+    }
+  }
+
+  /**
+   * Starts an unsaved global conversation locally.  The selected trade type
+   * and date are applied only when the next question creates its dedicated
+   * Backend conversation; changing them never mutates an existing one.
+   */
+  private beginNewKnowledgeConversation(
+    resetSettings = true,
+    render = true,
+  ): void {
+    if (this.state.knowledgeLoading || this.state.knowledgeSending) return;
+    this.state.selectedKnowledgeConversation = null;
+    this.state.knowledgeMessages = [];
+    this.state.knowledgeDraft = "";
+    this.state.knowledgeRetryContent = null;
+    this.state.knowledgeRetryIdempotencyKey = null;
+    this.state.knowledgeError = null;
+    if (resetSettings) {
+      this.state.knowledgeTradeType = "both";
+      this.state.knowledgeAsOf = "";
+    }
+    if (render) this.render();
+  }
+
+  private async sendKnowledgeMessage(content: string, idempotencyKey: string = crypto.randomUUID()): Promise<void> {
+    // The standalone official-knowledge channel deliberately accepts one
+    // question line only.  Keeping pasted line breaks intact lets the
+    // Backend/Agent identify document-shaped input; normalising them here
+    // would turn a multi-field document into an apparently harmless line.
+    if (/[\r\n\u000b\u000c\u001c-\u001e\u0085\u2028\u2029]/u.test(content)) {
+      this.state.knowledgeRetryContent = null;
+      this.state.knowledgeRetryIdempotencyKey = null;
+      this.state.knowledgeError = "통관 지식 도우미에는 일반 통관 질문을 한 줄로 입력해 주세요.";
+      this.render();
+      return;
+    }
+    const text = content.trim();
+    if (!text || this.state.knowledgeSending || this.state.knowledgeLoading) return;
+    this.state.knowledgeSending = true;
+    this.state.knowledgeError = null;
+    this.render();
+    try {
+      let conversation = this.state.selectedKnowledgeConversation;
+      if (!conversation) {
+        // The first question must never become durable title text.  A global
+        // thread gets a small, direction-based topic title instead, so an
+        // accidental pasted document cannot be retained through this field.
+        conversation = await this.api.createKnowledgeConversation({
+          title: knowledgeConversationTitle(this.state.knowledgeTradeType),
+          trade_type: this.state.knowledgeTradeType,
+          ...(this.state.knowledgeAsOf ? { as_of: this.state.knowledgeAsOf } : {}),
+        });
+        this.state.knowledgeConversations = [conversation, ...this.state.knowledgeConversations];
+        this.state.selectedKnowledgeConversation = conversation;
+        this.state.knowledgeLoaded = true;
+      }
+      const exchange = await this.api.sendKnowledgeMessage(
+        conversation.conversation_id,
+        { content: text },
+        idempotencyKey,
+      );
+      this.state.knowledgeMessages = mergeKnowledgeMessages(
+        this.state.knowledgeMessages,
+        exchange.user_message,
+        exchange.assistant_message,
+      );
+      this.state.knowledgeDraft = "";
+      this.state.knowledgeRetryContent = null;
+      this.state.knowledgeRetryIdempotencyKey = null;
+    } catch (error) {
+      this.state.knowledgeDraft = text;
+      this.state.knowledgeRetryContent = text;
+      this.state.knowledgeRetryIdempotencyKey = idempotencyKey;
+      this.state.knowledgeError = userMessage(error, "통관 지식 답변을 받지 못했습니다. 질문은 그대로 보존했습니다.");
+    } finally {
+      this.state.knowledgeSending = false;
+      this.render();
+    }
+  }
+
+  private retryKnowledgeMessage(): void {
+    const retry = this.state.knowledgeRetryContent;
+    const idempotencyKey = this.state.knowledgeRetryIdempotencyKey;
+    if (retry && idempotencyKey) void this.sendKnowledgeMessage(retry, idempotencyKey);
+  }
+
+  private updateKnowledgeDraft(value: string): void {
+    this.state.knowledgeDraft = value.slice(0, 4_000);
+  }
+
+  private handleKnowledgeKeydown(event: KeyboardEvent): void {
+    if (event.key !== "Enter" || event.isComposing) return;
+    event.preventDefault();
+    const input = event.currentTarget;
+    if (input instanceof HTMLTextAreaElement) void this.sendKnowledgeMessage(input.value);
   }
 
   private async ensureCorrectionProposalsLoaded(): Promise<void> {
@@ -632,7 +890,7 @@ export class CommercialReviewWorkspace {
     const current = this.requireCase();
     if (!this.activeDocuments().length) throw new Error("심사를 시작하려면 활성 텍스트 문서를 하나 이상 등록해야 합니다.");
     await this.withBusy(async () => {
-      const job = await this.api.enqueueReview(current.case_id, { trade_type: "import" }, crypto.randomUUID());
+      const job = await this.api.enqueueReview(current.case_id, { trade_type: this.state.reviewTradeType }, crypto.randomUUID());
       this.state.activeJob = job;
       this.state.activeJobPurpose = "review";
       if (job.status === "succeeded") {
@@ -756,6 +1014,8 @@ export class CommercialReviewWorkspace {
 
   private render(): void {
     if (this.destroyed) return;
+    const route = parseRoute(window.location.hash);
+    const isKnowledgeRoute = route.kind === "knowledge";
     const children = [
       createHeader(
         this.state.session,
@@ -765,13 +1025,14 @@ export class CommercialReviewWorkspace {
           ? (actor) => void this.switchDevelopmentActor(actor)
           : undefined,
         this.state.busy,
+        () => this.setKnowledgeRoute(),
       ),
       createRuntimeNotice(this.mode),
       this.state.error ? message("error", this.state.error) : null,
       this.state.notice ? message("notice", this.state.notice) : null,
-      element("main", { className: "review-app", attributes: { id: "main-content", "aria-busy": String(this.state.busy), "data-e2e": "workspace-root" } },
-        this.createQueue(),
-        this.state.selectedCase ? this.createWorkspace() : this.createWelcome(),
+      element("main", { className: `review-app${isKnowledgeRoute ? " review-app--knowledge" : ""}`, attributes: { id: "main-content", "aria-busy": String(this.state.busy), "data-e2e": isKnowledgeRoute ? "knowledge-workspace-root" : "workspace-root" } },
+        isKnowledgeRoute ? this.createKnowledgeWorkspace() : this.createQueue(),
+        isKnowledgeRoute ? null : (this.state.selectedCase ? this.createWorkspace() : this.createWelcome()),
       ),
     ].filter((item): item is HTMLElement => item !== null);
     this.root.replaceChildren(...children);
@@ -865,6 +1126,227 @@ export class CommercialReviewWorkspace {
     );
   }
 
+  private createKnowledgeWorkspace(): HTMLElement {
+    const loading = this.state.knowledgeLoading;
+    const conversations = element("nav", { className: "assistant-conversations", attributes: { "aria-label": "통관 지식 대화 목록" } });
+    for (const conversation of this.state.knowledgeConversations) {
+      conversations.append(element("button", {
+        className: `assistant-conversation${this.state.selectedKnowledgeConversation?.conversation_id === conversation.conversation_id ? " is-selected" : ""}`,
+        attributes: {
+          type: "button",
+          "aria-current": this.state.selectedKnowledgeConversation?.conversation_id === conversation.conversation_id ? "page" : undefined,
+          disabled: loading || this.state.knowledgeSending ? "" : undefined,
+          "data-e2e": "knowledge-conversation",
+        },
+        on: { click: () => void this.selectKnowledgeConversation(conversation) },
+      },
+      element("strong", { text: reviewerNarrative(conversation.title ?? "제목 없는 통관 지식 대화", "제목 없는 통관 지식 대화") }),
+      element("small", { text: `${knowledgeTradeTypeLabel(conversation.trade_type)} · ${formatDate(conversation.updated_at)}` })));
+    }
+    if (!this.state.knowledgeConversations.length && !loading) {
+      conversations.append(element("p", { className: "empty-copy", text: "아직 만든 통관 지식 대화가 없습니다." }));
+    }
+
+    const conversationSettingsNote = this.state.selectedKnowledgeConversation
+      ? "현재 대화의 무역 방향과 지식 스냅샷 기준일은 고정되어 있습니다. 새 값을 선택하면 새 지식 대화를 준비합니다."
+      : "아래 무역 방향과 지식 스냅샷 기준일은 새 지식 대화에만 적용됩니다.";
+    const conversationProvenance = this.state.selectedKnowledgeConversation
+      ? element("div", { className: "knowledge-conversation-provenance" },
+        element("p", { className: "role-boundary-note", text: `지식 스냅샷 기준일 ${this.state.selectedKnowledgeConversation.as_of} · 개별 법령의 적용·효력 판단은 아닙니다.` }),
+        verificationDetails([
+          technicalLine("지식 스냅샷 식별번호", this.state.selectedKnowledgeConversation.snapshot_id),
+        ], undefined, "현재 대화의 검증 상세"),
+      )
+      : null;
+    const sidebar = element("aside", { className: "surface assistant-sidebar knowledge-sidebar" },
+      sectionHeading(
+        "통관 지식 도우미",
+        "사건 심사와 분리된 공식 통관 지식 안내입니다. 답변은 선택한 무역 방향과 지식 스냅샷 기준일의 공개 근거를 바탕으로 제공합니다. 이 날짜만으로 개별 법령의 적용·효력을 확정하지 않으며, 공식 원문과 담당자 확인이 필요합니다.",
+      ),
+      field("무역 방향", select("knowledge_trade_type", [
+        ["both", "수입·수출 공통"], ["import", "수입"], ["export", "수출"],
+      ], this.state.knowledgeTradeType, (event) => {
+        if (this.state.selectedKnowledgeConversation) this.beginNewKnowledgeConversation(false, false);
+        this.state.knowledgeTradeType = (event.currentTarget as HTMLSelectElement).value as KnowledgeTradeType;
+        this.render();
+      }, "knowledge-trade-type")),
+      field("지식 스냅샷 기준일", input("knowledge_as_of", {
+        type: "date",
+        value: this.state.knowledgeAsOf,
+        ariaLabel: "지식 스냅샷 기준일",
+        onInput: (event) => {
+          if (this.state.selectedKnowledgeConversation) this.beginNewKnowledgeConversation(false, false);
+          this.state.knowledgeAsOf = (event.currentTarget as HTMLInputElement).value;
+        },
+      })),
+      element("p", { className: "role-boundary-note", text: conversationSettingsNote }),
+      conversationProvenance,
+      element("button", {
+        className: "button button--secondary",
+        text: "새 지식 대화 시작",
+        attributes: { type: "button", disabled: loading || this.state.knowledgeSending ? "" : undefined, "data-e2e": "knowledge-new-conversation" },
+        on: { click: () => this.beginNewKnowledgeConversation() },
+      }),
+      conversations,
+    );
+    const panel = element("section", { className: "surface assistant-panel knowledge-panel" },
+      sectionHeading("공식 통관 지식에 질문하기", "이 대화는 특정 심사 건·문서 원문·심사 결과를 자동으로 사용하거나 전달하지 않습니다. 사건 문서 원문이나 개인정보는 이 대화에 붙여 넣지 마십시오. 사건 판단은 각 심사 건의 AI 도우미에서 확인하십시오."),
+      this.state.knowledgeError ? element("div", { className: "assistant-error", attributes: { role: "alert" } },
+        element("p", { text: this.state.knowledgeError }),
+        this.state.knowledgeRetryContent ? element("button", { className: "text-link", text: "같은 질문 다시 보내기", attributes: { type: "button" }, on: { click: () => this.retryKnowledgeMessage() } }) : null,
+        !this.state.knowledgeLoaded ? element("button", { className: "text-link", text: "대화 다시 불러오기", attributes: { type: "button" }, on: { click: () => { this.state.knowledgeLoaded = false; void this.ensureKnowledgeLoaded(); } } }) : null,
+      ) : null,
+      loading ? assistantLoadingState("통관 지식 대화 준비 중") : this.createKnowledgeConversationPanel(),
+    );
+    return element("section", { className: "assistant-layout knowledge-layout", attributes: { "data-e2e": "knowledge-workspace" } }, sidebar, panel);
+  }
+
+  private createKnowledgeConversationPanel(): HTMLElement {
+    const conversation = this.state.selectedKnowledgeConversation;
+    if (!conversation) {
+      return element("div", { className: "assistant-empty" },
+        element("h3", { text: "공식 통관 지식에 질문해 보십시오." }),
+        element("p", { text: "예: ‘수출 신고 전에 확인할 기본 서류를 알려줘’처럼 수입·수출 공통 안내를 질문할 수 있습니다." }),
+        element("button", { className: "button button--primary", text: "첫 지식 대화 만들기", attributes: { type: "button", "data-e2e": "knowledge-create" }, on: { click: () => void this.createKnowledgeConversation() } }),
+      );
+    }
+    const messageList = element("ol", { className: "assistant-message-list", attributes: { "aria-live": "polite", "aria-label": "통관 지식 도우미 메시지" } });
+    for (const item of this.state.knowledgeMessages) messageList.append(this.createKnowledgeMessage(item));
+    if (!this.state.knowledgeMessages.length) {
+      messageList.append(element("li", { className: "assistant-empty-message" },
+        element("strong", { text: "이 대화에는 아직 메시지가 없습니다." }),
+        element("span", { text: "아래에 질문을 입력하면 공식 통관 지식 스냅샷을 기준으로 답합니다." }),
+      ));
+    }
+    if (this.state.knowledgeSending) {
+      messageList.append(element("li", { className: "assistant-message assistant-message--assistant assistant-message--loading", attributes: { role: "status" } },
+        element("strong", { text: "통관 지식 도우미" }), element("span", { text: "공식 근거를 확인해 답변을 준비하고 있습니다…" }),
+      ));
+    }
+    const form = element("form", {
+      className: "assistant-composer", attributes: { "data-e2e": "knowledge-form" },
+      on: { submit: (event) => {
+        event.preventDefault();
+        const value = new FormData(event.currentTarget as HTMLFormElement).get("knowledge_message");
+        void this.sendKnowledgeMessage(typeof value === "string" ? value : "");
+      } },
+    },
+    field("질문", textarea("knowledge_message", {
+      value: this.state.knowledgeDraft,
+      maxLength: 4_000,
+      placeholder: "수입·수출 절차, 제출 서류 또는 공식 통관 요건에 관해 질문하십시오.",
+      onInput: (event) => this.updateKnowledgeDraft((event.currentTarget as HTMLTextAreaElement).value),
+      onKeydown: (event) => this.handleKnowledgeKeydown(event as KeyboardEvent),
+    })),
+    element("div", { className: "assistant-composer__hint" },
+      element("span", { text: "한 줄 질문 · Enter 전송" }),
+      submit(this.state.knowledgeSending ? "답변 준비 중" : "질문 보내기", this.state.knowledgeSending),
+    ));
+    return element("div", { className: "assistant-conversation-panel" }, messageList, form);
+  }
+
+  private createKnowledgeMessage(item: KnowledgeMessage): HTMLElement {
+    const isAssistant = item.role === "assistant";
+    const answerSections = item.answer_sections ?? [];
+    // A standalone answer is persisted both as the legacy-compatible
+    // `content`/`direct_answer` projection and as its labelled guidance
+    // section.  When those two projections are exactly the same, show the
+    // labelled section once instead of repeating the answer body.
+    const hidesDuplicateDirectAnswer = isAssistant
+      && answerSections.length === 1
+      && answerSections[0]?.kind === "general_guidance"
+      && answerSections[0].content === item.content;
+    const scope = isAssistant && item.answer_scope
+      ? element("span", { className: "assistant-scope", text: assistantScopeLabel(item.answer_scope) })
+      : null;
+    const coverage = isAssistant && item.knowledge_coverage
+      ? element("span", { className: "assistant-scope assistant-scope--knowledge-coverage", attributes: { "data-e2e": "knowledge-coverage" }, text: knowledgeCoverageLabel(item.knowledge_coverage) })
+      : null;
+    const boundaryNotice = isAssistant && item.answer_scope
+      ? knowledgeAnswerBoundaryNotice(item.answer_scope, item.citations, item.knowledge_coverage)
+      : null;
+    const provenance = isAssistant
+      ? verificationDetails([
+        technicalLine("지식 스냅샷 식별번호", item.knowledge_snapshot_id),
+      ], undefined, "답변의 검증 상세")
+      : null;
+    const suggestions = isAssistant && item.suggested_questions.length
+      ? element("div", { className: "assistant-message-suggestions", attributes: { "aria-label": "추천 질문" } },
+        ...item.suggested_questions.map((question) => element("button", {
+          className: "text-link", text: assistantSuggestionLabel(question), attributes: { type: "button", disabled: this.state.knowledgeSending ? "" : undefined },
+          on: { click: () => void this.sendKnowledgeMessage(assistantSuggestionLabel(question)) },
+        })),
+      )
+      : null;
+    return element("li", { className: `assistant-message assistant-message--${item.role}`, attributes: { "data-e2e": "knowledge-message", "data-message-role": item.role } },
+      element("header", {},
+        element("strong", { text: isAssistant ? "통관 지식 도우미" : "나" }),
+        scope,
+        coverage,
+        element("small", { text: `${formatDate(item.created_at)}${item.knowledge_as_of ? ` · 지식 스냅샷 기준일 ${item.knowledge_as_of}` : ""}` }),
+      ),
+      hidesDuplicateDirectAnswer
+        ? null
+        : reviewerNarrativeElement("p", "assistant-message__content", item.content, isAssistant ? "공식 통관 지식 근거를 바탕으로 안내를 준비했습니다." : undefined),
+      boundaryNotice ? element("p", { className: "role-boundary-note knowledge-answer-boundary", attributes: { role: "status" }, text: boundaryNotice }) : null,
+      isAssistant ? this.createAnswerSections(answerSections) : null,
+      isAssistant ? this.createAssistantCitationList(citationsOutsideSections(item.citations, answerSections), "추가 근거") : null,
+      provenance,
+      suggestions,
+    );
+  }
+
+  private createAnswerSections(sections: AssistantAnswerSection[]): HTMLElement | null {
+    if (!sections.length) return null;
+    return element("section", { className: "assistant-answer-sections", attributes: { "aria-label": "답변 구분과 공식 근거" } },
+      ...sections.map((section) => element("section", { className: `assistant-answer-section assistant-answer-section--${section.kind}`, attributes: { "data-e2e": `answer-section-${section.kind}` } },
+        element("header", {},
+          element("strong", { text: assistantAnswerSectionLabel(section.kind) }),
+          element("span", { text: reviewerNarrative(section.title, assistantAnswerSectionDescription(section.kind)) }),
+          element("small", { text: assistantAnswerSectionDescription(section.kind) }),
+        ),
+        reviewerNarrativeElement("p", undefined, section.content, "공식 근거 범위에서 추가 확인이 필요합니다."),
+        this.createAssistantCitationList(section.citations, `${assistantAnswerSectionLabel(section.kind)} 근거`)
+          ?? element("p", { className: "role-boundary-note", text: "이 안내에는 연결된 공식 근거가 아직 준비되지 않았습니다. 담당자가 공식 출처를 추가로 확인해야 합니다." }),
+      )),
+    );
+  }
+
+  private createAssistantCitationList(citations: AssistantCitation[], label: string): HTMLElement | null {
+    if (!citations.length) return null;
+    const caseCitations = citations.filter(isCaseCitation);
+    const guidanceCitations = citations.filter((citation): citation is GuidanceEvidenceCitation => !isCaseCitation(citation));
+    return element("div", { className: "assistant-citation-groups", attributes: { "aria-label": label } },
+      caseCitations.length ? element("div", { className: "assistant-citations" },
+        element("span", { text: "심사 근거" }),
+        ...caseCitations.map((citation) => element("button", {
+          className: "citation-chip", text: citationLabel(citation), attributes: { type: "button" },
+          on: { click: () => void this.openAssistantCitation(citation).catch((error) => this.showError(error)) },
+        })),
+      ) : null,
+      guidanceCitations.length ? element("ul", { className: "knowledge-citation-list", attributes: { "aria-label": "공식 안내 근거" } },
+        ...guidanceCitations.map((citation) => this.createGuidanceCitation(citation)),
+      ) : null,
+    );
+  }
+
+  private createGuidanceCitation(citation: GuidanceEvidenceCitation): HTMLElement {
+    const title = reviewerNarrative(guidanceCitationTitle(citation), "공식 통관 근거");
+    return element("li", { className: "knowledge-citation" },
+      element("strong", { text: title }),
+      element("div", { className: "knowledge-citation__meta" },
+        element("span", { text: knowledgeSourceKindLabel(citation.source_kind) }),
+        element("span", { text: knowledgeCoverageLabel(citation.coverage) }),
+        element("span", { text: `지식 스냅샷 기준일 ${citation.as_of}` }),
+        safeOfficialGuidanceLink(citation.source_uri, title),
+      ),
+      element("p", { className: "role-boundary-note", text: "공식 자료를 조회한 지식 스냅샷 기준이며, 개별 법령의 적용·효력 판단은 아닙니다." }),
+      verificationDetails([
+        technicalLine("지식 스냅샷 식별번호", citation.snapshot_id),
+      ]),
+    );
+  }
+
   private createWorkspace(): HTMLElement {
     const current = this.requireCase();
     const presentation = casePresentation(current);
@@ -954,17 +1436,25 @@ export class CommercialReviewWorkspace {
   private createReviewButton(): HTMLElement {
     const running = this.state.activeJob !== null && ACTIVE_JOB_STATES.has(this.state.activeJob.status);
     const canReview = this.hasRole("reviewer");
-    return element("button", {
-      className: "button button--primary",
-      text: running ? "심사 진행 중" : canReview ? "AI 심사 시작" : "심사자 역할에서 실행",
-      attributes: {
-        type: "button",
-        disabled: this.state.busy || !this.activeDocuments().length || running || !canReview ? "" : undefined,
-        title: canReview ? undefined : "AI 심사 실행은 심사자 역할에서만 가능합니다.",
-        "data-e2e": "review-start",
-      },
-      on: { click: () => void this.startReview() },
-    });
+    return element("div", { className: "review-control" },
+      field("심사 업무", select("review_trade_type", [
+        ["import", tradeTypeLabel("import")], ["export", tradeTypeLabel("export")],
+      ], this.state.reviewTradeType, (event) => {
+        this.state.reviewTradeType = (event.currentTarget as HTMLSelectElement).value as TradeType;
+        this.render();
+      }, "review-trade-type")),
+      element("button", {
+        className: "button button--primary",
+        text: running ? "심사 진행 중" : canReview ? `AI ${tradeTypeLabel(this.state.reviewTradeType)} 심사 시작` : "심사자 역할에서 실행",
+        attributes: {
+          type: "button",
+          disabled: this.state.busy || !this.activeDocuments().length || running || !canReview ? "" : undefined,
+          title: canReview ? undefined : "AI 심사 실행은 심사자 역할에서만 가능합니다.",
+          "data-e2e": "review-start",
+        },
+        on: { click: () => void this.startReview() },
+      }),
+    );
   }
 
   private createTabs(): HTMLElement {
@@ -1085,6 +1575,12 @@ export class CommercialReviewWorkspace {
   private createAnalysisTab(): HTMLElement {
     const run = this.state.selectedRun;
     if (!run) return emptyState("아직 심사 결과가 없습니다.", "활성 텍스트 문서를 등록한 뒤 AI 심사를 시작하십시오.");
+    const executionStatus = statusChip(executionStatusLabel(run.execution_status), run.execution_status);
+    executionStatus.setAttribute("data-e2e", "review-execution-status");
+    executionStatus.setAttribute("data-review-execution-status", run.execution_status);
+    const reviewDisposition = statusChip(reviewDispositionLabel(run.review_disposition), run.review_disposition);
+    reviewDisposition.setAttribute("data-e2e", "review-disposition");
+    reviewDisposition.setAttribute("data-review-disposition", run.review_disposition);
     const sections = run.report.sections.map((section, index) =>
       this.createAgentReportSection(run, section, index),
     );
@@ -1092,6 +1588,7 @@ export class CommercialReviewWorkspace {
       element("header", { className: "surface report-intro" },
         element("p", { className: "eyebrow", text: "AI 심사 결과" }),
         element("h2", { text: "근거 기반 심사 보고서" }),
+        element("div", { className: "report-intro__status" }, executionStatus, reviewDisposition),
         reviewerNarrativeElement("p", "summary-copy", run.report.summary, reportSummaryFallback(run.assessment, run.findings.length)),
         reviewerNarrativeElement("p", "disclaimer", run.report.disclaimer, reportDisclaimerFallback()),
         element("p", { className: "report-source-note", text: "아래 항목은 이번 심사에서 확인한 내용과 근거를 연결해 보여줍니다. 근거 버튼을 누르면 문서 사실, 문서 비교 또는 법령 근거로 이동합니다." }),
@@ -1346,14 +1843,9 @@ export class CommercialReviewWorkspace {
     const metadata = item.role === "assistant" && item.answer_scope
       ? element("span", { className: "assistant-scope", text: assistantScopeLabel(item.answer_scope) })
       : null;
-    const citations = item.role === "assistant" && item.citations.length
-      ? element("div", { className: "assistant-citations", attributes: { "aria-label": "답변 근거" } },
-        element("span", { text: "근거" }),
-        ...item.citations.map((citation) => element("button", {
-          className: "citation-chip", text: citationLabel(citation), attributes: { type: "button" },
-          on: { click: () => void this.openAssistantCitation(citation).catch((error) => this.showError(error)) },
-        })),
-      ) : null;
+    const citations = item.role === "assistant"
+      ? this.createAssistantCitationList(citationsOutsideSections(item.citations, item.answer_sections ?? []), "추가 근거")
+      : null;
     const suggestions = item.role === "assistant" && item.suggested_questions.length
       ? element("div", { className: "assistant-message-suggestions" },
         ...item.suggested_questions.map((question) => element("button", {
@@ -1381,17 +1873,18 @@ export class CommercialReviewWorkspace {
           ? assistantNarrativeFallback(item.answer_scope ?? "case_grounded")
           : undefined,
       ),
+      item.role === "assistant" ? this.createAnswerSections(item.answer_sections ?? []) : null,
       citations,
       suggestions,
       correction,
     );
   }
 
-  private async openAssistantCitation(citation: AssistantCitation): Promise<void> {
+  private async openAssistantCitation(citation: CaseCitation): Promise<void> {
     await this.openGroundedCitation(citation);
   }
 
-  private async openGroundedCitation(citation: AssistantCitation): Promise<void> {
+  private async openGroundedCitation(citation: CaseCitation): Promise<void> {
     const run = this.requireRun();
     if (citation.kind === "fact") {
       const fact = findFact(run, citation.reference_id);
@@ -1956,6 +2449,7 @@ function createHeader(
   onLogout: () => void,
   onSwitchActor?: (actor: LocalDevelopmentActor) => void,
   busy = false,
+  onOpenKnowledge?: () => void,
 ): HTMLElement {
   const roleSwitch = onSwitchActor
     ? element("div", { className: "local-role-switch", attributes: { "aria-label": "로컬 개발 역할 전환" } },
@@ -1980,6 +2474,12 @@ function createHeader(
       element("span", {}, element("strong", { className: "brand", text: "통관 AI 사전심사" }), element("small", { text: mode === "functional-uat" ? "기능 확인 환경" : "팀 개발" })),
     ),
     element("div", { className: "user-block" },
+      element("button", {
+        className: "button button--quiet topbar-knowledge-link",
+        text: "통관 지식 도우미",
+        attributes: { type: "button", disabled: busy ? "" : undefined, "data-e2e": "open-knowledge" },
+        on: { click: () => onOpenKnowledge?.() },
+      }),
       element("span", { text: session ? roleSummary(session.roles) : "세션 확인 중" }),
       element("small", { text: session ? "현재 로그인 역할" : "" }),
       roleSwitch,
@@ -2368,24 +2868,70 @@ function mergeAssistantMessages(
   return [...byId.values()].sort((left, right) => left.created_at.localeCompare(right.created_at));
 }
 
-function safeExternalLink(value: string): HTMLElement {
+function mergeKnowledgeMessages(
+  current: KnowledgeMessage[],
+  userMessage: KnowledgeMessage,
+  assistantMessage: KnowledgeMessage,
+): KnowledgeMessage[] {
+  const byId = new Map(current.map((item) => [item.message_id, item]));
+  byId.set(userMessage.message_id, userMessage);
+  byId.set(assistantMessage.message_id, assistantMessage);
+  return [...byId.values()].sort((left, right) => left.created_at.localeCompare(right.created_at));
+}
+
+/** Avoid duplicating a canonical message citation already shown inside a section. */
+function citationsOutsideSections(
+  citations: AssistantCitation[],
+  sections: AssistantAnswerSection[],
+): AssistantCitation[] {
+  const sectionKeys = new Set(sections.flatMap((section) => section.citations).map(citationKey));
+  return citations.filter((citation) => !sectionKeys.has(citationKey(citation)));
+}
+
+function citationKey(citation: AssistantCitation): string {
+  return citation.kind === "guidance_evidence"
+    ? `${citation.kind}:${citation.source_id}`
+    : `${citation.kind}:${citation.reference_id}`;
+}
+
+function safeExternalLink(value: string, sourceTitle = "공식 출처"): HTMLElement {
   try {
     const url = new URL(value);
     if (url.protocol !== "https:" && url.protocol !== "http:") throw new Error("unsupported URL");
-    return element("a", { className: "text-link", text: "출처 열기", attributes: { href: url.href, target: "_blank", rel: "noopener noreferrer" } });
+    return element("a", { className: "text-link", text: "출처 열기", attributes: { href: url.href, target: "_blank", rel: "noopener noreferrer", "aria-label": `${sourceTitle} 출처 열기` } });
   } catch {
     return element("span", { className: "muted", text: "출처 URL을 표시할 수 없습니다." });
   }
 }
 
-function parseRoute(hash: string): { caseId: string | null; tab: WorkspaceTab } {
+function safeOfficialGuidanceLink(value: string, sourceTitle: string): HTMLElement {
+  const url = officialGuidanceUrl(value);
+  if (url === null) {
+    return element("span", { className: "muted", text: "공식 출처 URL을 표시할 수 없습니다." });
+  }
+  return element("a", {
+    className: "text-link",
+    text: "출처 열기",
+    attributes: {
+      href: url.href,
+      target: "_blank",
+      rel: "noopener noreferrer",
+      "aria-label": `${sourceTitle} 출처 열기`,
+    },
+  });
+}
+
+function parseRoute(hash: string): WorkspaceRoute {
+  if (hash === "#/knowledge") return { kind: "knowledge" };
   const match = /^#\/cases\/([^/]+)(?:\/(documents|analysis|assistant|evidence|history))?$/u.exec(hash);
-  if (!match) return { caseId: null, tab: "documents" };
+  if (!match) return { kind: "case", caseId: null, tab: "documents" };
   try {
     const caseId = decodeURIComponent(match[1] ?? "");
-    return caseId ? { caseId, tab: (match[2] as WorkspaceTab | undefined) ?? "documents" } : { caseId: null, tab: "documents" };
+    return caseId
+      ? { kind: "case", caseId, tab: (match[2] as WorkspaceTab | undefined) ?? "documents" }
+      : { kind: "case", caseId: null, tab: "documents" };
   } catch {
-    return { caseId: null, tab: "documents" };
+    return { kind: "case", caseId: null, tab: "documents" };
   }
 }
 
@@ -2403,11 +2949,11 @@ function scrollIntoViewIfAvailable(element: Element | null | undefined): void {
   if (typeof target?.scrollIntoView === "function") target.scrollIntoView({ block: "center" });
 }
 
-function groundedCitations(claim: ReportClaim): AssistantCitation[] {
-  const citations: AssistantCitation[] = [
-    ...claim.fact_ids.map((reference_id): AssistantCitation => ({ kind: "fact", reference_id })),
-    ...claim.comparison_ids.map((reference_id): AssistantCitation => ({ kind: "comparison", reference_id })),
-    ...claim.evidence_ids.map((reference_id): AssistantCitation => ({ kind: "evidence", reference_id })),
+function groundedCitations(claim: ReportClaim): CaseCitation[] {
+  const citations: CaseCitation[] = [
+    ...claim.fact_ids.map((reference_id): CaseCitation => ({ kind: "fact", reference_id })),
+    ...claim.comparison_ids.map((reference_id): CaseCitation => ({ kind: "comparison", reference_id })),
+    ...claim.evidence_ids.map((reference_id): CaseCitation => ({ kind: "evidence", reference_id })),
   ];
   const seen = new Set<string>();
   return citations.filter((citation) => {
@@ -2444,6 +2990,15 @@ function formatDate(value: string): string {
 
 function userMessage(error: unknown, fallback: string): string {
   return userFacingErrorMessage(error, fallback);
+}
+
+function knowledgeConversationTitle(tradeType: KnowledgeTradeType): string {
+  const titles: Record<KnowledgeTradeType, string> = {
+    import: "수입 통관 지식 대화",
+    export: "수출 통관 지식 대화",
+    both: "통관 지식 대화",
+  };
+  return titles[tradeType];
 }
 
 function stringValue(data: FormData, name: string): string {
@@ -2515,8 +3070,14 @@ function textarea(
   });
 }
 
-function select(name: string, options: ReadonlyArray<readonly [string, string]>, value?: string, onChange?: EventListener): HTMLSelectElement {
-  const node = element("select", { attributes: { name }, ...(onChange ? { on: { change: onChange } } : {}) });
+function select(
+  name: string,
+  options: ReadonlyArray<readonly [string, string]>,
+  value?: string,
+  onChange?: EventListener,
+  dataE2E?: string,
+): HTMLSelectElement {
+  const node = element("select", { attributes: { name, "data-e2e": dataE2E }, ...(onChange ? { on: { change: onChange } } : {}) });
   for (const [optionValue, label] of options) node.append(element("option", { text: label, attributes: { value: optionValue, selected: value === optionValue ? "" : undefined } }));
   return node;
 }

@@ -73,6 +73,228 @@ describe("commercial review workspace", () => {
     app.destroy();
   });
 
+  it("renders the global knowledge assistant apart from a Case and keeps answer sections distinct", async () => {
+    window.location.hash = "#/knowledge";
+    const root = document.createElement("div");
+    const conversation = {
+      conversation_id: "knowledge-1", title: "수출 신고 기본 안내", trade_type: "export" as const, as_of: "2026-08-05",
+      snapshot_id: "kr-trade-20260805-a1b2",
+      created_by: "local-reviewer", created_at: "2026-08-05T00:00:00Z", updated_at: "2026-08-05T00:01:00Z",
+    };
+    const messages = [{
+      message_id: "knowledge-message-1", conversation_id: "knowledge-1", role: "assistant" as const, content: "수출 신고 전에 공식 제출 요건을 확인하십시오.",
+      answer_scope: "general_customs_guidance" as const,
+      citations: [{
+        kind: "guidance_evidence" as const, source_id: "source-1", source_kind: "official_law", source_title: "관세법 제241조", source_uri: "https://www.customs.go.kr/kcs/guide", as_of: "2026-08-05", snapshot_id: "snapshot-1", coverage: "covered" as const,
+      }],
+      answer_sections: [
+        { kind: "general_guidance" as const, title: "공식 수출 안내", content: "수출 신고 전에 공식 제출 요건을 확인하십시오.", citations: [{
+          kind: "guidance_evidence" as const, source_id: "source-1", source_kind: "official_law", source_title: "관세법 제241조", source_uri: "https://www.customs.go.kr/kcs/guide", as_of: "2026-08-05", snapshot_id: "snapshot-1", coverage: "covered" as const,
+        }] },
+      ],
+      suggested_questions: ["수출 신고 절차를 더 알려줘"],
+      knowledge_coverage: "covered" as const, knowledge_snapshot_id: "kr-trade-20260805-a1b2", knowledge_as_of: "2026-08-05",
+      created_by: "agent", created_at: "2026-08-05T00:01:00Z",
+    }];
+    const api = {
+      getSession: async () => ({ subject: "local-reviewer", org_id: "local-org", roles: ["reviewer"] }),
+      listCases: vi.fn(async () => ({ items: [] })),
+      listKnowledgeConversations: vi.fn(async () => [conversation]),
+      listKnowledgeMessages: vi.fn(async () => messages),
+    };
+    const auth = { logout: async () => undefined, freshAccessToken: async () => "token", isAuthenticated: () => true };
+    const app = new LightweightWorkbench(root, api as never, auth, "local-development");
+    await app.start();
+
+    expect(root.querySelector('[data-e2e="knowledge-workspace-root"]')).not.toBeNull();
+    expect(root.querySelector('[data-e2e="case-workspace"]')).toBeNull();
+    expect(api.listCases).not.toHaveBeenCalled();
+    expect(root.textContent).toContain("통관 지식 도우미");
+    expect(root.textContent).toContain("지식 스냅샷 기준일");
+    expect(root.textContent).toContain("사건 문서 원문이나 개인정보는 이 대화에 붙여 넣지 마십시오.");
+    expect(root.textContent).toContain("개별 법령의 적용·효력 판단은 아닙니다.");
+    expect(root.querySelector('[data-e2e="answer-section-general_guidance"]')?.textContent).toContain("일반 통관 안내");
+    expect(root.querySelector('[data-e2e="answer-section-general_guidance"]')?.textContent).toContain("공식 수출 안내");
+    expect(root.querySelector('[data-e2e="answer-section-general_guidance"]')?.textContent).toContain("관세법 제241조");
+    expect(root.textContent?.match(/수출 신고 전에 공식 제출 요건을 확인하십시오\./g)).toHaveLength(1);
+    expect(root.querySelectorAll(".assistant-message__content")).toHaveLength(0);
+    const sourceLink = root.querySelector<HTMLAnchorElement>(".knowledge-citation a");
+    expect(sourceLink?.href).toBe("https://www.customs.go.kr/kcs/guide");
+    expect(sourceLink?.getAttribute("aria-label")).toBe("관세법 제241조 출처 열기");
+    expect(root.textContent).toContain("근거 범위 확인됨");
+    expect(root.textContent).toContain("기준일 2026-08-05");
+    expect(root.querySelectorAll(".knowledge-citation")).toHaveLength(1);
+    expect(root.querySelector('ol[aria-label="통관 지식 도우미 메시지"]')?.getAttribute("aria-live")).toBe("polite");
+    expect(root.textContent).not.toContain("source-1");
+    expect(root.querySelector<HTMLDetailsElement>(".knowledge-citation .verification-details")?.open).toBe(false);
+    expect(root.querySelector<HTMLDetailsElement>(".knowledge-conversation-provenance .verification-details")?.open).toBe(false);
+    expect(Array.from(root.querySelectorAll<HTMLSelectElement>('select[name="knowledge_trade_type"] option')).map((option) => option.value)).toEqual(["both", "import", "export"]);
+    app.destroy();
+  });
+
+  it("creates a new standalone knowledge conversation when its trade direction or date changes", async () => {
+    window.location.hash = "#/knowledge";
+    const root = document.createElement("div");
+    let sequence = 0;
+    const createKnowledgeConversation = vi.fn(async (payload: { title?: string; trade_type?: "import" | "export" | "both"; as_of?: string }) => {
+      sequence += 1;
+      return {
+        conversation_id: `knowledge-${sequence}`,
+        title: payload.title ?? null,
+        trade_type: payload.trade_type ?? "both",
+        as_of: payload.as_of ?? "2026-08-05",
+        created_by: "local-reviewer",
+        created_at: "2026-08-05T00:00:00Z",
+        updated_at: "2026-08-05T00:00:00Z",
+      };
+    });
+    const sendKnowledgeMessage = vi.fn(async (conversationId: string, payload: { content: string }) => ({
+      user_message: {
+        message_id: `user-${conversationId}`, conversation_id: conversationId, role: "user" as const, content: payload.content,
+        citations: [], answer_sections: [], suggested_questions: [], created_by: "local-reviewer", created_at: "2026-08-05T00:00:00Z",
+      },
+      assistant_message: {
+        message_id: `assistant-${conversationId}`, conversation_id: conversationId, role: "assistant" as const, content: "공식 안내입니다.",
+        answer_scope: "general_customs_guidance" as const, citations: [], answer_sections: [], suggested_questions: [],
+        knowledge_coverage: "covered" as const, knowledge_as_of: "2026-08-05", created_by: "agent", created_at: "2026-08-05T00:00:01Z",
+      },
+    }));
+    const api = {
+      getSession: async () => ({ subject: "local-reviewer", org_id: "local-org", roles: ["reviewer"] }),
+      listKnowledgeConversations: vi.fn(async () => []),
+      createKnowledgeConversation,
+      sendKnowledgeMessage,
+    };
+    const auth = { logout: async () => undefined, freshAccessToken: async () => "token", isAuthenticated: () => true };
+    const app = new LightweightWorkbench(root, api as never, auth, "local-development");
+    await app.start();
+
+    const importSelect = root.querySelector<HTMLSelectElement>('select[name="knowledge_trade_type"]');
+    if (!importSelect) throw new Error("knowledge trade selector is unavailable");
+    importSelect.value = "import";
+    importSelect.dispatchEvent(new Event("change", { bubbles: true }));
+    const date = root.querySelector<HTMLInputElement>('input[name="knowledge_as_of"]');
+    if (!date) throw new Error("knowledge date is unavailable");
+    date.value = "2026-08-05";
+    date.dispatchEvent(new Event("input", { bubbles: true }));
+    await (app as unknown as { sendKnowledgeMessage(value: string): Promise<void> }).sendKnowledgeMessage("수입 신고 기본 요건을 알려줘");
+    expect(createKnowledgeConversation).toHaveBeenLastCalledWith({
+      title: "수입 통관 지식 대화", trade_type: "import", as_of: "2026-08-05",
+    });
+
+    const exportSelect = root.querySelector<HTMLSelectElement>('select[name="knowledge_trade_type"]');
+    if (!exportSelect) throw new Error("knowledge trade selector is unavailable after first answer");
+    exportSelect.value = "export";
+    exportSelect.dispatchEvent(new Event("change", { bubbles: true }));
+    await (app as unknown as { sendKnowledgeMessage(value: string): Promise<void> }).sendKnowledgeMessage("수출 신고 기본 요건을 알려줘");
+    expect(createKnowledgeConversation).toHaveBeenLastCalledWith({
+      title: "수출 통관 지식 대화", trade_type: "export", as_of: "2026-08-05",
+    });
+
+    root.querySelector<HTMLButtonElement>('[data-e2e="knowledge-new-conversation"]')?.click();
+    expect(root.querySelector<HTMLSelectElement>('select[name="knowledge_trade_type"]')?.value).toBe("both");
+    expect(root.querySelector<HTMLInputElement>('input[name="knowledge_as_of"]')?.value).toBe("");
+    await (app as unknown as { sendKnowledgeMessage(value: string): Promise<void> }).sendKnowledgeMessage("수입과 수출의 공통 절차를 알려줘");
+    expect(createKnowledgeConversation).toHaveBeenLastCalledWith({
+      title: "통관 지식 대화", trade_type: "both",
+    });
+    app.destroy();
+  });
+
+  it("keeps a multiline global knowledge question in the browser without creating a conversation", async () => {
+    window.location.hash = "#/knowledge";
+    const root = document.createElement("div");
+    const conversation = {
+      conversation_id: "knowledge-safe-input", title: "통관 지식 대화", trade_type: "both" as const, as_of: "2026-08-05",
+      created_by: "local-reviewer", created_at: "2026-08-05T00:00:00Z", updated_at: "2026-08-05T00:00:00Z",
+    };
+    const createKnowledgeConversation = vi.fn();
+    const sendKnowledgeMessage = vi.fn();
+    const api = {
+      getSession: async () => ({ subject: "local-reviewer", org_id: "local-org", roles: ["reviewer"] }),
+      listKnowledgeConversations: vi.fn(async () => [conversation]),
+      listKnowledgeMessages: vi.fn(async () => []),
+      createKnowledgeConversation,
+      sendKnowledgeMessage,
+    };
+    const auth = { logout: async () => undefined, freshAccessToken: async () => "token", isAuthenticated: () => true };
+    const app = new LightweightWorkbench(root, api as never, auth, "local-development");
+    await app.start();
+
+    for (const unsafeQuestion of [
+      "수출 통관 절차를 알려 주세요.\n추가 문장",
+      "수출 통관 절차를 알려 주세요.\u2028추가 문장",
+      "\r\n수출 통관 절차를 알려 주세요.",
+      "수출 통관 절차를 알려 주세요.\r\n",
+      "\u2028수출 통관 절차를 알려 주세요.",
+      "수출 통관 절차를 알려 주세요.\u2028",
+    ]) {
+      const input = root.querySelector<HTMLTextAreaElement>('textarea[name="knowledge_message"]');
+      const form = root.querySelector<HTMLFormElement>('[data-e2e="knowledge-form"]');
+      if (!input || !form) throw new Error("knowledge message form is unavailable");
+      input.value = unsafeQuestion;
+      form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+      await Promise.resolve();
+
+      expect(createKnowledgeConversation).not.toHaveBeenCalled();
+      expect(sendKnowledgeMessage).not.toHaveBeenCalled();
+      expect(root.querySelector('[role="alert"]')?.textContent).toContain("한 줄");
+    }
+    app.destroy();
+  });
+
+  it("explains partial or unavailable knowledge coverage and keeps a failed request safe to retry", async () => {
+    window.location.hash = "#/knowledge";
+    const root = document.createElement("div");
+    const conversation = {
+      conversation_id: "knowledge-coverage", title: "공식 통관 범위", trade_type: "both" as const, as_of: "2026-08-05",
+      created_by: "local-reviewer", created_at: "2026-08-05T00:00:00Z", updated_at: "2026-08-05T00:01:00Z",
+    };
+    const citation = (coverage: "partial" | "no_coverage" | "unavailable", sourceId: string) => ({
+      kind: "guidance_evidence" as const, source_id: sourceId, source_kind: "official_law" as const,
+      source_title: "관세법 제241조", source_uri: "https://example.test/customs", as_of: "2026-08-05", snapshot_id: "snapshot-safe", coverage,
+    });
+    const messages = [
+      {
+        message_id: "partial", conversation_id: conversation.conversation_id, role: "assistant" as const, content: "확인 가능한 범위만 안내합니다.",
+        answer_scope: "general_customs_guidance" as const, citations: [citation("partial", "source-partial")],
+        answer_sections: [{ kind: "general_guidance" as const, title: "일부 공식 안내", content: "공식 근거의 일부 범위만 확인했습니다.", citations: [citation("partial", "source-partial")] }],
+        suggested_questions: [], knowledge_coverage: "partial" as const, knowledge_snapshot_id: "snapshot-safe", knowledge_as_of: "2026-08-05", created_by: "agent", created_at: "2026-08-05T00:01:00Z",
+      },
+      {
+        message_id: "none", conversation_id: conversation.conversation_id, role: "assistant" as const, content: "확인 가능한 공식 근거가 없습니다.",
+        answer_scope: "insufficient_evidence" as const, citations: [], answer_sections: [],
+        suggested_questions: [], knowledge_coverage: "no_coverage" as const, knowledge_as_of: "2026-08-05", created_by: "agent", created_at: "2026-08-05T00:02:00Z",
+      },
+      {
+        message_id: "unavailable", conversation_id: conversation.conversation_id, role: "assistant" as const, content: "현재 공식 근거 조회 결과를 사용할 수 없습니다.",
+        answer_scope: "insufficient_evidence" as const, citations: [], answer_sections: [],
+        suggested_questions: [], knowledge_coverage: "unavailable" as const, knowledge_as_of: "2026-08-05", created_by: "agent", created_at: "2026-08-05T00:03:00Z",
+      },
+    ];
+    const api = {
+      getSession: async () => ({ subject: "local-reviewer", org_id: "local-org", roles: ["reviewer"] }),
+      listKnowledgeConversations: async () => [conversation],
+      listKnowledgeMessages: async () => messages,
+      sendKnowledgeMessage: vi.fn(async () => { throw new Error("provider timeout internal detail"); }),
+    };
+    const auth = { logout: async () => undefined, freshAccessToken: async () => "token", isAuthenticated: () => true };
+    const app = new LightweightWorkbench(root, api as never, auth, "local-development");
+    await app.start();
+
+    expect(root.textContent).toContain("일부 근거 확인됨");
+    expect(root.textContent).toContain("일부 범위의 공식 근거만 확인되었습니다.");
+    expect(root.textContent).toContain("해당 근거 없음");
+    expect(root.textContent).toContain("찾지 못했습니다.");
+    expect(root.textContent).toContain("근거 조회 불가");
+    expect(root.textContent).toContain("조회 결과를 사용할 수 없습니다.");
+    await (app as unknown as { sendKnowledgeMessage(value: string): Promise<void> }).sendKnowledgeMessage("수입 요건을 알려줘");
+    expect(root.querySelector('[role="alert"]')?.textContent).toContain("통관 지식 답변을 받지 못했습니다");
+    expect(root.querySelector('[role="alert"]')?.textContent).not.toContain("provider timeout");
+    expect(root.textContent).toContain("같은 질문 다시 보내기");
+    app.destroy();
+  });
+
   it("shows system functional-UAT records only through the dedicated verification filter", async () => {
     window.location.hash = "#/cases";
     const root = document.createElement("div");
@@ -121,11 +343,20 @@ describe("commercial review workspace", () => {
     const auth = { logout: async () => undefined, freshAccessToken: async () => "token", isAuthenticated: () => true };
     const app = new LightweightWorkbench(root, api as never, auth, "functional-uat");
     await app.start();
+    const trade = root.querySelector<HTMLSelectElement>('select[name="review_trade_type"]');
+    if (!trade) throw new Error("review trade selector is unavailable");
+    trade.value = "export";
+    trade.dispatchEvent(new Event("change", { bubbles: true }));
     await (app as unknown as { startReview(): Promise<void> }).startReview();
+    expect(api.enqueueReview).toHaveBeenCalledWith("case-1", { trade_type: "export" }, expect.any(String));
     expect(api.getJob).not.toHaveBeenCalled();
     expect(api.getReviewRun).toHaveBeenCalledWith("run-1");
     expect(root.textContent).toContain("심사 진행 과정");
     expect(root.querySelector('[data-e2e="analysis-content"]')).not.toBeNull();
+    expect(root.querySelector<HTMLElement>('[data-e2e="review-execution-status"]')?.dataset.reviewExecutionStatus).toBe("succeeded");
+    expect(root.querySelector<HTMLElement>('[data-e2e="review-execution-status"]')?.textContent).toBe("심사 결과 확인");
+    expect(root.querySelector<HTMLElement>('[data-e2e="review-disposition"]')?.dataset.reviewDisposition).toBe("human_review_required");
+    expect(root.querySelector<HTMLElement>('[data-e2e="review-disposition"]')?.textContent).toBe("담당자 확인 필요");
     expect(root.querySelector('[data-e2e="finding-card"]')).not.toBeNull();
     expect(root.textContent).toContain("문서 간 비교");
     expect(root.textContent).toContain("담당자 판단 기록");
@@ -222,6 +453,9 @@ describe("commercial review workspace", () => {
     const app = new LightweightWorkbench(root, api as never, auth, "functional-uat");
     await app.start();
 
+    expect(root.querySelector<HTMLElement>('[data-e2e="review-execution-status"]')?.dataset.reviewExecutionStatus).toBe("partial");
+    expect(root.querySelector<HTMLElement>('[data-e2e="review-execution-status"]')?.textContent).toBe("일부 항목 확인 필요");
+    expect(root.querySelector<HTMLElement>('[data-e2e="review-disposition"]')?.dataset.reviewDisposition).toBe("human_review_required");
     expect(root.querySelectorAll('[data-e2e="regulatory-requirement-card"]')).toHaveLength(1);
     expect(root.querySelectorAll('[data-e2e="regulatory-required-action"]')).toHaveLength(1);
     const primaryNarratives = Array.from(root.querySelectorAll<HTMLElement>('[data-e2e="analysis-content"] [data-e2e="reviewer-narrative"]'))
@@ -344,7 +578,24 @@ describe("commercial review workspace", () => {
     const caseDetail = { case_id: "case-1", org_id: "local-org", title: "입항 서류", status: "in_review" as const, revision: 1, updated_at: "2026-08-05T00:00:00Z" };
     const conversation = { conversation_id: "conversation-1", review_run_id: "run-1", title: "수량 검토", created_by: "local-reviewer", created_at: "2026-08-05T00:00:00Z", updated_at: "2026-08-05T00:00:00Z" };
     const userMessage = { message_id: "message-user-1", conversation_id: "conversation-1", role: "user" as const, content: "수량을 확인해 줘", citations: [], suggested_questions: [], created_by: "local-reviewer", created_at: "2026-08-05T00:00:00Z" };
-    const assistantMessage = { message_id: "message-assistant-1", conversation_id: "conversation-1", role: "assistant" as const, content: "문서 간 비교 결과를 확인하십시오.", answer_scope: "case_grounded" as const, citations: [{ kind: "evidence" as const, reference_id: "evidence-1" }], suggested_questions: ["원문 인용을 보여줘"], correction_draft: { document_id: "document-1", fact_id: "fact-1", field_name: "quantity", new_value: "12", unit: "EA", reason: "원문 확인" }, created_by: "agent", created_at: "2026-08-05T00:00:01Z" };
+    const assistantMessage = {
+      message_id: "message-assistant-1", conversation_id: "conversation-1", role: "assistant" as const, content: "문서 간 비교 결과를 확인하십시오.",
+      answer_scope: "case_grounded" as const, citations: [{ kind: "evidence" as const, reference_id: "evidence-1" }],
+      answer_sections: [
+        {
+          kind: "case_analysis" as const, title: "현재 심사 결과", content: "문서 간 비교 결과를 확인하십시오.",
+          citations: [{ kind: "evidence" as const, reference_id: "evidence-1" }],
+        },
+        {
+          kind: "general_guidance" as const, title: "관련 일반 안내", content: "공식 통관 안내는 현재 심사 결론과 구분해 확인해야 합니다.",
+          citations: [{
+            kind: "guidance_evidence" as const, source_id: "source-case-guidance", source_kind: "official_law" as const,
+            source_title: "관세법 제241조", source_uri: "https://example.test/customs", as_of: "2026-08-05", snapshot_id: "snapshot-case-guidance", coverage: "covered" as const,
+          }],
+        },
+      ],
+      suggested_questions: ["원문 인용을 보여줘"], correction_draft: { document_id: "document-1", fact_id: "fact-1", field_name: "quantity", new_value: "12", unit: "EA", reason: "원문 확인" }, created_by: "agent", created_at: "2026-08-05T00:00:01Z",
+    };
     const run = reviewRun();
     const api = {
       getSession: vi.fn(async () => ({ subject: "local-reviewer", org_id: "local-org", roles: ["reviewer"] })),
@@ -363,6 +614,10 @@ describe("commercial review workspace", () => {
     await app.start();
     expect(root.textContent).toContain("AI 도우미");
     expect(root.textContent).toContain("문서 간 비교 결과를 확인하십시오.");
+    expect(root.querySelector('[data-e2e="answer-section-case_analysis"]')?.textContent).toContain("현재 심사 결과");
+    expect(root.querySelector('[data-e2e="answer-section-general_guidance"]')?.textContent).toContain("일반 통관 안내");
+    expect(root.querySelector('[data-e2e="answer-section-general_guidance"]')?.textContent).toContain("관세법 제241조");
+    expect(root.textContent).not.toContain("source-case-guidance");
     await (app as unknown as { sendAssistantMessage(value: string): Promise<void> }).sendAssistantMessage("근거를 열어 줘");
     expect(api.sendAssistantMessage).toHaveBeenCalled();
     expect(root.textContent).toContain("법령 근거를 열었습니다.");

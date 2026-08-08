@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   FUNCTIONAL_UAT_BROWSER_CHECKS,
+  FUNCTIONAL_UAT_KEYCLOAK_ORIGIN,
   loadFunctionalUatBrowserEnvironment,
   validateFunctionalUatBrowserReceipt,
 } from "../e2e/functional-uat-environment";
@@ -19,6 +20,14 @@ function environment(overrides: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
 }
 
 describe("functional UAT browser environment", () => {
+  it("allows only the fixed Functional-UAT Keycloak authority outside the Frontend origin", () => {
+    expect(FUNCTIONAL_UAT_KEYCLOAK_ORIGIN).toBe("http://127.0.0.1:18088");
+  });
+
+  it("requires a safe second turn in the standalone knowledge journey", () => {
+    expect(FUNCTIONAL_UAT_BROWSER_CHECKS).toContain("knowledge_recent_history");
+  });
+
   it("accepts the narrow wrapper contract and derives only a transient local output path", () => {
     const loaded = loadFunctionalUatBrowserEnvironment(environment());
     expect(loaded.baseUrl).toBe("http://127.0.0.1:5173");

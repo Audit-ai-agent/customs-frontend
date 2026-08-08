@@ -1,9 +1,20 @@
 import { describe, expect, it, vi } from "vitest";
 import { ApiClient } from "../src/api/v1/client";
+import { stableApiErrorMessage } from "../src/api/user-facing-errors";
 
 function json(value: unknown, status = 200): Response {
   return new Response(JSON.stringify(value), { status, headers: { "content-type": "application/json" } });
 }
+
+describe("knowledge input boundary", () => {
+  it("shows a Korean generic message for a rejected global knowledge input", () => {
+    const message = stableApiErrorMessage(422, "knowledge_input_not_allowed");
+    expect(message).toContain("통관 지식 도우미");
+    expect(message).toContain("일반 통관 질문");
+    expect(message).not.toContain("filename");
+    expect(message).not.toContain("case_id");
+  });
+});
 
 function reviewRunPayload() {
   return {
@@ -156,6 +167,10 @@ describe("Backend API client", () => {
       message_id: "message-assistant-1", conversation_id: "conversation-1", role: "assistant",
       content: "Invoice와 Packing List의 수량을 확인해야 합니다.", answer_scope: "case_grounded",
       citations: [{ kind: "comparison", reference_id: "comparison-1" }],
+      answer_sections: [{
+        kind: "case_analysis", title: "수량 비교 결과", content: "송장과 포장명세서의 수량을 비교했습니다.",
+        citations: [{ kind: "comparison", reference_id: "comparison-1" }],
+      }],
       suggested_questions: ["관련 문서 원문을 보여줘"],
       correction_draft: { document_id: "document-1", fact_id: "fact-1", field_name: "quantity", new_value: "12", unit: "EA", reason: "Packing List 원문 기준" },
       created_by: "agent", created_at: "2026-08-05T00:01:01Z",
@@ -182,7 +197,7 @@ describe("Backend API client", () => {
     const api = new ApiClient(fetcher, async () => "local-token");
     await api.listAssistantConversations("run-1");
     await api.createAssistantConversation("run-1", { title: "수량 확인" });
-    await api.listAssistantMessages("conversation-1");
+    const decodedAssistantMessages = await api.listAssistantMessages("conversation-1");
     await api.sendAssistantMessage("conversation-1", { content: "수량을 확인해 줘" }, "assistant-key-1");
     await api.listCorrectionProposals("run-1");
     await api.createCorrectionProposal("run-1", { document_id: "document-1", fact_id: "fact-1", field_name: "quantity", new_value: "12", unit: "EA", reason: "Packing List 원문 기준", finding_id: "finding-1" });
@@ -202,5 +217,174 @@ describe("Backend API client", () => {
     expect(new Headers(calls[3]?.init?.headers).get("Idempotency-Key")).toBe("assistant-key-1");
     expect(JSON.parse(String(calls[5]?.init?.body))).toEqual({ document_id: "document-1", fact_id: "fact-1", field_name: "quantity", new_value: "12", unit: "EA", reason: "Packing List 원문 기준", finding_id: "finding-1" });
     expect(new Headers(calls[7]?.init?.headers).get("Idempotency-Key")).toBe("revision-key-1");
+    expect(decodedAssistantMessages[1]?.answer_sections?.[0]).toMatchObject({ kind: "case_analysis", title: "수량 비교 결과", citations: [{ kind: "comparison", reference_id: "comparison-1" }] });
+  });
+
+  it("keeps global knowledge conversations separate and strips Case or document fields from requests", async () => {
+    const calls: Array<{ url: string; init: RequestInit | undefined }> = [];
+    const conversation = {
+      conversation_id: "knowledge-conversation-1", title: "수출 신고 서류", trade_type: "export",
+      as_of: "2026-08-05", snapshot_id: "kr-trade-20260805-a1b2", created_by: "reviewer", created_at: "2026-08-05T00:00:00Z", updated_at: "2026-08-05T00:01:00Z",
+    };
+    const userMessage = {
+      message_id: "knowledge-user-1", conversation_id: conversation.conversation_id, role: "user", content: "수출 신고 서류를 알려줘",
+      citations: [], answer_sections: [], suggested_questions: [],
+      created_by: "reviewer", created_at: "2026-08-05T00:01:00Z",
+    };
+    const guidanceCitations = [{
+      kind: "guidance_evidence", source_id: "official-source-1", source_kind: "official_law", source_title: "관세법 제241조", source_uri: "https://example.test/customs",
+      as_of: "2026-08-05", snapshot_id: "snapshot-20260805", coverage: "covered",
+    }, {
+      kind: "guidance_evidence", source_id: "fixture-source-1", source_kind: "development_fixture", source_title: "개발용 안내", source_uri: "https://example.test/fixture",
+      as_of: "2026-08-05", snapshot_id: "snapshot-20260805", coverage: "partial",
+    }];
+    const assistantMessage = {
+      message_id: "knowledge-assistant-1", conversation_id: conversation.conversation_id, role: "assistant", content: "공식 수출 안내입니다.",
+      answer_scope: "general_customs_guidance", citations: guidanceCitations, suggested_questions: ["수출 신고 절차를 더 알려줘"],
+      answer_sections: [{
+        kind: "general_guidance", title: "공식 수출 안내", content: "수출 신고 전 기본 서류를 확인하십시오.", citations: guidanceCitations,
+      }],
+      knowledge_coverage: "partial", knowledge_snapshot_id: "kr-trade-20260805-a1b2", knowledge_as_of: "2026-08-05",
+      created_by: "agent", created_at: "2026-08-05T00:01:01Z",
+    };
+    const fetcher: typeof fetch = async (input, init) => {
+      const url = String(input);
+      calls.push({ url, init });
+      if (url === "/api/v1/knowledge/conversations" && init?.method === "GET") return json({ items: [conversation] });
+      if (url === "/api/v1/knowledge/conversations" && init?.method === "POST") return json(conversation);
+      if (url.endsWith("/messages") && init?.method === "GET") return json({ items: [userMessage, assistantMessage] });
+      if (url.endsWith("/messages") && init?.method === "POST") return json({ user_message: userMessage, assistant_message: assistantMessage });
+      return json({ detail: "unexpected request" }, 500);
+    };
+    const api = new ApiClient(fetcher, async () => "local-token");
+    await api.listKnowledgeConversations();
+    await api.createKnowledgeConversation({
+      title: "수출 신고 서류", trade_type: "export", as_of: "2026-08-05",
+      // The public TypeScript shape does not expose these fields.  This cast
+      // verifies that an unsafe JavaScript caller still cannot send them.
+      case_id: "case-must-not-leave-browser",
+      review_run_id: "run-must-not-leave-browser",
+      document_id: "document-must-not-leave-browser",
+      content_text: "문서 원문은 전송하면 안 됩니다.",
+    } as unknown as Parameters<ApiClient["createKnowledgeConversation"]>[0]);
+    await api.listKnowledgeMessages(conversation.conversation_id);
+    const exchange = await api.sendKnowledgeMessage(conversation.conversation_id, {
+      content: userMessage.content,
+      case_id: "case-must-not-leave-browser",
+      review_run_id: "run-must-not-leave-browser",
+      document_content: "문서 원문은 전송하면 안 됩니다.",
+    } as unknown as Parameters<ApiClient["sendKnowledgeMessage"]>[1], "knowledge-key-1");
+
+    expect(calls.map((item) => item.url)).toEqual([
+      "/api/v1/knowledge/conversations",
+      "/api/v1/knowledge/conversations",
+      "/api/v1/knowledge/conversations/knowledge-conversation-1/messages",
+      "/api/v1/knowledge/conversations/knowledge-conversation-1/messages",
+    ]);
+    expect(calls.every((item) => !item.url.includes("/cases/") && !item.url.includes("review-runs"))).toBe(true);
+    expect(JSON.parse(String(calls[1]?.init?.body))).toEqual({ title: "수출 신고 서류", trade_type: "export", as_of: "2026-08-05" });
+    expect(JSON.parse(String(calls[3]?.init?.body))).toEqual({ content: userMessage.content });
+    expect(new Headers(calls[3]?.init?.headers).get("Idempotency-Key")).toBe("knowledge-key-1");
+    expect(exchange.assistant_message.answer_sections?.[0]?.citations[0]).toMatchObject({ kind: "guidance_evidence", source_title: "관세법 제241조", coverage: "covered" });
+    expect(exchange.assistant_message.answer_sections?.[0]?.citations[1]).toMatchObject({ kind: "guidance_evidence", source_kind: "development_fixture", coverage: "partial" });
+    expect(exchange.assistant_message).toMatchObject({ knowledge_coverage: "partial", knowledge_snapshot_id: "kr-trade-20260805-a1b2", knowledge_as_of: "2026-08-05" });
+  });
+
+  it("rejects a knowledge message that is accidentally bound to Case, review, or document data", async () => {
+    const api = new ApiClient(async () => json({ items: [{
+      message_id: "knowledge-message-1", conversation_id: "knowledge-conversation-1", role: "user", content: "질문입니다.",
+      case_id: "case-1", created_by: "reviewer", created_at: "2026-08-05T00:00:00Z",
+    }] }), async () => "local-token");
+    await expect(api.listKnowledgeMessages("knowledge-conversation-1")).rejects.toThrow("must not include Case, review, or document data (case_id)");
+  });
+
+  it("rejects document raw data and correction proposals from the standalone knowledge boundary", async () => {
+    const api = new ApiClient(async () => json({ items: [{
+      message_id: "knowledge-message-1", conversation_id: "knowledge-conversation-1", role: "assistant", content: "공식 안내입니다.",
+      answer_scope: "insufficient_evidence", citations: [], answer_sections: [], suggested_questions: [],
+      document_content: "원문을 이 경로로 보내면 안 됩니다.",
+      correction_draft: { document_id: "document-1" },
+      created_by: "agent", created_at: "2026-08-05T00:00:00Z",
+    }] }), async () => "local-token");
+    await expect(api.listKnowledgeMessages("knowledge-conversation-1")).rejects.toThrow("must not include Case, review, or document data (document_content)");
+  });
+
+  it("rejects a Case citation that is incorrectly mixed with knowledge provenance", async () => {
+    const api = new ApiClient(async () => json({ items: [{
+      message_id: "message-assistant-1", conversation_id: "conversation-1", role: "assistant", content: "현재 심사 결과입니다.",
+      answer_scope: "case_grounded", citations: [{ kind: "evidence", reference_id: "evidence-1", coverage: "covered" }],
+      suggested_questions: [], created_by: "agent", created_at: "2026-08-05T00:00:00Z",
+    }] }), async () => "local-token");
+    await expect(api.listAssistantMessages("conversation-1")).rejects.toThrow("Case citation cannot include guidance provenance");
+  });
+
+  it("rejects standalone knowledge resolution metadata on the Case assistant route", async () => {
+    const api = new ApiClient(async () => json({ items: [{
+      message_id: "case-message-1", conversation_id: "case-conversation-1", role: "assistant", content: "현재 심사 결과입니다.",
+      answer_scope: "case_grounded", citations: [], answer_sections: [], suggested_questions: [],
+      knowledge_coverage: "covered", knowledge_as_of: "2026-08-05", created_by: "agent", created_at: "2026-08-05T00:00:00Z",
+    }] }), async () => "local-token");
+    await expect(api.listAssistantMessages("case-conversation-1")).rejects.toThrow("must not include standalone knowledge provenance");
+  });
+
+  it("retains standalone no-coverage resolution without inventing a citation", async () => {
+    const api = new ApiClient(async () => json({ items: [{
+      message_id: "knowledge-message-1", conversation_id: "knowledge-conversation-1", role: "assistant", content: "현재 공식 지식 스냅샷에서 확인할 수 없습니다.",
+      answer_scope: "insufficient_evidence", citations: [], answer_sections: [], suggested_questions: [],
+      knowledge_coverage: "no_coverage", knowledge_as_of: "2026-08-05", created_by: "agent", created_at: "2026-08-05T00:00:00Z",
+    }] }), async () => "local-token");
+    const messages = await api.listKnowledgeMessages("knowledge-conversation-1");
+    expect(messages[0]).toMatchObject({ knowledge_coverage: "no_coverage", knowledge_as_of: "2026-08-05", citations: [] });
+  });
+
+  it("rejects partial, user-owned, or legacy raw knowledge provenance", async () => {
+    const partial = new ApiClient(async () => json({ items: [{
+      message_id: "knowledge-message-1", conversation_id: "knowledge-conversation-1", role: "assistant", content: "공식 안내입니다.",
+      answer_scope: "general_customs_guidance", citations: [], answer_sections: [], suggested_questions: [],
+      knowledge_snapshot_id: "snapshot-1", created_by: "agent", created_at: "2026-08-05T00:00:00Z",
+    }] }), async () => "local-token");
+    await expect(partial.listKnowledgeMessages("knowledge-conversation-1")).rejects.toThrow("provenance requires knowledge_coverage and knowledge_as_of");
+
+    const userOwned = new ApiClient(async () => json({ items: [{
+      message_id: "knowledge-message-1", conversation_id: "knowledge-conversation-1", role: "user", content: "질문입니다.",
+      knowledge_coverage: "covered", knowledge_as_of: "2026-08-05", created_by: "reviewer", created_at: "2026-08-05T00:00:00Z",
+    }] }), async () => "local-token");
+    await expect(userOwned.listKnowledgeMessages("knowledge-conversation-1")).rejects.toThrow("user message must not include standalone knowledge provenance");
+
+    const legacyRaw = new ApiClient(async () => json({ items: [{
+      message_id: "knowledge-message-1", conversation_id: "knowledge-conversation-1", role: "assistant", content: "공식 안내입니다.",
+      answer_scope: "general_customs_guidance", citations: [], answer_sections: [], suggested_questions: [],
+      snapshot_id: "incorrect-top-level-snapshot", created_by: "agent", created_at: "2026-08-05T00:00:00Z",
+    }] }), async () => "local-token");
+    await expect(legacyRaw.listKnowledgeMessages("knowledge-conversation-1")).rejects.toThrow("provenance must be carried by guidance evidence citations");
+  });
+
+  it("accepts a registered official source kind without exposing it as a Case field", async () => {
+    const api = new ApiClient(async () => json({ items: [{
+      message_id: "knowledge-message-1", conversation_id: "knowledge-conversation-1", role: "assistant", content: "공식 안내입니다.",
+      answer_scope: "general_customs_guidance",
+      citations: [{
+        kind: "guidance_evidence", source_id: "official-source-2", source_kind: "official_agency_guidance", source_title: "관세청 수출입 안내", source_uri: "https://example.test/customs-guide",
+        as_of: "2026-08-05", snapshot_id: "snapshot-20260805", coverage: "covered",
+      }],
+      answer_sections: [], suggested_questions: [], knowledge_coverage: "covered", knowledge_snapshot_id: "snapshot-20260805", knowledge_as_of: "2026-08-05",
+      created_by: "agent", created_at: "2026-08-05T00:00:00Z",
+    }] }), async () => "local-token");
+    const messages = await api.listKnowledgeMessages("knowledge-conversation-1");
+    expect(messages[0]?.citations[0]).toMatchObject({ source_kind: "official_agency_guidance" });
+  });
+
+  it("rejects an unregistered source kind instead of letting a raw code reach the workbench", async () => {
+    const api = new ApiClient(async () => json({ items: [{
+      message_id: "knowledge-message-1", conversation_id: "knowledge-conversation-1", role: "assistant", content: "공식 안내입니다.",
+      answer_scope: "general_customs_guidance",
+      citations: [{
+        kind: "guidance_evidence", source_id: "official-source-2", source_kind: "unexpected_source_code", source_title: "공식 안내", source_uri: "https://example.test/customs-guide",
+        as_of: "2026-08-05", snapshot_id: "snapshot-20260805", coverage: "covered",
+      }],
+      answer_sections: [], suggested_questions: [], knowledge_coverage: "covered", knowledge_snapshot_id: "snapshot-20260805", knowledge_as_of: "2026-08-05",
+      created_by: "agent", created_at: "2026-08-05T00:00:00Z",
+    }] }), async () => "local-token");
+    await expect(api.listKnowledgeMessages("knowledge-conversation-1")).rejects.toThrow("source_kind");
   });
 });

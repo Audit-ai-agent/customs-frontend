@@ -9,6 +9,9 @@ import {
   decodeDocumentListItem,
   decodeDocumentView,
   decodeJob,
+  decodeKnowledgeConversation,
+  decodeKnowledgeMessage,
+  decodeKnowledgeMessageExchange,
   decodeProblem,
   decodeReviewerDecision,
   decodeReviewRun,
@@ -33,10 +36,15 @@ import type {
   EnqueueReviewRequest,
   FindingDecisionRequest,
   JobRecord,
+  CreateKnowledgeConversationRequest,
+  KnowledgeConversation,
+  KnowledgeMessage,
+  KnowledgeMessageExchange,
   ReviewerDecision,
   ReviewRun,
   ReviewRunSummary,
   SendAssistantMessageRequest,
+  SendKnowledgeMessageRequest,
   Session,
 } from "./types";
 import type { LocalDevelopmentSessionResponse } from "../../auth";
@@ -252,6 +260,80 @@ export class ApiClient {
         const conversation = decodeAssistantConversation(value);
         this.assertIdentity(conversation.review_run_id, reviewRunId, "Assistant conversation review run");
         return conversation;
+      },
+    );
+  }
+
+  /**
+   * Global official-knowledge conversations are deliberately separate from a
+   * Case review.  The Browser still calls only Backend API v1.
+   */
+  listKnowledgeConversations(): Promise<KnowledgeConversation[]> {
+    return this.request(
+      "/knowledge/conversations",
+      { method: "GET" },
+      (value) => itemsFrom(value, "Knowledge conversation list").map(decodeKnowledgeConversation),
+    );
+  }
+
+  createKnowledgeConversation(
+    payload: CreateKnowledgeConversationRequest,
+  ): Promise<KnowledgeConversation> {
+    const title = payload.title?.trim();
+    if (title !== undefined && (!title || title.length > 200)) {
+      throw new ContractError("knowledge conversation title is invalid");
+    }
+    const tradeType = payload.trade_type ?? "both";
+    if (!(["import", "export", "both"] as const).includes(tradeType)) {
+      throw new ContractError("knowledge conversation trade type is invalid");
+    }
+    if (payload.as_of !== undefined && !isIsoDate(payload.as_of)) {
+      throw new ContractError("knowledge conversation date must be an ISO calendar date");
+    }
+    return this.request(
+      "/knowledge/conversations",
+      this.json("POST", {
+        ...(title ? { title } : {}),
+        trade_type: tradeType,
+        ...(payload.as_of === undefined ? {} : { as_of: payload.as_of }),
+      }),
+      decodeKnowledgeConversation,
+    );
+  }
+
+  listKnowledgeMessages(conversationId: string): Promise<KnowledgeMessage[]> {
+    return this.request(
+      `/knowledge/conversations/${segment(conversationId)}/messages`,
+      { method: "GET" },
+      (value) => {
+        const messages = itemsFrom(value, "Knowledge message list").map((item) => decodeKnowledgeMessage(item));
+        messages.forEach((item, index) => {
+          this.assertIdentity(item.conversation_id, conversationId, `knowledge messages[${index}] conversation`);
+        });
+        return messages;
+      },
+    );
+  }
+
+  sendKnowledgeMessage(
+    conversationId: string,
+    payload: SendKnowledgeMessageRequest,
+    idempotencyKey: string,
+  ): Promise<KnowledgeMessageExchange> {
+    const content = payload.content.trim();
+    if (!content || content.length > 4_000) throw new ContractError("knowledge message content is invalid");
+    if (!isSafeIdempotencyKey(idempotencyKey)) throw new ContractError("knowledge message Idempotency-Key is invalid");
+    const init = this.json("POST", { content });
+    const headers = new Headers(init.headers);
+    headers.set("Idempotency-Key", idempotencyKey);
+    return this.request(
+      `/knowledge/conversations/${segment(conversationId)}/messages`,
+      { ...init, headers },
+      (value) => {
+        const exchange = decodeKnowledgeMessageExchange(value);
+        this.assertIdentity(exchange.user_message.conversation_id, conversationId, "Knowledge user message conversation");
+        this.assertIdentity(exchange.assistant_message.conversation_id, conversationId, "Knowledge answer conversation");
+        return exchange;
       },
     );
   }

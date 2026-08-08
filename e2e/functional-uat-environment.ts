@@ -14,6 +14,11 @@ export const FUNCTIONAL_UAT_BROWSER_CHECKS = [
   "evidence_displayed",
   "citation_navigation",
   "assistant_conversation",
+  "assistant_mixed_sections",
+  "knowledge_conversation",
+  "knowledge_recent_history",
+  "knowledge_official_provenance",
+  "knowledge_default_boundary",
   "finding_decision",
   "correction_proposed",
   "approver_login",
@@ -21,8 +26,14 @@ export const FUNCTIONAL_UAT_BROWSER_CHECKS = [
   "child_review_completed",
   "document_replaced",
   "replacement_review_completed",
+  "export_document_registered",
+  "export_partial_coverage",
+  "export_human_review_required",
   "backend_only_network",
 ] as const;
+
+/** The fixed local OIDC authority for the Functional-UAT profile. */
+export const FUNCTIONAL_UAT_KEYCLOAK_ORIGIN = "http://127.0.0.1:18088" as const;
 
 export type FunctionalUatBrowserCheck = (typeof FUNCTIONAL_UAT_BROWSER_CHECKS)[number];
 

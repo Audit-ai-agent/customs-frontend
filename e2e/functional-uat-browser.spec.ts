@@ -2,6 +2,7 @@ import { expect, test, type Browser, type Page } from "@playwright/test";
 import { requiresControlledNarrative, requiresControlledStructuredValue } from "../src/presentation";
 import {
   FUNCTIONAL_UAT_BROWSER_CHECKS,
+  FUNCTIONAL_UAT_KEYCLOAK_ORIGIN,
   loadFunctionalUatBrowserEnvironment,
   writeFunctionalUatBrowserReceipt,
   type FunctionalUatBrowserCheck,
@@ -34,6 +35,34 @@ const REPLACEMENT_INVOICE = [
   "Country of Origin: KR",
   "Description: Frozen mackerel | HS Code: 0303540000 | Quantity: 3 PCS | Unit: PCS | Unit Price: USD 10 | Amount: USD 30",
 ].join("\n");
+const EXPORT_INVOICE = [
+  "COMMERCIAL INVOICE",
+  "Invoice No: INV-BROWSER-EXPORT-001",
+  "Total Amount: USD 20",
+  "Country of Origin: KR",
+  "Description: Widget | HS Code: 0303540000 | Quantity: 2 PCS | Unit: PCS | Unit Price: USD 10 | Amount: USD 20",
+].join("\n");
+const EXPORT_PACKING = [
+  "PACKING LIST",
+  "Packing No: PL-BROWSER-EXPORT-001",
+  "AWB No: AWB-BROWSER-EXPORT-001",
+  "Total Gross Weight: 100 KG",
+  "Description: Widget | HS Code: 0303540000 | Quantity: 2 PCS | Unit: PCS",
+].join("\n");
+const EXPORT_ORIGIN = "CERTIFICATE OF ORIGIN\nCertificate No: COO-BROWSER-EXPORT-001\nOrigin Country: KR\nHS Code: 0303540000";
+const EXPORT_AWB = "AIR WAYBILL\nAWB No: AWB-BROWSER-EXPORT-001\nGross Weight: 100 KG";
+const EXPORT_DECLARATION = [
+  "EXPORT DECLARATION",
+  "Export Declaration No: ED-BROWSER-EXPORT-001",
+  "Filing Date: 2026-08-05",
+  "Submission Status: Accepted",
+  "Invoice No: INV-BROWSER-EXPORT-001",
+  "Total Amount: USD 20",
+  "Origin Country: KR",
+  "Destination Country: US",
+  "Description: Widget | HS Code: 0303540000 | Quantity: 2 PCS | Unit: PCS | Unit Price: USD 10 | Amount: USD 20",
+].join("\n");
+const EXPORT_SUPPORTING_EVIDENCE = "SUPPORTING EVIDENCE\nReceipt No: RECEIPT-BROWSER-EXPORT-001\nSubmission Date: 2026-08-05\nSubmission Status: Accepted";
 
 test.describe.configure({ mode: "serial" });
 
@@ -98,12 +127,17 @@ test("실제 기능 UAT에서 사건 작업대의 사람 검토 여정을 완료
       await reviewer.locator('[data-e2e="assistant-create"]').click();
       const assistantForm = reviewer.locator('[data-e2e="assistant-form"]');
       await expect(assistantForm).toBeVisible();
-      await assistantForm.locator('textarea[name="assistant_message"]').fill("현재 심사 건의 문서 비교 결과와 확인할 사항을 간단히 설명해 주세요.");
+      await assistantForm.locator('textarea[name="assistant_message"]').fill("현재 사건의 문서 비교 결과와 일반 통관 절차를 함께 설명해 주세요.");
       await assistantForm.getByRole("button", { name: "질문 보내기" }).click();
       await expect(reviewer.locator('[data-e2e="assistant-message"][data-message-role="assistant"]')).toHaveCount(1);
       await assertKoreanUserProse(reviewer, '[data-e2e="assistant-message"][data-message-role="assistant"]');
       await assertRawFilenameHidden(reviewer, '[data-e2e="assistant-message"][data-message-role="assistant"]');
       checks.add("assistant_conversation");
+      await expect(reviewer.locator('[data-e2e="answer-section-case_analysis"]')).toHaveCount(1);
+      await expect(reviewer.locator('[data-e2e="answer-section-general_guidance"]')).toHaveCount(1);
+      await expect(reviewer.locator('[data-e2e="answer-section-case_analysis"]')).toContainText("현재 사건 기준");
+      await expect(reviewer.locator('[data-e2e="answer-section-general_guidance"]')).toContainText("일반 통관 안내");
+      checks.add("assistant_mixed_sections");
 
       await reviewer.locator('[data-e2e="workspace-tab-analysis"]').click();
       const finding = reviewer.locator('[data-e2e="finding-card"]:has(.correction-proposal-panel)').first();
@@ -166,6 +200,93 @@ test("실제 기능 UAT에서 사건 작업대의 사람 검토 여정을 완료
         throw new Error("functional_uat_browser_replacement_run_not_new");
       }
       checks.add("replacement_review_completed");
+    } finally {
+      await reviewer.context().close();
+    }
+  });
+
+  await test.step("사건과 분리된 공식 통관 지식 대화", async () => {
+    const reviewer = await signedInPage(browser, "reviewer", networkBoundary);
+    try {
+      await reviewer.goto(`${environment.baseUrl}/#/knowledge`);
+      await expect(reviewer.locator('[data-e2e="knowledge-workspace-root"]')).toBeVisible();
+      await expect(reviewer.locator('[data-e2e="knowledge-workspace"]')).toBeVisible();
+      await reviewer.locator('[data-e2e="knowledge-create"]').click();
+      const form = reviewer.locator('[data-e2e="knowledge-form"]');
+      await expect(form).toBeVisible();
+      await form.locator('textarea[name="knowledge_message"]').fill("인코텀즈 조건의 기본 차이와 확인할 책임을 알려 주세요.");
+      await form.getByRole("button", { name: "질문 보내기" }).click();
+
+      const answers = reviewer.locator('[data-e2e="knowledge-message"][data-message-role="assistant"]');
+      await expect(answers).toHaveCount(1);
+      await assertKoreanUserProse(reviewer, '[data-e2e="knowledge-message"][data-message-role="assistant"]');
+      await assertRawFilenameHidden(reviewer, '[data-e2e="knowledge-message"][data-message-role="assistant"]');
+      checks.add("knowledge_conversation");
+
+      await assertOfficialKnowledgeSnapshot(answers.first());
+      checks.add("knowledge_official_provenance");
+
+      await assertVerificationDetailsClosed(answers.first());
+      await assertNoTechnicalIdentifierInDefaultMessage(answers.first());
+      checks.add("knowledge_default_boundary");
+
+      // The active snapshot covers this `trade_terms` prompt through its
+      // registered KOTRA source.  Send a second safe prompt in the same room
+      // to verify persisted recent history without putting either question,
+      // a conversation ID, or a response body in the compact receipt.
+      const knowledgeConversations = reviewer.locator('[data-e2e="knowledge-conversation"]');
+      const selectedConversation = reviewer.locator('[data-e2e="knowledge-conversation"][aria-current="page"]');
+      await expect(selectedConversation).toHaveCount(1);
+      const conversationCount = await knowledgeConversations.count();
+      const selectedConversationTitle = await selectedConversation.locator("strong").innerText();
+      await form.locator('textarea[name="knowledge_message"]').fill("FOB와 CIF 조건을 검토할 때 공식 안내에서 확인할 항목도 알려 주세요.");
+      await form.getByRole("button", { name: "질문 보내기" }).click();
+
+      await expect(answers).toHaveCount(2);
+      await expect(reviewer.locator('[data-e2e="knowledge-message"][data-message-role="user"]')).toHaveCount(2);
+      await expect(knowledgeConversations).toHaveCount(conversationCount);
+      await expect(selectedConversation.locator("strong")).toHaveText(selectedConversationTitle);
+      const recentAnswer = answers.nth(1);
+      await assertKoreanUserProse(reviewer, '[data-e2e="knowledge-message"][data-message-role="assistant"]');
+      await assertRawFilenameHidden(reviewer, '[data-e2e="knowledge-message"][data-message-role="assistant"]');
+      await assertOfficialKnowledgeSnapshot(recentAnswer);
+      await assertVerificationDetailsClosed(recentAnswer);
+      await assertNoTechnicalIdentifierInDefaultMessage(recentAnswer);
+      checks.add("knowledge_recent_history");
+    } finally {
+      await reviewer.context().close();
+    }
+  });
+
+  await test.step("수출 문서와 부분 근거 범위를 사람 검토로 표시", async () => {
+    const reviewer = await signedInPage(browser, "reviewer", networkBoundary);
+    try {
+      const exportCaseTitle = `브라우저 수출 기능 검증 ${Date.now()}`;
+      await createCase(reviewer, exportCaseTitle);
+      await addDocument(reviewer, { documentType: "CI", filename: "browser-e2e-export-invoice.txt", content: EXPORT_INVOICE });
+      await addDocument(reviewer, { documentType: "PL", filename: "browser-e2e-export-packing-list.txt", content: EXPORT_PACKING });
+      await addDocument(reviewer, { documentType: "CO", filename: "browser-e2e-export-origin.txt", content: EXPORT_ORIGIN });
+      await addDocument(reviewer, { documentType: "AWB", filename: "browser-e2e-export-awb.txt", content: EXPORT_AWB });
+      await addDocument(reviewer, { documentType: "EXPORT_DECLARATION", filename: "browser-e2e-export-declaration.txt", content: EXPORT_DECLARATION });
+      await addDocument(reviewer, { documentType: "SUPPORTING_EVIDENCE", filename: "browser-e2e-export-supporting-evidence.txt", content: EXPORT_SUPPORTING_EVIDENCE });
+      await expect(reviewer.locator('[data-e2e="document-row"]', { hasText: "항공화물운송장" })).toHaveCount(1);
+      await expect(reviewer.locator('[data-e2e="document-row"]', { hasText: "수출신고필증" })).toHaveCount(1);
+      await expect(reviewer.locator('[data-e2e="document-row"]', { hasText: "요건·보완 증빙" })).toHaveCount(1);
+      checks.add("export_document_registered");
+
+      await runReview(reviewer, "export");
+      const executionStatus = reviewer.locator('[data-e2e="review-execution-status"]');
+      const reviewDisposition = reviewer.locator('[data-e2e="review-disposition"]');
+      await expect(executionStatus).toHaveAttribute("data-review-execution-status", "partial");
+      await expect(executionStatus).toHaveText("일부 항목 확인 필요");
+      await expect(reviewDisposition).toHaveAttribute("data-review-disposition", "human_review_required");
+      await expect(reviewDisposition).toHaveText("담당자 확인 필요");
+      await reviewer.locator('[data-e2e="workspace-tab-evidence"]').click();
+      const retrievalStatus = reviewer.locator('[data-e2e="data-retrieval-status"]');
+      await expect(retrievalStatus).toHaveAttribute("data-retrieval-semantics", "retrieval-partial");
+      await expect(retrievalStatus).toContainText("일부 품목의 법령 근거를 확인하지 못했습니다.");
+      checks.add("export_partial_coverage");
+      checks.add("export_human_review_required");
     } finally {
       await reviewer.context().close();
     }
@@ -237,7 +358,7 @@ async function openCase(page: Page, title: string): Promise<void> {
 async function addDocument(
   page: Page,
   input: {
-    documentType: "CI" | "PL" | "BL" | "CO";
+    documentType: "CI" | "PL" | "BL" | "CO" | "AWB" | "EXPORT_DECLARATION" | "SUPPORTING_EVIDENCE";
     filename: string;
     content: string;
     asFile?: boolean;
@@ -270,7 +391,8 @@ async function addDocument(
   await expect(documentRows).toHaveCount(beforeCount + 1);
 }
 
-async function runReview(page: Page): Promise<void> {
+async function runReview(page: Page, tradeType: "import" | "export" = "import"): Promise<void> {
+  await page.locator('select[name="review_trade_type"]').selectOption(tradeType);
   await page.locator('[data-e2e="review-start"]').click();
   await waitForReviewPresentation(page);
 }
@@ -377,6 +499,46 @@ async function assertRawFilenameHidden(page: Page, scope: string): Promise<void>
   }
 }
 
+async function assertVerificationDetailsClosed(scope: ReturnType<Page["locator"]>): Promise<void> {
+  const details = scope.locator("details.verification-details");
+  const count = await details.count();
+  for (let index = 0; index < count; index += 1) {
+    await expect(details.nth(index)).not.toHaveAttribute("open", "");
+  }
+}
+
+async function assertNoTechnicalIdentifierInDefaultMessage(scope: ReturnType<Page["locator"]>): Promise<void> {
+  const visibleText = await scope.evaluate((node) => {
+    const copy = node.cloneNode(true) as HTMLElement;
+    for (const details of copy.querySelectorAll("details.verification-details")) details.remove();
+    return copy.innerText;
+  });
+  if (/\b(?:case|run|knowledge_conv|guide)_[A-Za-z0-9_-]+/u.test(visibleText)) {
+    throw new Error("functional_uat_browser_knowledge_default_technical_identifier_visible");
+  }
+}
+
+/**
+ * Both Browser prompts target the currently built `trade_terms` coverage.
+ * A future snapshot may legitimately report partial coverage with citations;
+ * treat that explicit limitation as safe, but never accept no-coverage or an
+ * unavailable lookup as if it were an official answer.
+ */
+async function assertOfficialKnowledgeSnapshot(scope: ReturnType<Page["locator"]>): Promise<void> {
+  const coverage = scope.locator('[data-e2e="knowledge-coverage"]');
+  await expect(coverage).toHaveCount(1);
+  const coverageText = (await coverage.innerText()).trim();
+  if (coverageText === "일부 근거 확인됨") {
+    await expect(scope.locator(".knowledge-answer-boundary")).toContainText("일부 범위의 공식 근거만 확인되었습니다.");
+  } else if (coverageText !== "근거 범위 확인됨") {
+    throw new Error("functional_uat_browser_knowledge_coverage_not_grounded");
+  }
+  await expect(scope.locator(".knowledge-citation").first()).toBeVisible();
+  await expect(scope.locator(".knowledge-citation").first()).toContainText("지식 스냅샷 기준일 2026-08-05");
+  await expect(scope.locator(".knowledge-citation a").first()).toBeVisible();
+  await expect(scope.locator("header small").first()).toContainText("지식 스냅샷 기준일 2026-08-05");
+}
+
 interface NetworkBoundary {
   attach(page: Page): void;
   assertValid(): void;
@@ -389,11 +551,14 @@ function createNetworkBoundary(): NetworkBoundary {
       page.on("request", (request) => {
         try {
           const target = new URL(request.url());
-          if (target.port === "18083" || target.port === "18090" || target.pathname.startsWith("/internal/")) {
+          if (target.port === "18083" || target.port === "18090" || target.port === "18093" || target.pathname.startsWith("/internal/")) {
             violations.add("functional_uat_browser_direct_agent_or_data_request");
           }
           if (target.pathname.startsWith("/api/v1") && target.origin !== environment.baseUrl) {
             violations.add("functional_uat_browser_bypassed_backend_proxy");
+          }
+          if (target.origin !== environment.baseUrl && target.origin !== FUNCTIONAL_UAT_KEYCLOAK_ORIGIN) {
+            violations.add("functional_uat_browser_unexpected_network_target");
           }
         } catch {
           violations.add("functional_uat_browser_invalid_request_url");

@@ -1,6 +1,22 @@
 /** Exact Browser projection of the compact Backend API v1 contract. */
 
-export type DocumentType = "CI" | "PL" | "BL" | "CO" | "UNKNOWN";
+export type TradeType = "import" | "export";
+export type KnowledgeTradeType = TradeType | "both";
+
+/**
+ * Text-document types accepted by the current review workflow.  The Browser
+ * deliberately names operational evidence separately from the four core
+ * commercial documents so reviewers do not have to disguise it as a CI/PL.
+ */
+export type DocumentType =
+  | "CI"
+  | "PL"
+  | "BL"
+  | "CO"
+  | "AWB"
+  | "EXPORT_DECLARATION"
+  | "SUPPORTING_EVIDENCE"
+  | "UNKNOWN";
 export type ReviewDisposition = "human_review_required" | "blocked";
 export type ExecutionStatus = "succeeded" | "partial" | "failed";
 export type Assessment = "no_issue_detected" | "issues_detected" | "indeterminate";
@@ -223,7 +239,15 @@ export interface DocumentAnalysis {
   document_id: string;
   filename: string;
   declared_type: string | null;
-  document_type: "invoice" | "packing_list" | "bill_of_lading" | "certificate_of_origin" | "unknown";
+  document_type:
+    | "invoice"
+    | "packing_list"
+    | "bill_of_lading"
+    | "certificate_of_origin"
+    | "air_waybill"
+    | "export_declaration"
+    | "supporting_evidence"
+    | "unknown";
   classification_source: SourceReference | null;
   extraction_status: "complete" | "needs_review";
   facts: DocumentFact[];
@@ -267,7 +291,7 @@ export interface ReviewRunSummary {
   case_id: string;
   job_id: string;
   review_as_of: string;
-  trade_type: "import" | "export";
+  trade_type: TradeType;
   execution_status: ExecutionStatus;
   assessment: Assessment;
   review_disposition: ReviewDisposition;
@@ -288,7 +312,7 @@ export interface ReviewRun {
   job_id: string;
   case_revision: number;
   review_as_of: string;
-  trade_type: "import" | "export";
+  trade_type: TradeType;
   execution_status: ExecutionStatus;
   assessment: Assessment;
   review_disposition: ReviewDisposition;
@@ -315,11 +339,11 @@ export interface ReviewRun {
   applied_correction_proposal_ids?: string[];
 }
 
-/** A link in an assistant answer back to an already displayed review fact. */
-export type AssistantCitationKind = "fact" | "comparison" | "evidence";
+/** A link in an assistant answer back to an already displayed Case review item. */
+export type CaseCitationKind = "fact" | "comparison" | "evidence";
 
-export interface AssistantCitation {
-  kind: AssistantCitationKind;
+export interface CaseCitation {
+  kind: CaseCitationKind;
   reference_id: string;
 }
 
@@ -330,6 +354,16 @@ export type AssistantAnswerScope =
   | "clarification_needed"
   | "insufficient_evidence"
   | "out_of_scope";
+
+/**
+ * The standalone knowledge route has no Case facts or review evidence.  Keep
+ * its answer scope narrower at the Browser boundary so it cannot accidentally
+ * be rendered as a Case-grounded answer.
+ */
+export type KnowledgeAnswerScope = Exclude<
+  AssistantAnswerScope,
+  "case_grounded" | "evidence_grounded"
+>;
 
 /**
  * A structured correction draft returned by the Agent. It is only a proposal:
@@ -343,6 +377,66 @@ export interface AssistantCorrectionDraft {
   new_value: string;
   unit?: string | null;
   reason: string;
+}
+
+/**
+ * A source from a versioned trade-knowledge snapshot.  It deliberately has
+ * no Case or Review Run identifier and can therefore be shown safely in both
+ * the global knowledge assistant and a separately labelled guidance section.
+ */
+export interface GuidanceEvidenceCitation {
+  kind: "guidance_evidence";
+  /** Backend may retain this compatibility alias only when it equals source_id. */
+  reference_id?: string;
+  source_id: string;
+  /**
+   * A Backend-controlled source category from the versioned official-source
+   * registry. Presentation maps every contract value to a Korean work label;
+   * the code itself is never part of the normal reviewer surface.
+   */
+  source_kind: KnowledgeSourceKind;
+  source_title: string;
+  source_uri: string;
+  as_of: string;
+  snapshot_id: string;
+  coverage: KnowledgeCoverage;
+}
+
+export type KnowledgeCoverage = "covered" | "no_coverage" | "partial" | "unavailable";
+
+/** Registered source categories in the Backend OpenAPI contract. */
+export type KnowledgeSourceKind =
+  | "official_law"
+  | "official_law_catalog"
+  | "official_agency_guidance"
+  | "official_requirement_reference"
+  | "official_public_guidance"
+  | "development_fixture";
+/** The shared citation contract for Case and official-guidance answer sections. */
+export type AssistantCitation = CaseCitation | GuidanceEvidenceCitation;
+export function isCaseCitation(citation: AssistantCitation): citation is CaseCitation {
+  return citation.kind !== "guidance_evidence";
+}
+export type AssistantAnswerSectionKind = "case_analysis" | "general_guidance";
+
+/**
+ * An answer can contain a Case-grounded section and a separately labelled
+ * general guidance section.  The UI must not merge them: their evidence
+ * boundaries are intentionally different.
+ */
+export interface AssistantAnswerSection {
+  kind: AssistantAnswerSectionKind;
+  title: string;
+  content: string;
+  citations: AssistantCitation[];
+}
+
+/** The standalone knowledge route can render only general guidance sections. */
+export interface KnowledgeAnswerSection {
+  kind: "general_guidance";
+  title: string;
+  content: string;
+  citations: GuidanceEvidenceCitation[];
 }
 
 /** Browser projection of one persisted assistant conversation. */
@@ -368,8 +462,55 @@ export interface AssistantMessage {
   citations: AssistantCitation[];
   suggested_questions: string[];
   correction_draft?: AssistantCorrectionDraft | null;
+  /** Additive V3.3-style answer projection; absent on older stored messages. */
+  answer_sections?: AssistantAnswerSection[];
   created_by: string;
   created_at: string;
+}
+
+/** A global, Case-independent conversation grounded in the official snapshot. */
+export interface KnowledgeConversation {
+  conversation_id: string;
+  title?: string | null;
+  trade_type: KnowledgeTradeType;
+  /** Backend resolves an omitted create value before persisting the conversation. */
+  as_of: string;
+  /**
+   * Resolved only after the first official-knowledge answer.  This technical
+   * identifier is shown exclusively inside the opt-in verification details.
+   */
+  snapshot_id?: string | null;
+  created_by: string;
+  created_at: string;
+  updated_at: string;
+}
+
+/** A global knowledge message never carries Case or Review Run references. */
+export interface KnowledgeMessage {
+  message_id: string;
+  conversation_id: string;
+  role: "user" | "assistant";
+  content: string;
+  answer_scope?: KnowledgeAnswerScope | null;
+  /** Global messages can only cite the official knowledge snapshot. */
+  citations: GuidanceEvidenceCitation[];
+  answer_sections?: KnowledgeAnswerSection[];
+  suggested_questions: string[];
+  /**
+   * Backend-owned resolution metadata for a standalone assistant answer.
+   * It is intentionally absent from user messages and every Case assistant
+   * message, so the Browser cannot mistake general guidance for Case data.
+   */
+  knowledge_coverage?: KnowledgeCoverage | null;
+  knowledge_snapshot_id?: string | null;
+  knowledge_as_of?: string | null;
+  created_by: string;
+  created_at: string;
+}
+
+export interface KnowledgeMessageExchange {
+  user_message: KnowledgeMessage;
+  assistant_message: KnowledgeMessage;
 }
 
 export interface AssistantMessageExchange {
@@ -441,7 +582,7 @@ export interface AddDocumentRequest {
 
 export interface EnqueueReviewRequest {
   review_as_of?: string;
-  trade_type?: "import" | "export";
+  trade_type?: TradeType;
 }
 
 export interface FindingDecisionRequest {
@@ -454,6 +595,16 @@ export interface CreateAssistantConversationRequest {
 }
 
 export interface SendAssistantMessageRequest {
+  content: string;
+}
+
+export interface CreateKnowledgeConversationRequest {
+  title?: string;
+  trade_type?: KnowledgeTradeType;
+  as_of?: string;
+}
+
+export interface SendKnowledgeMessageRequest {
   content: string;
 }
 
