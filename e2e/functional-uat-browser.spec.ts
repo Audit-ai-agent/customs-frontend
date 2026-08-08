@@ -217,6 +217,9 @@ test("실제 기능 UAT에서 사건 작업대의 사람 검토 여정을 완료
       const newKnowledgeConversation = reviewer.locator('[data-e2e="knowledge-new-conversation"]');
       await expect(newKnowledgeConversation).toBeEnabled();
       await newKnowledgeConversation.click();
+      const createKnowledgeConversation = reviewer.locator('[data-e2e="knowledge-create"]');
+      await expect(createKnowledgeConversation).toBeVisible();
+      await createKnowledgeConversation.click();
       const form = reviewer.locator('[data-e2e="knowledge-form"]');
       await expect(form).toBeVisible();
       await form.locator('textarea[name="knowledge_message"]').fill("인코텀즈 조건의 기본 차이와 확인할 책임을 알려 주세요.");
