@@ -211,7 +211,12 @@ test("실제 기능 UAT에서 사건 작업대의 사람 검토 여정을 완료
       await reviewer.goto(`${environment.baseUrl}/#/knowledge`);
       await expect(reviewer.locator('[data-e2e="knowledge-workspace-root"]')).toBeVisible();
       await expect(reviewer.locator('[data-e2e="knowledge-workspace"]')).toBeVisible();
-      await reviewer.locator('[data-e2e="knowledge-create"]').click();
+      // Functional-UAT state is deliberately retained between runs.  Always
+      // begin an unsaved thread through the stable sidebar action instead of
+      // assuming this reviewer has no prior knowledge conversations.
+      const newKnowledgeConversation = reviewer.locator('[data-e2e="knowledge-new-conversation"]');
+      await expect(newKnowledgeConversation).toBeEnabled();
+      await newKnowledgeConversation.click();
       const form = reviewer.locator('[data-e2e="knowledge-form"]');
       await expect(form).toBeVisible();
       await form.locator('textarea[name="knowledge_message"]').fill("인코텀즈 조건의 기본 차이와 확인할 책임을 알려 주세요.");
