@@ -1,6 +1,7 @@
 import type {
-  AssistantCitation,
+  AssistantAnswerSection,
   AssistantMessage,
+  CaseCitation,
   CaseDocument,
   CaseSummary,
   CorrectionProposal,
@@ -8,12 +9,17 @@ import type {
   DocumentFact,
   DocumentType,
   JobStatus,
+  KnowledgeAnswerScope,
+  KnowledgeCoverage,
+  GuidanceEvidenceCitation,
+  KnowledgeTradeType,
   ReviewComparison,
   ReviewFinding,
   ReportSectionName,
   ReviewRunSummary,
   ReviewerDecision,
   SourceReference,
+  TradeType,
 } from "./api/v1/types";
 
 /**
@@ -38,6 +44,9 @@ const DOCUMENT_TYPE_LABELS: Record<DocumentType, string> = {
   PL: "포장명세서",
   BL: "선하증권",
   CO: "원산지증명서",
+  AWB: "항공화물운송장",
+  EXPORT_DECLARATION: "수출신고필증",
+  SUPPORTING_EVIDENCE: "요건·보완 증빙",
   UNKNOWN: "문서 유형 확인 필요",
 };
 
@@ -46,6 +55,9 @@ const ANALYSIS_DOCUMENT_TYPE_LABELS: Record<DocumentAnalysis["document_type"], s
   packing_list: "포장명세서",
   bill_of_lading: "선하증권",
   certificate_of_origin: "원산지증명서",
+  air_waybill: "항공화물운송장",
+  export_declaration: "수출신고필증",
+  supporting_evidence: "요건·보완 증빙",
   unknown: "문서 유형 확인 필요",
 };
 
@@ -197,6 +209,25 @@ export function caseReferenceLabel(caseItem: Pick<CaseSummary, "external_referen
 
 export function caseStatusLabel(value: CaseSummary["status"]): string {
   return ({ open: "접수됨", in_review: "검토 진행 중", closed: "검토 종료" })[value];
+}
+
+export function tradeTypeLabel(value: TradeType): string {
+  return value === "import" ? "수입" : "수출";
+}
+
+export function knowledgeTradeTypeLabel(value: KnowledgeTradeType): string {
+  return value === "both" ? "수입·수출 공통" : tradeTypeLabel(value);
+}
+
+export function knowledgeSourceKindLabel(value: GuidanceEvidenceCitation["source_kind"]): string {
+  return {
+    official_law: "공식 법령 근거",
+    official_law_catalog: "공식 법령 정보",
+    official_agency_guidance: "관계기관 공식 안내",
+    official_requirement_reference: "공식 수출입 요건 안내",
+    official_public_guidance: "공공기관 무역 안내",
+    development_fixture: "개발용 예시 근거",
+  }[value];
 }
 
 export function jobStatusLabel(value: JobStatus): string {
@@ -383,7 +414,63 @@ export function assistantScopeLabel(value: NonNullable<AssistantMessage["answer_
   })[value];
 }
 
-export function citationLabel(citation: AssistantCitation): string {
+export function assistantAnswerSectionLabel(value: AssistantAnswerSection["kind"]): string {
+  return value === "case_analysis" ? "현재 심사 결과" : "일반 통관 안내";
+}
+
+export function assistantAnswerSectionDescription(value: AssistantAnswerSection["kind"]): string {
+  return value === "case_analysis"
+    ? "현재 심사 건의 문서, 비교 결과와 연결된 근거를 바탕으로 정리한 내용입니다."
+    : "공식 지식 스냅샷을 바탕으로 한 일반 안내이며, 현재 심사 건의 결론은 아닙니다.";
+}
+
+export function knowledgeCoverageLabel(value: KnowledgeCoverage): string {
+  return ({
+    covered: "근거 범위 확인됨",
+    no_coverage: "해당 근거 없음",
+    partial: "일부 근거 확인됨",
+    unavailable: "근거 조회 불가",
+  })[value];
+}
+
+/**
+ * Coverage is provenance, not a hidden machine status.  Make the practical
+ * limit explicit before a reviewer treats a general knowledge answer as a
+ * complete operational conclusion.
+ */
+export function knowledgeAnswerBoundaryNotice(
+  scope: KnowledgeAnswerScope,
+  citations: readonly GuidanceEvidenceCitation[],
+  resolvedCoverage?: KnowledgeCoverage | null,
+): string | null {
+  const coverage = new Set(citations.map((citation) => citation.coverage));
+  if (resolvedCoverage) coverage.add(resolvedCoverage);
+  if (scope === "out_of_scope") {
+    return "이 질문은 현재 통관 지식 안내 범위를 벗어납니다. 구체적인 사실관계는 담당자와 공식 출처로 확인해야 합니다.";
+  }
+  if (scope === "clarification_needed") {
+    return "무역 방향, 기준일 또는 대상 절차를 조금 더 구체적으로 알려 주시면 공식 근거 범위를 확인할 수 있습니다.";
+  }
+  if (coverage.has("unavailable")) {
+    return "현재 공식 근거 조회 결과를 사용할 수 없습니다. 이 답변만으로 업무 판단을 확정하지 말고 잠시 후 다시 확인하십시오.";
+  }
+  if (coverage.has("no_coverage")) {
+    return "선택한 무역 방향과 기준일에 맞는 공식 근거를 찾지 못했습니다. 일반 안내로 추정하지 않고 담당자가 공식 출처를 추가로 확인해야 합니다.";
+  }
+  if (scope === "insufficient_evidence") {
+    return "현재 공개 근거만으로는 질문에 대한 확인 가능한 답을 만들기 어렵습니다. 필요한 사실이나 공식 출처를 보완해 주십시오.";
+  }
+  if (coverage.has("partial")) {
+    return "일부 범위의 공식 근거만 확인되었습니다. 누락된 범위는 담당자가 공식 출처에서 추가로 확인해야 합니다.";
+  }
+  return null;
+}
+
+export function guidanceCitationTitle(citation: Pick<GuidanceEvidenceCitation, "source_title">): string {
+  return citation.source_title;
+}
+
+export function citationLabel(citation: CaseCitation): string {
   return ({ fact: "문서 사실 보기", comparison: "문서 비교 보기", evidence: "법령 근거 보기" })[citation.kind];
 }
 

@@ -1,5 +1,6 @@
 import type {
   AgentWorkflow,
+  AssistantAnswerSection,
   AssistantAnswerScope,
   AssistantCitation,
   AssistantConversation,
@@ -22,6 +23,13 @@ import type {
   FactSourceReference,
   HumanProvidedSourceReference,
   JobRecord,
+  KnowledgeAnswerScope,
+  KnowledgeAnswerSection,
+  KnowledgeCoverage,
+  KnowledgeConversation,
+  GuidanceEvidenceCitation,
+  KnowledgeMessage,
+  KnowledgeMessageExchange,
   PlannerAction,
   PlannerTrace,
   ReportClaim,
@@ -109,7 +117,9 @@ export function decodeCaseSummary(value: unknown): CaseSummary {
 
 export function decodeDocument(value: unknown): CaseDocument {
   const raw = record(value, "document");
-  const type = oneOf(raw.document_type, ["CI", "PL", "BL", "CO", "UNKNOWN"], "document.document_type");
+  const type = oneOf(raw.document_type, [
+    "CI", "PL", "BL", "CO", "AWB", "EXPORT_DECLARATION", "SUPPORTING_EVIDENCE", "UNKNOWN",
+  ], "document.document_type");
   if (raw.media_type !== "text/plain") throw new ContractError("only text/plain documents are supported");
   return {
     document_id: requiredString(raw.document_id, "document.document_id"),
@@ -232,6 +242,7 @@ export function decodeAssistantMessage(
   inferredRole?: AssistantMessage["role"],
 ): AssistantMessage {
   const raw = record(value, "assistant message");
+  assertCaseMessageHasNoKnowledgeProvenance(raw, "assistant message");
   const role = raw.role === undefined
     ? inferredRole
     : oneOf(raw.role, ["user", "assistant"], "assistant message.role");
@@ -245,13 +256,16 @@ export function decodeAssistantMessage(
     ...decodeAssistantAnswerScope(raw.answer_scope, role),
     citations: raw.citations === undefined
       ? []
-      : array(raw.citations, "assistant message.citations").map(decodeAssistantCitation),
+      : decodeAssistantCitationList(raw.citations, "assistant message.citations"),
     suggested_questions: raw.suggested_questions === undefined
       ? []
       : decodeSuggestedQuestions(raw.suggested_questions),
     ...(raw.correction_draft === undefined || raw.correction_draft === null
       ? {}
       : { correction_draft: decodeAssistantCorrectionDraft(raw.correction_draft, "assistant message.correction_draft") }),
+    ...(raw.answer_sections === undefined || raw.answer_sections === null
+      ? {}
+      : { answer_sections: decodeAssistantAnswerSections(raw.answer_sections, role, "assistant message.answer_sections") }),
     created_by: requiredString(raw.created_by, "assistant message.created_by"),
     created_at: requiredString(raw.created_at, "assistant message.created_at"),
   };
@@ -262,6 +276,152 @@ export function decodeAssistantMessageExchange(value: unknown): AssistantMessage
   return {
     user_message: decodeAssistantMessage(raw.user_message, "user"),
     assistant_message: decodeAssistantMessage(raw.assistant_message, "assistant"),
+  };
+}
+
+/** Decode the Case-independent official knowledge conversation boundary. */
+export function decodeKnowledgeConversation(value: unknown): KnowledgeConversation {
+  const raw = record(value, "knowledge conversation");
+  assertKnowledgeIsCaseIndependent(raw, "knowledge conversation");
+  return {
+    conversation_id: requiredString(raw.conversation_id, "knowledge conversation.conversation_id"),
+    ...(raw.title === undefined || raw.title === null
+      ? {}
+      : { title: displayText(raw.title, "knowledge conversation.title") }),
+    trade_type: oneOf(raw.trade_type, ["import", "export", "both"], "knowledge conversation.trade_type"),
+    as_of: isoDate(raw.as_of, "knowledge conversation.as_of"),
+    ...(raw.snapshot_id === undefined || raw.snapshot_id === null
+      ? {}
+      : { snapshot_id: technicalIdentifier(raw.snapshot_id, "knowledge conversation.snapshot_id") }),
+    created_by: requiredString(raw.created_by, "knowledge conversation.created_by"),
+    created_at: requiredString(raw.created_at, "knowledge conversation.created_at"),
+    updated_at: requiredString(raw.updated_at, "knowledge conversation.updated_at"),
+  };
+}
+
+export function decodeKnowledgeMessage(
+  value: unknown,
+  inferredRole?: KnowledgeMessage["role"],
+): KnowledgeMessage {
+  const raw = record(value, "knowledge message");
+  assertKnowledgeIsCaseIndependent(raw, "knowledge message");
+  const role = raw.role === undefined
+    ? inferredRole
+    : oneOf(raw.role, ["user", "assistant"], "knowledge message.role");
+  if (!role) throw new ContractError("knowledge message.role is absent");
+  if (raw.snapshot_id !== undefined || raw.as_of !== undefined || raw.coverage !== undefined || raw.registry_version !== undefined) {
+    throw new ContractError("knowledge message provenance must be carried by guidance evidence citations");
+  }
+  const citations = raw.citations === undefined
+    ? []
+    : decodeAssistantCitationList(raw.citations, "knowledge message.citations");
+  const answerSections = raw.answer_sections === undefined || raw.answer_sections === null
+    ? []
+    : decodeAssistantAnswerSections(raw.answer_sections, role, "knowledge message.answer_sections");
+  const suggestedQuestions = raw.suggested_questions === undefined
+    ? []
+    : decodeSuggestedQuestions(raw.suggested_questions);
+  const answerScope = decodeKnowledgeAnswerScope(raw.answer_scope, role);
+  const provenance = decodeKnowledgeMessageProvenance(raw, role, "knowledge message");
+  if ([...citations, ...answerSections.flatMap((section) => section.citations)].some((citation) => citation.kind !== "guidance_evidence")) {
+    throw new ContractError("knowledge message citations must not reference a Case or review run");
+  }
+  if (role === "user" && (citations.length || answerSections.length || suggestedQuestions.length || answerScope.answer_scope !== undefined)) {
+    throw new ContractError("knowledge user message cannot carry an answer projection");
+  }
+  if (role === "assistant" && answerSections.some((section) => section.kind !== "general_guidance")) {
+    throw new ContractError("knowledge answer cannot contain a Case analysis section");
+  }
+  return {
+    message_id: requiredString(raw.message_id, "knowledge message.message_id"),
+    conversation_id: requiredString(raw.conversation_id, "knowledge message.conversation_id"),
+    role,
+    content: displayText(raw.content, "knowledge message.content"),
+    ...answerScope,
+    citations: citations as GuidanceEvidenceCitation[],
+    ...(answerSections.length ? { answer_sections: answerSections as KnowledgeAnswerSection[] } : {}),
+    suggested_questions: suggestedQuestions,
+    ...provenance,
+    created_by: requiredString(raw.created_by, "knowledge message.created_by"),
+    created_at: requiredString(raw.created_at, "knowledge message.created_at"),
+  };
+}
+
+/**
+ * The Backend's ordinary Case conversation route must never carry a global
+ * knowledge-snapshot resolution.  Rejecting it here prevents a future API
+ * regression from blurring the Case and general-guidance data boundaries.
+ */
+function assertCaseMessageHasNoKnowledgeProvenance(raw: Record<string, unknown>, context: string): void {
+  const prohibited = ["knowledge_coverage", "knowledge_snapshot_id", "knowledge_as_of"];
+  const found = prohibited.find((key) => raw[key] !== undefined);
+  if (found) throw new ContractError(`${context} must not include standalone knowledge provenance (${found})`);
+}
+
+/**
+ * New standalone knowledge answers retain the Data resolution even when no
+ * citation exists (for example, no coverage or a temporary unavailable
+ * result).  Older persisted messages legitimately have none of these
+ * additive fields, but partial provenance and provenance on a user message
+ * are both rejected.
+ */
+function decodeKnowledgeMessageProvenance(
+  raw: Record<string, unknown>,
+  role: KnowledgeMessage["role"],
+  context: string,
+): Pick<KnowledgeMessage, "knowledge_coverage" | "knowledge_snapshot_id" | "knowledge_as_of"> {
+  const hasCoverage = raw.knowledge_coverage !== undefined;
+  const hasSnapshot = raw.knowledge_snapshot_id !== undefined;
+  const hasAsOf = raw.knowledge_as_of !== undefined;
+  const supplied = hasCoverage || hasSnapshot || hasAsOf;
+  if (!supplied) return {};
+  if (role !== "assistant") {
+    throw new ContractError(`${context} user message must not include standalone knowledge provenance`);
+  }
+  if (!hasCoverage || !hasAsOf) {
+    throw new ContractError(`${context} provenance requires knowledge_coverage and knowledge_as_of`);
+  }
+  return {
+    knowledge_coverage: oneOf(
+      raw.knowledge_coverage,
+      ["covered", "no_coverage", "partial", "unavailable"] as const,
+      `${context}.knowledge_coverage`,
+    ) as KnowledgeCoverage,
+    knowledge_as_of: isoDate(raw.knowledge_as_of, `${context}.knowledge_as_of`),
+    ...(hasSnapshot
+      ? { knowledge_snapshot_id: technicalIdentifier(raw.knowledge_snapshot_id, `${context}.knowledge_snapshot_id`) }
+      : {}),
+  };
+}
+
+function assertKnowledgeIsCaseIndependent(raw: Record<string, unknown>, context: string): void {
+  const prohibited = [
+    "case_id",
+    "review_run_id",
+    "case",
+    "review_run",
+    "review_input",
+    "review_result",
+    "document_id",
+    "document_ids",
+    "document",
+    "documents",
+    "document_content",
+    "content_text",
+    "document_analyses",
+    "correction_draft",
+  ];
+  const found = prohibited.find((key) => raw[key] !== undefined && raw[key] !== null);
+  if (found) {
+    throw new ContractError(`${context} must not include Case, review, or document data (${found})`);
+  }
+}
+
+export function decodeKnowledgeMessageExchange(value: unknown): KnowledgeMessageExchange {
+  const raw = record(value, "knowledge message exchange");
+  return {
+    user_message: decodeKnowledgeMessage(raw.user_message, "user"),
+    assistant_message: decodeKnowledgeMessage(raw.assistant_message, "assistant"),
   };
 }
 
@@ -528,7 +688,10 @@ function decodeDocumentAnalysis(value: unknown): DocumentAnalysis {
     document_id: requiredString(raw.document_id, "document analysis.document_id"),
     filename: requiredString(raw.filename, "document analysis.filename"),
     declared_type: raw.declared_type === null ? null : requiredString(raw.declared_type, "document analysis.declared_type"),
-    document_type: oneOf(raw.document_type, ["invoice", "packing_list", "bill_of_lading", "certificate_of_origin", "unknown"], "document analysis.document_type"),
+    document_type: oneOf(raw.document_type, [
+      "invoice", "packing_list", "bill_of_lading", "certificate_of_origin", "air_waybill",
+      "export_declaration", "supporting_evidence", "unknown",
+    ], "document analysis.document_type"),
     classification_source: raw.classification_source === null ? null : decodeDocumentSource(raw.classification_source),
     extraction_status: oneOf(raw.extraction_status, ["complete", "needs_review"], "document analysis.extraction_status"),
     facts: array(raw.facts, "document analysis.facts").map(decodeFact),
@@ -669,12 +832,46 @@ function decodeReviewerDecisionEntry(value: Record<string, unknown>, context: st
   };
 }
 
-function decodeAssistantCitation(value: unknown): AssistantCitation {
-  const raw = record(value, "assistant citation");
+function decodeAssistantCitation(value: unknown, context: string): AssistantCitation {
+  const raw = record(value, context);
+  if (raw.kind === "guidance_evidence") {
+    const sourceId = requiredString(raw.source_id, `${context}.source_id`);
+    if (raw.reference_id !== undefined && raw.reference_id !== sourceId) {
+      throw new ContractError(`${context}: guidance evidence reference_id must match source_id`);
+    }
+    return {
+      kind: "guidance_evidence",
+      ...(raw.reference_id === undefined ? {} : { reference_id: sourceId }),
+      source_id: sourceId,
+      source_kind: knowledgeSourceKind(raw.source_kind, `${context}.source_kind`),
+      source_title: displayText(raw.source_title, `${context}.source_title`),
+      source_uri: requiredString(raw.source_uri, `${context}.source_uri`),
+      as_of: isoDate(raw.as_of, `${context}.as_of`),
+      snapshot_id: requiredString(raw.snapshot_id, `${context}.snapshot_id`),
+      coverage: oneOf(raw.coverage, ["covered", "no_coverage", "partial", "unavailable"] as const, `${context}.coverage`),
+    } satisfies GuidanceEvidenceCitation;
+  }
+  if (
+    raw.source_id !== undefined
+    || raw.source_kind !== undefined
+    || raw.source_title !== undefined
+    || raw.source_uri !== undefined
+    || raw.as_of !== undefined
+    || raw.snapshot_id !== undefined
+    || raw.coverage !== undefined
+  ) {
+    throw new ContractError(`${context}: Case citation cannot include guidance provenance`);
+  }
   return {
-    kind: oneOf(raw.kind, ["fact", "comparison", "evidence"], "assistant citation.kind"),
-    reference_id: requiredString(raw.reference_id, "assistant citation.reference_id"),
+    kind: oneOf(raw.kind, ["fact", "comparison", "evidence"] as const, `${context}.kind`),
+    reference_id: requiredString(raw.reference_id, `${context}.reference_id`),
   };
+}
+
+function decodeAssistantCitationList(value: unknown, context: string): AssistantCitation[] {
+  const values = array(value, context);
+  if (values.length > 100) throw new ContractError(`${context} exceeds one hundred items`);
+  return values.map((citation, index) => decodeAssistantCitation(citation, `${context}[${index}]`));
 }
 
 function decodeAssistantAnswerScope(
@@ -694,6 +891,25 @@ function decodeAssistantAnswerScope(
       "insufficient_evidence",
       "out_of_scope",
     ], "assistant message.answer_scope"),
+  };
+}
+
+function decodeKnowledgeAnswerScope(
+  value: unknown,
+  role: KnowledgeMessage["role"],
+): { answer_scope?: KnowledgeAnswerScope } {
+  if (value === undefined || value === null) {
+    if (role === "assistant") throw new ContractError("knowledge assistant answer_scope is absent");
+    return {};
+  }
+  if (role !== "assistant") throw new ContractError("knowledge user message cannot carry an answer scope");
+  return {
+    answer_scope: oneOf(value, [
+      "general_customs_guidance",
+      "clarification_needed",
+      "insufficient_evidence",
+      "out_of_scope",
+    ] as const, "knowledge message.answer_scope"),
   };
 }
 
@@ -724,6 +940,37 @@ function decodeAssistantCorrectionDraft(value: unknown, context: string): Assist
   };
 }
 
+function decodeAssistantAnswerSections(
+  value: unknown,
+  role: "user" | "assistant",
+  context: string,
+): AssistantAnswerSection[] {
+  const sections = array(value, context);
+  if (!sections.length) return [];
+  if (role !== "assistant") throw new ContractError(`${context}: only assistant messages can include sections`);
+  if (sections.length > 2) {
+    throw new ContractError(`${context}: one or two bounded sections are required`);
+  }
+  const decoded = sections.map((section, index) => decodeAssistantAnswerSection(section, `${context}[${index}]`));
+  if (new Set(decoded.map((section) => section.kind)).size !== decoded.length) {
+    throw new ContractError(`${context}: duplicate section kind is not allowed`);
+  }
+  return decoded;
+}
+
+function decodeAssistantAnswerSection(value: unknown, context: string): AssistantAnswerSection {
+  const raw = record(value, context);
+  const citations = raw.citations === undefined
+    ? []
+    : decodeAssistantCitationList(raw.citations, `${context}.citations`);
+  return {
+    kind: oneOf(raw.kind, ["case_analysis", "general_guidance"], `${context}.kind`),
+    title: displayText(raw.title, `${context}.title`),
+    content: displayText(raw.content, `${context}.content`),
+    citations,
+  };
+}
+
 function decodeIdentifierList(value: unknown, context: string): string[] {
   return array(value, context).map((item, index) => requiredString(item, `${context}[${index}]`));
 }
@@ -741,6 +988,30 @@ function array(value: unknown, context: string): unknown[] {
 function requiredString(value: unknown, context: string): string {
   if (typeof value !== "string" || value.length === 0 || value.length > 20_000 || /[\r\n\0]/u.test(value)) throw new ContractError(`${context}: safe string expected`);
   return value;
+}
+
+/**
+ * Snapshot identifiers are technical values: validate them before they reach
+ * an opt-in copyable verification panel, and never render arbitrary provider
+ * text as an identifier.
+ */
+function technicalIdentifier(value: unknown, context: string): string {
+  const identifier = requiredString(value, context);
+  if (identifier.length > 512 || !/^[A-Za-z0-9][A-Za-z0-9._:-]*$/.test(identifier)) {
+    throw new ContractError(`${context} is not a safe technical identifier`);
+  }
+  return identifier;
+}
+
+function knowledgeSourceKind(value: unknown, context: string): GuidanceEvidenceCitation["source_kind"] {
+  return oneOf(value, [
+    "official_law",
+    "official_law_catalog",
+    "official_agency_guidance",
+    "official_requirement_reference",
+    "official_public_guidance",
+    "development_fixture",
+  ] as const, context);
 }
 
 function displayText(value: unknown, context: string): string {
