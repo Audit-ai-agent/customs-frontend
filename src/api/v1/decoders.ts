@@ -27,6 +27,7 @@ import type {
   KnowledgeAnswerSection,
   KnowledgeCoverage,
   KnowledgeConversation,
+  GuidanceResolution,
   GuidanceEvidenceCitation,
   KnowledgeMessage,
   KnowledgeMessageExchange,
@@ -266,6 +267,8 @@ export function decodeAssistantMessage(
     ...(raw.answer_sections === undefined || raw.answer_sections === null
       ? {}
       : { answer_sections: decodeAssistantAnswerSections(raw.answer_sections, role, "assistant message.answer_sections") }),
+    ...decodeCaseGuidanceResolution(raw, role, "assistant message"),
+    ...decodeCaseInputNotice(raw, role, "assistant message"),
     created_by: requiredString(raw.created_by, "assistant message.created_by"),
     created_at: requiredString(raw.created_at, "assistant message.created_at"),
   };
@@ -276,6 +279,61 @@ export function decodeAssistantMessageExchange(value: unknown): AssistantMessage
   return {
     user_message: decodeAssistantMessage(raw.user_message, "user"),
     assistant_message: decodeAssistantMessage(raw.assistant_message, "assistant"),
+  };
+}
+
+function decodeCaseGuidanceResolution(
+  raw: Record<string, unknown>,
+  role: AssistantMessage["role"],
+  context: string,
+): Pick<AssistantMessage, "guidance_resolution"> {
+  if (raw.guidance_resolution === undefined || raw.guidance_resolution === null) return {};
+  if (role !== "assistant") throw new ContractError(`${context} user message cannot carry guidance resolution`);
+  return { guidance_resolution: decodeGuidanceResolutionValue(raw.guidance_resolution, `${context}.guidance_resolution`) };
+}
+
+function decodeGuidanceResolutionValue(value: unknown, context: string): GuidanceResolution {
+  const raw = record(value, context);
+  const applicable = array(raw.applicable_directions, `${context}.applicable_directions`);
+  if (!applicable.length || applicable.length > 2) {
+    throw new ContractError(`${context}.applicable_directions must have one or two values`);
+  }
+  const applicable_directions = applicable.map((direction, index) => oneOf(
+    direction,
+    ["import", "export"] as const,
+    `${context}.applicable_directions[${index}]`,
+  ));
+  if (new Set(applicable_directions).size !== applicable_directions.length) {
+    throw new ContractError(`${context}.applicable_directions must be unique`);
+  }
+  const coverage = oneOf(raw.coverage, ["covered", "no_coverage", "partial", "unavailable"] as const, `${context}.coverage`);
+  const snapshot = raw.snapshot_id === undefined || raw.snapshot_id === null
+    ? undefined
+    : technicalIdentifier(raw.snapshot_id, `${context}.snapshot_id`);
+  if ((coverage === "covered" || coverage === "partial") && !snapshot) {
+    throw new ContractError(`${context} coverage requires a snapshot`);
+  }
+  return {
+    topic: requiredString(raw.topic, `${context}.topic`),
+    scope: requiredString(raw.scope, `${context}.scope`),
+    requested_direction: oneOf(raw.requested_direction, ["import", "export", "both"] as const, `${context}.requested_direction`),
+    applicable_directions,
+    coverage,
+    ...(snapshot === undefined ? {} : { snapshot_id: snapshot }),
+    as_of: isoDate(raw.as_of, `${context}.as_of`),
+    registry_version: oneOf(raw.registry_version, ["1.0", "2.0"] as const, `${context}.registry_version`),
+  };
+}
+
+function decodeCaseInputNotice(
+  raw: Record<string, unknown>,
+  role: AssistantMessage["role"],
+  context: string,
+): Pick<AssistantMessage, "case_input_notice"> {
+  if (raw.case_input_notice === undefined || raw.case_input_notice === null) return {};
+  if (role !== "assistant") throw new ContractError(`${context} user message cannot carry a Case input notice`);
+  return {
+    case_input_notice: oneOf(raw.case_input_notice, ["unregistered_document_text"] as const, `${context}.case_input_notice`),
   };
 }
 
@@ -323,6 +381,7 @@ export function decodeKnowledgeMessage(
     : decodeSuggestedQuestions(raw.suggested_questions);
   const answerScope = decodeKnowledgeAnswerScope(raw.answer_scope, role);
   const provenance = decodeKnowledgeMessageProvenance(raw, role, "knowledge message");
+  const guidanceResolution = decodeKnowledgeGuidanceResolution(raw, role, "knowledge message");
   if ([...citations, ...answerSections.flatMap((section) => section.citations)].some((citation) => citation.kind !== "guidance_evidence")) {
     throw new ContractError("knowledge message citations must not reference a Case or review run");
   }
@@ -342,9 +401,20 @@ export function decodeKnowledgeMessage(
     ...(answerSections.length ? { answer_sections: answerSections as KnowledgeAnswerSection[] } : {}),
     suggested_questions: suggestedQuestions,
     ...provenance,
+    ...guidanceResolution,
     created_by: requiredString(raw.created_by, "knowledge message.created_by"),
     created_at: requiredString(raw.created_at, "knowledge message.created_at"),
   };
+}
+
+function decodeKnowledgeGuidanceResolution(
+  raw: Record<string, unknown>,
+  role: KnowledgeMessage["role"],
+  context: string,
+): Pick<KnowledgeMessage, "guidance_resolution"> {
+  if (raw.guidance_resolution === undefined || raw.guidance_resolution === null) return {};
+  if (role !== "assistant") throw new ContractError(`${context} user message cannot carry guidance resolution`);
+  return { guidance_resolution: decodeGuidanceResolutionValue(raw.guidance_resolution, `${context}.guidance_resolution`) };
 }
 
 /**
@@ -948,12 +1018,18 @@ function decodeAssistantAnswerSections(
   const sections = array(value, context);
   if (!sections.length) return [];
   if (role !== "assistant") throw new ContractError(`${context}: only assistant messages can include sections`);
-  if (sections.length > 2) {
-    throw new ContractError(`${context}: one or two bounded sections are required`);
+  if (sections.length > 3) {
+    throw new ContractError(`${context}: at most three bounded sections are allowed`);
   }
   const decoded = sections.map((section, index) => decodeAssistantAnswerSection(section, `${context}[${index}]`));
   if (new Set(decoded.map((section) => section.kind)).size !== decoded.length) {
     throw new ContractError(`${context}: duplicate section kind is not allowed`);
+  }
+  const ordering = decoded[0]?.kind === "general_guidance"
+    ? ["general_guidance"] as const
+    : ["case_analysis", "general_guidance", "case_application"] as const;
+  if (decoded.some((section, index) => ordering[index] !== section.kind)) {
+    throw new ContractError(`${context}: sections must use the Case, general guidance, application order`);
   }
   return decoded;
 }
@@ -964,7 +1040,7 @@ function decodeAssistantAnswerSection(value: unknown, context: string): Assistan
     ? []
     : decodeAssistantCitationList(raw.citations, `${context}.citations`);
   return {
-    kind: oneOf(raw.kind, ["case_analysis", "general_guidance"], `${context}.kind`),
+    kind: oneOf(raw.kind, ["case_analysis", "general_guidance", "case_application"], `${context}.kind`),
     title: displayText(raw.title, `${context}.title`),
     content: displayText(raw.content, `${context}.content`),
     citations,

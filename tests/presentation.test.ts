@@ -14,7 +14,10 @@ import {
   documentTypeLabel,
   assistantAnswerSectionDescription,
   assistantAnswerSectionLabel,
+  caseGuidanceResolutionNotice,
   guidanceCitationTitle,
+  guidanceDirectionLabel,
+  guidanceScopeLabel,
   knowledgeAnswerBoundaryNotice,
   knowledgeCoverageLabel,
   knowledgeSourceKindLabel,
@@ -57,9 +60,17 @@ describe("Korean commercial presentation policy", () => {
     expect(documentTypeLabel("AWB")).toBe("항공화물운송장");
     expect(documentTypeLabel("EXPORT_DECLARATION")).toBe("수출신고필증");
     expect(documentTypeLabel("SUPPORTING_EVIDENCE")).toBe("요건·보완 증빙");
-    expect(assistantAnswerSectionLabel("case_analysis")).toBe("현재 심사 결과");
+    expect(assistantAnswerSectionLabel("case_analysis")).toBe("현재 사건 기준");
     expect(assistantAnswerSectionLabel("general_guidance")).toBe("일반 통관 안내");
+    expect(assistantAnswerSectionLabel("case_application")).toBe("사건 적용·다음 확인");
     expect(assistantAnswerSectionDescription("general_guidance")).toContain("일반 안내");
+    expect(assistantAnswerSectionDescription("case_application")).toContain("자동 승인");
+    expect(guidanceScopeLabel("origin_evidence")).toBe("원산지 증빙");
+    expect(guidanceDirectionLabel(["import"])).toBe("한국 수입 기준");
+    expect(caseGuidanceResolutionNotice({
+      topic: "origin_verification", scope: "origin_evidence", requested_direction: "import", applicable_directions: ["import"],
+      coverage: "no_coverage", as_of: "2026-08-05", registry_version: "2.0",
+    })).toContain("추정하지 않습니다");
     expect(knowledgeCoverageLabel("covered")).toBe("근거 범위 확인됨");
     expect(knowledgeCoverageLabel("partial")).toBe("일부 근거 확인됨");
     expect(knowledgeCoverageLabel("no_coverage")).toBe("해당 근거 없음");

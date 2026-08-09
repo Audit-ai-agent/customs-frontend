@@ -425,9 +425,13 @@ textarea { min-height: 7rem; resize: vertical; line-height: 1.55; }
 .assistant-answer-section { padding: .65rem .7rem; color: #425e76; background: #f6fafc; border: 1px solid #dbe8ef; border-radius: .62rem; }
 .assistant-answer-section--case_analysis { background: #f2f8fc; border-color: #c9e0ed; }
 .assistant-answer-section--general_guidance { background: #f8f7fc; border-color: #ddd9ed; }
+.assistant-answer-section--case_application { background: #f4faf4; border-color: #cae4cd; }
 .assistant-answer-section > header { display: grid; gap: .15rem; margin-bottom: .45rem; }
 .assistant-answer-section > header strong { color: #1e587d; font-size: .8rem; }
 .assistant-answer-section--general_guidance > header strong { color: #5a4b85; }
+.assistant-answer-section--case_application > header strong { color: #286343; }
+.assistant-answer-section__label { display: inline-flex; align-items: center; gap: .3rem; }
+.assistant-answer-section__icon { width: 1rem; text-align: center; font-weight: 900; }
 .assistant-answer-section > header span { color: #607489; font-size: .73rem; line-height: 1.45; }
 .assistant-answer-section > header small { color: #708296; font-size: .7rem; line-height: 1.4; }
 .assistant-answer-section > p { margin: 0; color: #3e586f; font-size: .86rem; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }

@@ -85,15 +85,19 @@ describe("commercial review workspace", () => {
       message_id: "knowledge-message-1", conversation_id: "knowledge-1", role: "assistant" as const, content: "수출 신고 전에 공식 제출 요건을 확인하십시오.",
       answer_scope: "general_customs_guidance" as const,
       citations: [{
-        kind: "guidance_evidence" as const, source_id: "source-1", source_kind: "official_law", source_title: "관세법 제241조", source_uri: "https://www.customs.go.kr/kcs/guide", as_of: "2026-08-05", snapshot_id: "snapshot-1", coverage: "covered" as const,
+        kind: "guidance_evidence" as const, source_id: "source-1", source_kind: "official_agency_guidance", source_title: "수출 통관", source_uri: "https://www2.customs.go.kr/kcs/cm/cntnts/cntntsView.do?cntntsId=818&mi=2820", as_of: "2026-08-05", snapshot_id: "snapshot-1", coverage: "covered" as const,
       }],
       answer_sections: [
         { kind: "general_guidance" as const, title: "공식 수출 안내", content: "수출 신고 전에 공식 제출 요건을 확인하십시오.", citations: [{
-          kind: "guidance_evidence" as const, source_id: "source-1", source_kind: "official_law", source_title: "관세법 제241조", source_uri: "https://www.customs.go.kr/kcs/guide", as_of: "2026-08-05", snapshot_id: "snapshot-1", coverage: "covered" as const,
+          kind: "guidance_evidence" as const, source_id: "source-1", source_kind: "official_agency_guidance", source_title: "수출 통관", source_uri: "https://www2.customs.go.kr/kcs/cm/cntnts/cntntsView.do?cntntsId=818&mi=2820", as_of: "2026-08-05", snapshot_id: "snapshot-1", coverage: "covered" as const,
         }] },
       ],
       suggested_questions: ["수출 신고 절차를 더 알려줘"],
       knowledge_coverage: "covered" as const, knowledge_snapshot_id: "kr-trade-20260805-a1b2", knowledge_as_of: "2026-08-05",
+      guidance_resolution: {
+        topic: "customs_declaration", scope: "export_declaration", requested_direction: "export", applicable_directions: ["export" as const],
+        coverage: "covered" as const, snapshot_id: "kr-trade-20260805-a1b2", as_of: "2026-08-05", registry_version: "2.0" as const,
+      },
       created_by: "agent", created_at: "2026-08-05T00:01:00Z",
     }];
     const api = {
@@ -115,14 +119,16 @@ describe("commercial review workspace", () => {
     expect(root.textContent).toContain("개별 법령의 적용·효력 판단은 아닙니다.");
     expect(root.querySelector('[data-e2e="answer-section-general_guidance"]')?.textContent).toContain("일반 통관 안내");
     expect(root.querySelector('[data-e2e="answer-section-general_guidance"]')?.textContent).toContain("공식 수출 안내");
-    expect(root.querySelector('[data-e2e="answer-section-general_guidance"]')?.textContent).toContain("관세법 제241조");
+    expect(root.querySelector('[data-e2e="answer-section-general_guidance"]')?.textContent).toContain("수출 통관");
     expect(root.textContent?.match(/수출 신고 전에 공식 제출 요건을 확인하십시오\./g)).toHaveLength(1);
     expect(root.querySelectorAll(".assistant-message__content")).toHaveLength(0);
     const sourceLink = root.querySelector<HTMLAnchorElement>(".knowledge-citation a");
-    expect(sourceLink?.href).toBe("https://www.customs.go.kr/kcs/guide");
-    expect(sourceLink?.getAttribute("aria-label")).toBe("관세법 제241조 출처 열기");
+    expect(sourceLink?.href).toBe("https://www2.customs.go.kr/kcs/cm/cntnts/cntntsView.do?cntntsId=818&mi=2820");
+    expect(sourceLink?.getAttribute("aria-label")).toBe("수출 통관 출처 열기");
     expect(root.textContent).toContain("근거 범위 확인됨");
     expect(root.textContent).toContain("기준일 2026-08-05");
+    expect(root.querySelector('[data-e2e="knowledge-guidance-resolution"]')?.textContent).toContain("수출 신고");
+    expect(root.querySelector('[data-e2e="knowledge-guidance-resolution"]')?.textContent).toContain("한국 수출 기준");
     expect(root.querySelectorAll(".knowledge-citation")).toHaveLength(1);
     expect(root.querySelector('ol[aria-label="통관 지식 도우미 메시지"]')?.getAttribute("aria-live")).toBe("polite");
     expect(root.textContent).not.toContain("source-1");
@@ -580,7 +586,13 @@ describe("commercial review workspace", () => {
     const userMessage = { message_id: "message-user-1", conversation_id: "conversation-1", role: "user" as const, content: "수량을 확인해 줘", citations: [], suggested_questions: [], created_by: "local-reviewer", created_at: "2026-08-05T00:00:00Z" };
     const assistantMessage = {
       message_id: "message-assistant-1", conversation_id: "conversation-1", role: "assistant" as const, content: "문서 간 비교 결과를 확인하십시오.",
-      answer_scope: "case_grounded" as const, citations: [{ kind: "evidence" as const, reference_id: "evidence-1" }],
+      answer_scope: "case_grounded" as const, citations: [
+        { kind: "evidence" as const, reference_id: "evidence-1" },
+        {
+          kind: "guidance_evidence" as const, source_id: "source-case-guidance", source_kind: "official_law" as const,
+          source_title: "관세법 제241조", source_uri: "https://example.test/customs", as_of: "2026-08-05", snapshot_id: "snapshot-case-guidance", coverage: "partial" as const,
+        },
+      ],
       answer_sections: [
         {
           kind: "case_analysis" as const, title: "현재 심사 결과", content: "문서 간 비교 결과를 확인하십시오.",
@@ -593,7 +605,21 @@ describe("commercial review workspace", () => {
             source_title: "관세법 제241조", source_uri: "https://example.test/customs", as_of: "2026-08-05", snapshot_id: "snapshot-case-guidance", coverage: "covered" as const,
           }],
         },
+        {
+          kind: "case_application" as const, title: "다음 확인", content: "현재 사건에서 원산지 관련 문서와 일반 안내 범위를 함께 확인하십시오.",
+          citations: [
+            { kind: "evidence" as const, reference_id: "evidence-1" },
+            {
+              kind: "guidance_evidence" as const, source_id: "source-case-guidance", source_kind: "official_law" as const,
+              source_title: "관세법 제241조", source_uri: "https://example.test/customs", as_of: "2026-08-05", snapshot_id: "snapshot-case-guidance", coverage: "partial" as const,
+            },
+          ],
+        },
       ],
+      guidance_resolution: {
+        topic: "origin_verification", scope: "origin_evidence", requested_direction: "import", applicable_directions: ["import" as const],
+        coverage: "partial" as const, snapshot_id: "snapshot-case-guidance", as_of: "2026-08-05", registry_version: "2.0" as const,
+      },
       suggested_questions: ["원문 인용을 보여줘"], correction_draft: { document_id: "document-1", fact_id: "fact-1", field_name: "quantity", new_value: "12", unit: "EA", reason: "원문 확인" }, created_by: "agent", created_at: "2026-08-05T00:00:01Z",
     };
     const run = reviewRun();
@@ -614,9 +640,12 @@ describe("commercial review workspace", () => {
     await app.start();
     expect(root.textContent).toContain("AI 도우미");
     expect(root.textContent).toContain("문서 간 비교 결과를 확인하십시오.");
-    expect(root.querySelector('[data-e2e="answer-section-case_analysis"]')?.textContent).toContain("현재 심사 결과");
+    expect(root.querySelector('[data-e2e="answer-section-case_analysis"]')?.textContent).toContain("현재 사건 기준");
     expect(root.querySelector('[data-e2e="answer-section-general_guidance"]')?.textContent).toContain("일반 통관 안내");
     expect(root.querySelector('[data-e2e="answer-section-general_guidance"]')?.textContent).toContain("관세법 제241조");
+    expect(root.querySelector('[data-e2e="answer-section-case_application"]')?.textContent).toContain("사건 적용·다음 확인");
+    expect(root.querySelector('[data-e2e="case-guidance-resolution"]')?.textContent).toContain("일부 공식 근거만 확인되었습니다");
+    expect(root.querySelectorAll(".assistant-message__content")).toHaveLength(1);
     expect(root.textContent).not.toContain("source-case-guidance");
     await (app as unknown as { sendAssistantMessage(value: string): Promise<void> }).sendAssistantMessage("근거를 열어 줘");
     expect(api.sendAssistantMessage).toHaveBeenCalled();
