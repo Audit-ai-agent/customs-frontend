@@ -113,7 +113,7 @@ describe("Backend API client", () => {
     expect(requests[1]?.init?.method).toBe("PUT");
   });
 
-  it("waits longer only for bounded review and revision execution", async () => {
+  it("uses bounded execution budgets for review, revision, and official knowledge answers", async () => {
     const timeout = vi.spyOn(AbortSignal, "timeout");
     const fetcher: typeof fetch = async (input) => {
       const url = String(input);
@@ -126,6 +126,19 @@ describe("Backend API client", () => {
       if (url.endsWith("/jobs/job-review-1")) {
         return json({ job_id: "job-review-1", case_id: "case-1", review_run_id: "run-1", status: "succeeded", created_by: "reviewer", created_at: "2026-08-05T00:00:00Z", updated_at: "2026-08-05T00:00:00Z" });
       }
+      if (url.endsWith("/knowledge/conversations/knowledge-timeout/messages")) {
+        return json({
+          user_message: {
+            message_id: "knowledge-user-timeout", conversation_id: "knowledge-timeout", role: "user", content: "수입 통관 절차를 알려 주세요.",
+            citations: [], answer_sections: [], suggested_questions: [], created_by: "reviewer", created_at: "2026-08-05T00:00:00Z",
+          },
+          assistant_message: {
+            message_id: "knowledge-assistant-timeout", conversation_id: "knowledge-timeout", role: "assistant", content: "공식 안내 범위를 확인해 주세요.",
+            answer_scope: "insufficient_evidence", citations: [], answer_sections: [], suggested_questions: [],
+            knowledge_coverage: "unavailable", knowledge_as_of: "2026-08-05", created_by: "agent", created_at: "2026-08-05T00:00:01Z",
+          },
+        });
+      }
       return json({ detail: "unexpected request" }, 500);
     };
     const api = new ApiClient(fetcher, async () => "local-token");
@@ -133,7 +146,8 @@ describe("Backend API client", () => {
       await api.enqueueReview("case-1", { trade_type: "import" }, "review-timeout-key");
       await api.enqueueRevision("run-1", { proposal_ids: ["proposal-1"] }, "revision-timeout-key");
       await api.getJob("job-review-1");
-      expect(timeout.mock.calls.map(([milliseconds]) => milliseconds)).toEqual([120_000, 120_000, 30_000]);
+      await api.sendKnowledgeMessage("knowledge-timeout", { content: "수입 통관 절차를 알려 주세요." }, "knowledge-timeout-key");
+      expect(timeout.mock.calls.map(([milliseconds]) => milliseconds)).toEqual([120_000, 120_000, 30_000, 190_000]);
     } finally {
       timeout.mockRestore();
     }

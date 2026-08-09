@@ -10,6 +10,10 @@ import {
 
 const environment = loadFunctionalUatBrowserEnvironment();
 const RUN_ID = /^run_[0-9a-f]{32}$/u;
+// The Browser client allows the Backend's 180-second official-knowledge
+// response budget.  This little UI margin detects either the expected
+// assistant message or the generic reviewer alert without inspecting it.
+const KNOWLEDGE_ANSWER_WAIT_TIMEOUT_MS = 195_000;
 
 const MISMATCH_INVOICE = [
   "COMMERCIAL INVOICE",
@@ -240,7 +244,7 @@ test("실제 기능 UAT에서 사건 작업대의 사람 검토 여정을 완료
       await form.getByRole("button", { name: "질문 보내기" }).click();
 
       const answers = reviewer.locator('[data-e2e="knowledge-message"][data-message-role="assistant"]');
-      await expect(answers).toHaveCount(1);
+      await waitForKnowledgeAnswer(reviewer, answers, 1);
       await assertKoreanUserProse(reviewer, '[data-e2e="knowledge-message"][data-message-role="assistant"]');
       await assertRawFilenameHidden(reviewer, '[data-e2e="knowledge-message"][data-message-role="assistant"]');
       checks.add("knowledge_conversation");
@@ -264,7 +268,7 @@ test("실제 기능 UAT에서 사건 작업대의 사람 검토 여정을 완료
       await form.locator('textarea[name="knowledge_message"]').fill("FOB와 CIF 조건을 검토할 때 공식 안내에서 확인할 항목도 알려 주세요.");
       await form.getByRole("button", { name: "질문 보내기" }).click();
 
-      await expect(answers).toHaveCount(2);
+      await waitForKnowledgeAnswer(reviewer, answers, 2);
       await expect(reviewer.locator('[data-e2e="knowledge-message"][data-message-role="user"]')).toHaveCount(2);
       await expect(knowledgeConversations).toHaveCount(conversationCount);
       await expect(selectedConversation.locator("strong")).toHaveText(selectedConversationTitle);
@@ -295,7 +299,7 @@ test("실제 기능 UAT에서 사건 작업대의 사람 검토 여정을 완료
         await form.locator('textarea[name="knowledge_message"]').fill(question.prompt);
         await form.getByRole("button", { name: "질문 보내기" }).click();
         expectedKnowledgeAnswerCount += 1;
-        await expect(answers).toHaveCount(expectedKnowledgeAnswerCount);
+        await waitForKnowledgeAnswer(reviewer, answers, expectedKnowledgeAnswerCount);
         const answer = answers.nth(expectedKnowledgeAnswerCount - 1);
         await assertOfficialKnowledgeSnapshot(answer, question);
         await assertVerificationDetailsClosed(answer);
@@ -312,7 +316,7 @@ test("실제 기능 UAT에서 사건 작업대의 사람 검토 여정을 완료
       await form.locator('textarea[name="knowledge_message"]').fill("HS 품목분류와 수입 관세를 함께 알려 주세요.");
       await form.getByRole("button", { name: "질문 보내기" }).click();
       expectedKnowledgeAnswerCount += 1;
-      await expect(answers).toHaveCount(expectedKnowledgeAnswerCount);
+      await waitForKnowledgeAnswer(reviewer, answers, expectedKnowledgeAnswerCount);
       const clarification = answers.nth(expectedKnowledgeAnswerCount - 1);
       await expect(clarification.locator(".assistant-scope")).toContainText("추가 확인 필요");
       await expect(clarification.locator(".knowledge-citation")).toHaveCount(0);
@@ -476,6 +480,36 @@ async function waitForReviewPresentation(page: Page): Promise<void> {
     throw new Error("functional_uat_browser_result_visibility_timed_out");
   }
   throw new Error("functional_uat_browser_result_display_failed");
+}
+
+/**
+ * A knowledge turn is complete only when its expected assistant message is
+ * visible.  A generic alert is a terminal visible failure state, not a
+ * reason to leave an orphaned count assertion running.  Do not read alert
+ * text here: it could contain server diagnostics that are outside the compact
+ * Browser-UAT failure receipt.
+ */
+async function waitForKnowledgeAnswer(
+  page: Page,
+  answers: ReturnType<Page["locator"]>,
+  expectedCount: number,
+): Promise<void> {
+  const expectedAnswer = answers.nth(expectedCount - 1);
+  const alert = page.locator('[data-e2e="knowledge-workspace"] [role="alert"]').first();
+  try {
+    await expectedAnswer.or(alert).first().waitFor({
+      state: "visible",
+      timeout: KNOWLEDGE_ANSWER_WAIT_TIMEOUT_MS,
+    });
+  } catch {
+    throw new Error("functional_uat_browser_knowledge_answer_timed_out");
+  }
+  if (!(await expectedAnswer.isVisible())) {
+    throw new Error("functional_uat_browser_knowledge_answer_failed");
+  }
+  if (await answers.count() !== expectedCount) {
+    throw new Error("functional_uat_browser_knowledge_answer_count_invalid");
+  }
 }
 
 async function openHistory(page: Page): Promise<void> {

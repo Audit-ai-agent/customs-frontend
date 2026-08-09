@@ -57,9 +57,25 @@ if (
 ) {
   violations.push("Functional-UAT Browser result wait must use one locator union without competing waits");
 }
+const knowledgeAnswerWait = browserE2e.match(/async function waitForKnowledgeAnswer[\s\S]*?\n\}\n/u)?.[0];
+if (
+  !knowledgeAnswerWait?.includes("expectedAnswer.or(alert).first().waitFor({")
+  || !knowledgeAnswerWait.includes("timeout: KNOWLEDGE_ANSWER_WAIT_TIMEOUT_MS")
+  || knowledgeAnswerWait.includes("Promise.race(")
+  || knowledgeAnswerWait.includes("textContent(")
+) {
+  violations.push("Functional-UAT Browser knowledge wait must use one safe locator union without alert diagnostics");
+}
 const apiClient = await readFile(new URL("../src/api/v1/client.ts", import.meta.url), "utf8");
 if (apiClient.includes("/api/v2") || !apiClient.includes('const API_BASE = "/api/v1"')) {
   violations.push("Browser client must use Backend API v1 only");
+}
+const knowledgeSend = apiClient.match(/sendKnowledgeMessage\([\s\S]*?\n  \}\n\n  listAssistantMessages/u)?.[0];
+if (
+  !apiClient.includes("const KNOWLEDGE_ANSWER_TIMEOUT_MS = 190_000")
+  || !knowledgeSend?.includes("KNOWLEDGE_ANSWER_TIMEOUT_MS")
+) {
+  violations.push("Browser knowledge send must retain the documented Backend response budget");
 }
 
 const packageJson = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
