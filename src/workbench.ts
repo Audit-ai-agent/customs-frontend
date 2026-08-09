@@ -1262,7 +1262,11 @@ export class CommercialReviewWorkspace {
       && answerSections[0]?.kind === "general_guidance"
       && answerSections[0].content === item.content;
     const scope = isAssistant && item.answer_scope
-      ? element("span", { className: "assistant-scope", text: assistantScopeLabel(item.answer_scope) })
+      ? element("span", {
+        className: "assistant-scope",
+        attributes: { "data-e2e": "knowledge-answer-scope" },
+        text: assistantScopeLabel(item.answer_scope),
+      })
       : null;
     const resolvedCoverage = item.knowledge_coverage ?? guidanceResolution?.coverage;
     const coverage = isAssistant && resolvedCoverage

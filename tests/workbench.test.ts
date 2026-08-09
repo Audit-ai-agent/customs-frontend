@@ -277,6 +277,11 @@ describe("commercial review workspace", () => {
         answer_scope: "insufficient_evidence" as const, citations: [], answer_sections: [],
         suggested_questions: [], knowledge_coverage: "unavailable" as const, knowledge_as_of: "2026-08-05", created_by: "agent", created_at: "2026-08-05T00:03:00Z",
       },
+      {
+        message_id: "clarification", conversation_id: conversation.conversation_id, role: "assistant" as const, content: "두 범위 중 하나를 선택해 주세요.",
+        answer_scope: "clarification_needed" as const, citations: [], answer_sections: [],
+        suggested_questions: [], knowledge_coverage: "unavailable" as const, knowledge_as_of: "2026-08-05", created_by: "agent", created_at: "2026-08-05T00:04:00Z",
+      },
     ];
     const api = {
       getSession: async () => ({ subject: "local-reviewer", org_id: "local-org", roles: ["reviewer"] }),
@@ -294,6 +299,12 @@ describe("commercial review workspace", () => {
     expect(root.textContent).toContain("찾지 못했습니다.");
     expect(root.textContent).toContain("근거 조회 불가");
     expect(root.textContent).toContain("조회 결과를 사용할 수 없습니다.");
+    const clarification = Array.from(root.querySelectorAll<HTMLElement>('[data-e2e="knowledge-message"]')).find(
+      (message) => message.querySelector('[data-e2e="knowledge-answer-scope"]')?.textContent === "추가 확인 필요",
+    );
+    expect(clarification?.querySelector('[data-e2e="knowledge-answer-scope"]')?.textContent).toBe("추가 확인 필요");
+    expect(clarification?.querySelector('[data-e2e="knowledge-coverage"]')?.textContent).toBe("근거 조회 불가");
+    expect(clarification?.querySelectorAll(".assistant-scope")).toHaveLength(2);
     await (app as unknown as { sendKnowledgeMessage(value: string): Promise<void> }).sendKnowledgeMessage("수입 요건을 알려줘");
     expect(root.querySelector('[role="alert"]')?.textContent).toContain("통관 지식 답변을 받지 못했습니다");
     expect(root.querySelector('[role="alert"]')?.textContent).not.toContain("provider timeout");
