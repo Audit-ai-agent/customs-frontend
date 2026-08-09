@@ -58,6 +58,12 @@ const REQUEST_TIMEOUT_MS = 30_000;
 // do not abandon a real review before the Backend has had a fair chance to
 // return its terminal Job projection.
 const REVIEW_EXECUTION_TIMEOUT_MS = 120_000;
+// A standalone official-knowledge answer may make one bounded Data lookup
+// and one Claude presentation call.  Backend's normal Agent response budget
+// is 180 seconds, so the Browser must not abort the public request first.
+// The small margin is only for the local public-response handoff; it is not
+// another provider attempt.
+const KNOWLEDGE_ANSWER_TIMEOUT_MS = 190_000;
 
 type Decoder<T> = (value: unknown) => T;
 type AccessTokenProvider = () => string | undefined | Promise<string | undefined>;
@@ -335,6 +341,8 @@ export class ApiClient {
         this.assertIdentity(exchange.assistant_message.conversation_id, conversationId, "Knowledge answer conversation");
         return exchange;
       },
+      true,
+      KNOWLEDGE_ANSWER_TIMEOUT_MS,
     );
   }
 
