@@ -318,7 +318,7 @@ test("실제 기능 UAT에서 사건 작업대의 사람 검토 여정을 완료
       expectedKnowledgeAnswerCount += 1;
       await waitForKnowledgeAnswer(reviewer, answers, expectedKnowledgeAnswerCount);
       const clarification = answers.nth(expectedKnowledgeAnswerCount - 1);
-      await expect(clarification.locator(".assistant-scope")).toContainText("추가 확인 필요");
+      await expect(clarification.locator('[data-e2e="knowledge-answer-scope"]')).toHaveText("추가 확인 필요");
       await expect(clarification.locator(".knowledge-citation")).toHaveCount(0);
       await expect(clarification.locator(".knowledge-answer-boundary")).toContainText("대상 절차를 조금 더 구체적으로");
       checks.add("knowledge_multiscope_clarification");
