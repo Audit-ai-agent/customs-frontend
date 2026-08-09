@@ -465,16 +465,12 @@ async function runReview(page: Page, tradeType: "import" | "export" = "import"):
 async function waitForReviewPresentation(page: Page): Promise<void> {
   const analysis = page.locator('[data-e2e="analysis-content"]');
   const alert = page.locator('[role="alert"]').first();
-  let outcome: "analysis" | "alert";
   try {
-    outcome = await Promise.race([
-      analysis.waitFor({ state: "visible", timeout: 90_000 }).then(() => "analysis" as const),
-      alert.waitFor({ state: "visible", timeout: 90_000 }).then(() => "alert" as const),
-    ]);
+    await analysis.or(alert).first().waitFor({ state: "visible", timeout: 90_000 });
   } catch {
     throw new Error("functional_uat_browser_result_display_timed_out");
   }
-  if (outcome === "analysis") return;
+  if (await analysis.isVisible()) return;
   const message = await alert.textContent();
   if (message?.includes("심사 결과가 아직 화면에 준비되지 않았습니다.")) {
     throw new Error("functional_uat_browser_result_visibility_timed_out");

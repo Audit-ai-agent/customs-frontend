@@ -50,6 +50,13 @@ for (const forbidden of [/\bpage\.request\b/u, /\brequest\.newContext\b/u, /\bAP
     break;
   }
 }
+const reviewPresentationWait = browserE2e.match(/async function waitForReviewPresentation[\s\S]*?\n\}\n/u)?.[0];
+if (
+  !reviewPresentationWait?.includes('analysis.or(alert).first().waitFor({ state: "visible", timeout: 90_000 })')
+  || reviewPresentationWait.includes("Promise.race(")
+) {
+  violations.push("Functional-UAT Browser result wait must use one locator union without competing waits");
+}
 const apiClient = await readFile(new URL("../src/api/v1/client.ts", import.meta.url), "utf8");
 if (apiClient.includes("/api/v2") || !apiClient.includes('const API_BASE = "/api/v1"')) {
   violations.push("Browser client must use Backend API v1 only");
