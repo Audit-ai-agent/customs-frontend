@@ -11,6 +11,7 @@ import type {
   JobStatus,
   KnowledgeAnswerScope,
   KnowledgeCoverage,
+  GuidanceResolution,
   GuidanceEvidenceCitation,
   KnowledgeTradeType,
   ReviewComparison,
@@ -415,13 +416,27 @@ export function assistantScopeLabel(value: NonNullable<AssistantMessage["answer_
 }
 
 export function assistantAnswerSectionLabel(value: AssistantAnswerSection["kind"]): string {
-  return value === "case_analysis" ? "현재 심사 결과" : "일반 통관 안내";
+  return ({
+    case_analysis: "현재 사건 기준",
+    general_guidance: "일반 통관 안내",
+    case_application: "사건 적용·다음 확인",
+  })[value];
+}
+
+export function assistantAnswerSectionIcon(value: AssistantAnswerSection["kind"]): string {
+  return ({
+    case_analysis: "▣",
+    general_guidance: "ⓘ",
+    case_application: "✓",
+  })[value];
 }
 
 export function assistantAnswerSectionDescription(value: AssistantAnswerSection["kind"]): string {
-  return value === "case_analysis"
-    ? "현재 심사 건의 문서, 비교 결과와 연결된 근거를 바탕으로 정리한 내용입니다."
-    : "공식 지식 스냅샷을 바탕으로 한 일반 안내이며, 현재 심사 건의 결론은 아닙니다.";
+  return ({
+    case_analysis: "현재 심사 건의 문서, 비교 결과와 연결된 근거를 바탕으로 정리한 내용입니다.",
+    general_guidance: "공식 지식 스냅샷을 바탕으로 한 일반 안내이며, 현재 심사 건의 결론은 아닙니다.",
+    case_application: "현재 사건 근거와 일반 안내를 구분한 채, 담당자가 다음으로 확인할 항목만 안내합니다. 자동 승인이나 법적 결론은 만들지 않습니다.",
+  })[value];
 }
 
 export function knowledgeCoverageLabel(value: KnowledgeCoverage): string {
@@ -431,6 +446,49 @@ export function knowledgeCoverageLabel(value: KnowledgeCoverage): string {
     partial: "일부 근거 확인됨",
     unavailable: "근거 조회 불가",
   })[value];
+}
+
+/** Stable scope codes stay inside contracts; reviewers see a narrow work label. */
+export function guidanceScopeLabel(value: GuidanceResolution["scope"]): string {
+  return ({
+    import_clearance_flow: "수입 통관 흐름",
+    export_clearance_flow: "수출 통관 흐름",
+    import_declaration: "수입 신고",
+    export_declaration: "수출 신고",
+    customs_value_basics: "과세가격 기초",
+    duty_payment_basics: "관세 납세 기초",
+    classification_principles: "품목분류 원칙",
+    advance_ruling_or_confirmation: "품목분류 사전심사·확인",
+    origin_evidence: "원산지 증빙",
+    origin_verification: "원산지 검증",
+    commercial_and_declaration_documents: "상업·신고 서류",
+    agency_confirmation_and_supporting_documents: "세관장 확인·보완서류",
+    bill_of_lading: "선하증권(B/L)",
+    air_waybill: "항공화물운송장(AWB)",
+    origin_certificate: "원산지증명",
+    preference_procedure: "FTA 특혜 적용 절차",
+    cost_risk_delivery_terms: "비용·위험·인도조건",
+  } as Record<string, string>)[value] ?? "선택된 통관 안내 범위";
+}
+
+export function guidanceDirectionLabel(
+  directions: GuidanceResolution["applicable_directions"],
+): string {
+  if (directions.length === 2) return "한국 수입·수출 기준";
+  return directions[0] === "export" ? "한국 수출 기준" : "한국 수입 기준";
+}
+
+export function caseGuidanceResolutionNotice(value: GuidanceResolution): string | null {
+  if (value.coverage === "unavailable") {
+    return "현재 일반 통관 안내의 공식 근거를 조회할 수 없습니다. 현재 사건 근거만으로 검토를 이어가고, 공식 출처는 담당자가 다시 확인해야 합니다.";
+  }
+  if (value.coverage === "no_coverage") {
+    return "선택한 일반 통관 안내 범위의 공식 근거가 현재 지식 스냅샷에 없습니다. 현재 사건 판단은 유지하며, 일반 안내로 추정하지 않습니다.";
+  }
+  if (value.coverage === "partial") {
+    return "일반 통관 안내는 일부 공식 근거만 확인되었습니다. 사건 적용·다음 확인은 이 제한된 범위 안에서만 읽어야 합니다.";
+  }
+  return null;
 }
 
 /**

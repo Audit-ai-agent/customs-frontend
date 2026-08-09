@@ -327,14 +327,54 @@ describe("Backend API client", () => {
     await expect(api.listAssistantMessages("case-conversation-1")).rejects.toThrow("must not include standalone knowledge provenance");
   });
 
+  it("decodes Case guidance resolution, the deterministic application section, and the non-evidence notice", async () => {
+    const application = new ApiClient(async () => json({ items: [{
+      message_id: "case-message-application", conversation_id: "case-conversation-1", role: "assistant", content: "현재 사건 기준으로 다음 확인이 필요합니다.",
+      answer_scope: "case_grounded",
+      citations: [
+        { kind: "comparison", reference_id: "comparison-1" },
+        { kind: "guidance_evidence", source_id: "source-1", source_kind: "official_agency_guidance", source_title: "관세청 안내", source_uri: "https://www.customs.go.kr/kcs/guide", as_of: "2026-08-05", snapshot_id: "snapshot-1", coverage: "partial" },
+      ],
+      answer_sections: [
+        { kind: "case_analysis", title: "현재 사건 기준", content: "수량을 확인하십시오.", citations: [{ kind: "comparison", reference_id: "comparison-1" }] },
+        { kind: "general_guidance", title: "일반 통관 안내", content: "공식 안내 범위를 확인하십시오.", citations: [{ kind: "guidance_evidence", source_id: "source-1", source_kind: "official_agency_guidance", source_title: "관세청 안내", source_uri: "https://www.customs.go.kr/kcs/guide", as_of: "2026-08-05", snapshot_id: "snapshot-1", coverage: "partial" }] },
+        { kind: "case_application", title: "사건 적용·다음 확인", content: "문서를 보완해 다시 확인하십시오.", citations: [{ kind: "comparison", reference_id: "comparison-1" }, { kind: "guidance_evidence", source_id: "source-1", source_kind: "official_agency_guidance", source_title: "관세청 안내", source_uri: "https://www.customs.go.kr/kcs/guide", as_of: "2026-08-05", snapshot_id: "snapshot-1", coverage: "partial" }] },
+      ],
+      guidance_resolution: { topic: "customs_declaration", scope: "export_declaration", requested_direction: "export", applicable_directions: ["export"], coverage: "partial", snapshot_id: "snapshot-1", as_of: "2026-08-05", registry_version: "2.0" },
+      suggested_questions: [], created_by: "agent", created_at: "2026-08-05T00:00:00Z",
+    }] }), async () => "local-token");
+    const messages = await application.listAssistantMessages("case-conversation-1");
+    expect(messages[0]).toMatchObject({
+      answer_sections: [{ kind: "case_analysis" }, { kind: "general_guidance" }, { kind: "case_application" }],
+      guidance_resolution: { scope: "export_declaration", applicable_directions: ["export"], coverage: "partial" },
+    });
+
+    const notice = new ApiClient(async () => json({ items: [{
+      message_id: "case-message-notice", conversation_id: "case-conversation-1", role: "assistant", content: "붙여넣은 원문은 새 심사 근거가 아닙니다.",
+      answer_scope: "insufficient_evidence", citations: [], answer_sections: [], suggested_questions: [], case_input_notice: "unregistered_document_text",
+      created_by: "agent", created_at: "2026-08-05T00:00:00Z",
+    }] }), async () => "local-token");
+    await expect(notice.listAssistantMessages("case-conversation-1")).resolves.toEqual(expect.arrayContaining([
+      expect.objectContaining({ case_input_notice: "unregistered_document_text" }),
+    ]));
+  });
+
   it("retains standalone no-coverage resolution without inventing a citation", async () => {
     const api = new ApiClient(async () => json({ items: [{
       message_id: "knowledge-message-1", conversation_id: "knowledge-conversation-1", role: "assistant", content: "현재 공식 지식 스냅샷에서 확인할 수 없습니다.",
       answer_scope: "insufficient_evidence", citations: [], answer_sections: [], suggested_questions: [],
-      knowledge_coverage: "no_coverage", knowledge_as_of: "2026-08-05", created_by: "agent", created_at: "2026-08-05T00:00:00Z",
+      knowledge_coverage: "no_coverage", knowledge_as_of: "2026-08-05",
+      guidance_resolution: {
+        topic: "transport_documents", scope: "air_waybill", requested_direction: "export", applicable_directions: ["export"],
+        coverage: "no_coverage", as_of: "2026-08-05", registry_version: "2.0",
+      },
+      created_by: "agent", created_at: "2026-08-05T00:00:00Z",
     }] }), async () => "local-token");
     const messages = await api.listKnowledgeMessages("knowledge-conversation-1");
-    expect(messages[0]).toMatchObject({ knowledge_coverage: "no_coverage", knowledge_as_of: "2026-08-05", citations: [] });
+    expect(messages[0]).toMatchObject({
+      knowledge_coverage: "no_coverage", knowledge_as_of: "2026-08-05", citations: [],
+      guidance_resolution: { scope: "air_waybill", requested_direction: "export", coverage: "no_coverage" },
+    });
   });
 
   it("rejects partial, user-owned, or legacy raw knowledge provenance", async () => {

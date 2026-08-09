@@ -127,7 +127,7 @@ test("실제 기능 UAT에서 사건 작업대의 사람 검토 여정을 완료
       await reviewer.locator('[data-e2e="assistant-create"]').click();
       const assistantForm = reviewer.locator('[data-e2e="assistant-form"]');
       await expect(assistantForm).toBeVisible();
-      await assistantForm.locator('textarea[name="assistant_message"]').fill("현재 사건의 문서 비교 결과와 일반 통관 절차를 함께 설명해 주세요.");
+      await assistantForm.locator('textarea[name="assistant_message"]').fill("현재 사건의 문서 비교 결과와 수입 통관 절차를 함께 설명하고, 이 사건에서 다음으로 확인할 항목을 알려 주세요.");
       await assistantForm.getByRole("button", { name: "질문 보내기" }).click();
       await expect(reviewer.locator('[data-e2e="assistant-message"][data-message-role="assistant"]')).toHaveCount(1);
       await assertKoreanUserProse(reviewer, '[data-e2e="assistant-message"][data-message-role="assistant"]');
@@ -135,9 +135,23 @@ test("실제 기능 UAT에서 사건 작업대의 사람 검토 여정을 완료
       checks.add("assistant_conversation");
       await expect(reviewer.locator('[data-e2e="answer-section-case_analysis"]')).toHaveCount(1);
       await expect(reviewer.locator('[data-e2e="answer-section-general_guidance"]')).toHaveCount(1);
+      await expect(reviewer.locator('[data-e2e="answer-section-case_application"]')).toHaveCount(1);
       await expect(reviewer.locator('[data-e2e="answer-section-case_analysis"]')).toContainText("현재 사건 기준");
       await expect(reviewer.locator('[data-e2e="answer-section-general_guidance"]')).toContainText("일반 통관 안내");
+      await expect(reviewer.locator('[data-e2e="answer-section-case_application"]')).toContainText("사건 적용·다음 확인");
       checks.add("assistant_mixed_sections");
+      checks.add("assistant_case_application");
+
+      // A case-room paste may be retained as the reviewer's own conversation
+      // text, but it must never become a new Review evidence input.  The
+      // Agent/Backend Functional-UAT matrix verifies its zero-dispatch
+      // boundary; the Browser asserts the reviewer-facing notice.
+      await assistantForm.locator('textarea[name="assistant_message"]').fill(MISMATCH_INVOICE);
+      await assistantForm.getByRole("button", { name: "질문 보내기" }).click();
+      const pastedInputReply = reviewer.locator('[data-e2e="assistant-message"][data-message-role="assistant"]').last();
+      await expect(pastedInputReply.locator('[data-e2e="case-input-notice"]')).toContainText("새 심사 근거로 사용하지 않았습니다");
+      await expect(pastedInputReply.locator('[data-e2e="answer-section-case_analysis"]')).toHaveCount(0);
+      checks.add("case_document_paste_notice");
 
       await reviewer.locator('[data-e2e="workspace-tab-analysis"]').click();
       const finding = reviewer.locator('[data-e2e="finding-card"]:has(.correction-proposal-panel)').first();
@@ -261,6 +275,49 @@ test("실제 기능 UAT에서 사건 작업대의 사람 검토 여정을 완료
       await assertVerificationDetailsClosed(recentAnswer);
       await assertNoTechnicalIdentifierInDefaultMessage(recentAnswer);
       checks.add("knowledge_recent_history");
+      let expectedKnowledgeAnswerCount = 2;
+
+      // V2 is page-and-scope based.  Each turn below deliberately names one
+      // independent scope only, so the Browser verifies the new official
+      // sources without relying on a silent first-topic fallback.
+      const v2RepresentativeQuestions = [
+        { prompt: "수입 통관 흐름에서 공식 자료로 확인할 절차를 알려 주세요.", scope: "수입 통관 흐름", direction: "한국 수입 기준" },
+        { prompt: "수출 신고 절차에서 공식 자료로 확인할 항목을 알려 주세요.", scope: "수출 신고", direction: "한국 수출 기준" },
+        { prompt: "FTA 특혜 적용 절차에서 공식 자료로 확인할 항목을 알려 주세요.", scope: "FTA 특혜 적용 절차", direction: "한국 수입·수출 기준" },
+        { prompt: "HS 품목분류 사전심사·확인의 기본 절차를 알려 주세요.", scope: "품목분류 사전심사·확인", direction: "한국 수입·수출 기준" },
+        { prompt: "수입 과세가격의 기본 사항을 공식 안내 범위에서 알려 주세요.", scope: "과세가격 기초", direction: "한국 수입 기준" },
+        { prompt: "B/L 운송서류에서 공식 자료로 확인할 항목을 알려 주세요.", scope: "선하증권(B/L)", direction: "한국 수입·수출 기준" },
+        { prompt: "AWB 운송서류에서 공식 자료로 확인할 항목을 알려 주세요.", scope: "항공화물운송장(AWB)", direction: "한국 수입·수출 기준" },
+        { prompt: "수입요건의 세관장 확인과 보완서류를 알려 주세요.", scope: "세관장 확인·보완서류", direction: "한국 수입 기준" },
+        { prompt: "수출요건의 세관장 확인과 보완서류를 알려 주세요.", scope: "세관장 확인·보완서류", direction: "한국 수출 기준" },
+      ] as const;
+      for (const question of v2RepresentativeQuestions) {
+        await form.locator('textarea[name="knowledge_message"]').fill(question.prompt);
+        await form.getByRole("button", { name: "질문 보내기" }).click();
+        expectedKnowledgeAnswerCount += 1;
+        await expect(answers).toHaveCount(expectedKnowledgeAnswerCount);
+        const answer = answers.nth(expectedKnowledgeAnswerCount - 1);
+        await assertOfficialKnowledgeSnapshot(answer, question);
+        await assertVerificationDetailsClosed(answer);
+        await assertNoTechnicalIdentifierInDefaultMessage(answer);
+      }
+      await expect(answers).toHaveCount(expectedKnowledgeAnswerCount);
+      await expect(reviewer.locator('[data-e2e="knowledge-message"][data-message-role="user"]')).toHaveCount(expectedKnowledgeAnswerCount);
+      await expect(knowledgeConversations).toHaveCount(conversationCount);
+      await expect(selectedConversation.locator("strong")).toHaveText(selectedConversationTitle);
+      checks.add("knowledge_v2_scope_coverage");
+
+      // These are two independent V2 scopes.  The safe contract asks the
+      // reviewer to select one; it must not search only the first match.
+      await form.locator('textarea[name="knowledge_message"]').fill("HS 품목분류와 수입 관세를 함께 알려 주세요.");
+      await form.getByRole("button", { name: "질문 보내기" }).click();
+      expectedKnowledgeAnswerCount += 1;
+      await expect(answers).toHaveCount(expectedKnowledgeAnswerCount);
+      const clarification = answers.nth(expectedKnowledgeAnswerCount - 1);
+      await expect(clarification.locator(".assistant-scope")).toContainText("추가 확인 필요");
+      await expect(clarification.locator(".knowledge-citation")).toHaveCount(0);
+      await expect(clarification.locator(".knowledge-answer-boundary")).toContainText("대상 절차를 조금 더 구체적으로");
+      checks.add("knowledge_multiscope_clarification");
     } finally {
       await reviewer.context().close();
     }
@@ -527,15 +584,21 @@ async function assertNoTechnicalIdentifierInDefaultMessage(scope: ReturnType<Pag
 }
 
 /**
- * Both Browser prompts target the currently built `trade_terms` coverage.
- * A future snapshot may legitimately report partial coverage with citations;
- * treat that explicit limitation as safe, but never accept no-coverage or an
- * unavailable lookup as if it were an official answer.
+ * A representative V2 scope must be covered by its defined official source
+ * bundle.  Keep the partial branch for a future, explicitly scoped regression
+ * journey, but never accept no-coverage or an unavailable lookup as if it
+ * were an official answer.
  */
-async function assertOfficialKnowledgeSnapshot(scope: ReturnType<Page["locator"]>): Promise<void> {
+async function assertOfficialKnowledgeSnapshot(
+  scope: ReturnType<Page["locator"]>,
+  expected?: { readonly scope: string; readonly direction: string },
+): Promise<void> {
   const coverage = scope.locator('[data-e2e="knowledge-coverage"]');
   await expect(coverage).toHaveCount(1);
   const coverageText = (await coverage.innerText()).trim();
+  if (expected && coverageText !== "근거 범위 확인됨") {
+    throw new Error("functional_uat_browser_v2_scope_not_covered");
+  }
   if (coverageText === "일부 근거 확인됨") {
     await expect(scope.locator(".knowledge-answer-boundary")).toContainText("일부 범위의 공식 근거만 확인되었습니다.");
   } else if (coverageText !== "근거 범위 확인됨") {
@@ -545,6 +608,12 @@ async function assertOfficialKnowledgeSnapshot(scope: ReturnType<Page["locator"]
   await expect(scope.locator(".knowledge-citation").first()).toContainText("지식 스냅샷 기준일 2026-08-05");
   await expect(scope.locator(".knowledge-citation a").first()).toBeVisible();
   await expect(scope.locator("header small").first()).toContainText("지식 스냅샷 기준일 2026-08-05");
+  if (expected) {
+    const resolution = scope.locator('[data-e2e="knowledge-guidance-resolution"]');
+    await expect(resolution).toHaveCount(1);
+    await expect(resolution).toContainText(expected.scope);
+    await expect(resolution).toContainText(expected.direction);
+  }
 }
 
 interface NetworkBoundary {

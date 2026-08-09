@@ -5,10 +5,12 @@ import { userFacingErrorMessage } from "./api/user-facing-errors";
 import {
   assessmentLabel,
   assistantAnswerSectionDescription,
+  assistantAnswerSectionIcon,
   assistantAnswerSectionLabel,
   assistantNarrativeFallback,
   assistantSuggestionLabel,
   casePresentation,
+  caseGuidanceResolutionNotice,
   caseReferenceLabel,
   caseStatusLabel,
   citationLabel,
@@ -34,6 +36,8 @@ import {
   isFunctionalUatCase,
   jobStatusLabel,
   guidanceCitationTitle,
+  guidanceDirectionLabel,
+  guidanceScopeLabel,
   knowledgeCoverageLabel,
   knowledgeAnswerBoundaryNotice,
   knowledgeSourceKindLabel,
@@ -1248,6 +1252,7 @@ export class CommercialReviewWorkspace {
   private createKnowledgeMessage(item: KnowledgeMessage): HTMLElement {
     const isAssistant = item.role === "assistant";
     const answerSections = item.answer_sections ?? [];
+    const guidanceResolution = isAssistant ? item.guidance_resolution ?? null : null;
     // A standalone answer is persisted both as the legacy-compatible
     // `content`/`direct_answer` projection and as its labelled guidance
     // section.  When those two projections are exactly the same, show the
@@ -1259,15 +1264,16 @@ export class CommercialReviewWorkspace {
     const scope = isAssistant && item.answer_scope
       ? element("span", { className: "assistant-scope", text: assistantScopeLabel(item.answer_scope) })
       : null;
-    const coverage = isAssistant && item.knowledge_coverage
-      ? element("span", { className: "assistant-scope assistant-scope--knowledge-coverage", attributes: { "data-e2e": "knowledge-coverage" }, text: knowledgeCoverageLabel(item.knowledge_coverage) })
+    const resolvedCoverage = item.knowledge_coverage ?? guidanceResolution?.coverage;
+    const coverage = isAssistant && resolvedCoverage
+      ? element("span", { className: "assistant-scope assistant-scope--knowledge-coverage", attributes: { "data-e2e": "knowledge-coverage" }, text: knowledgeCoverageLabel(resolvedCoverage) })
       : null;
     const boundaryNotice = isAssistant && item.answer_scope
-      ? knowledgeAnswerBoundaryNotice(item.answer_scope, item.citations, item.knowledge_coverage)
+      ? knowledgeAnswerBoundaryNotice(item.answer_scope, item.citations, resolvedCoverage)
       : null;
     const provenance = isAssistant
       ? verificationDetails([
-        technicalLine("지식 스냅샷 식별번호", item.knowledge_snapshot_id),
+        technicalLine("지식 스냅샷 식별번호", item.knowledge_snapshot_id ?? guidanceResolution?.snapshot_id),
       ], undefined, "답변의 검증 상세")
       : null;
     const suggestions = isAssistant && item.suggested_questions.length
@@ -1283,12 +1289,17 @@ export class CommercialReviewWorkspace {
         element("strong", { text: isAssistant ? "통관 지식 도우미" : "나" }),
         scope,
         coverage,
-        element("small", { text: `${formatDate(item.created_at)}${item.knowledge_as_of ? ` · 지식 스냅샷 기준일 ${item.knowledge_as_of}` : ""}` }),
+        element("small", { text: `${formatDate(item.created_at)}${item.knowledge_as_of ?? guidanceResolution?.as_of ? ` · 지식 스냅샷 기준일 ${item.knowledge_as_of ?? guidanceResolution?.as_of}` : ""}` }),
       ),
       hidesDuplicateDirectAnswer
         ? null
         : reviewerNarrativeElement("p", "assistant-message__content", item.content, isAssistant ? "공식 통관 지식 근거를 바탕으로 안내를 준비했습니다." : undefined),
       boundaryNotice ? element("p", { className: "role-boundary-note knowledge-answer-boundary", attributes: { role: "status" }, text: boundaryNotice }) : null,
+      guidanceResolution ? element("p", {
+        className: "role-boundary-note knowledge-answer-boundary",
+        attributes: { "data-e2e": "knowledge-guidance-resolution" },
+        text: `${guidanceScopeLabel(guidanceResolution.scope)} · ${guidanceDirectionLabel(guidanceResolution.applicable_directions)}`,
+      }) : null,
       isAssistant ? this.createAnswerSections(answerSections) : null,
       isAssistant ? this.createAssistantCitationList(citationsOutsideSections(item.citations, answerSections), "추가 근거") : null,
       provenance,
@@ -1301,7 +1312,10 @@ export class CommercialReviewWorkspace {
     return element("section", { className: "assistant-answer-sections", attributes: { "aria-label": "답변 구분과 공식 근거" } },
       ...sections.map((section) => element("section", { className: `assistant-answer-section assistant-answer-section--${section.kind}`, attributes: { "data-e2e": `answer-section-${section.kind}` } },
         element("header", {},
-          element("strong", { text: assistantAnswerSectionLabel(section.kind) }),
+          element("strong", { className: "assistant-answer-section__label" },
+            element("span", { className: "assistant-answer-section__icon", attributes: { "aria-hidden": "true" }, text: assistantAnswerSectionIcon(section.kind) }),
+            element("span", { text: assistantAnswerSectionLabel(section.kind) }),
+          ),
           element("span", { text: reviewerNarrative(section.title, assistantAnswerSectionDescription(section.kind)) }),
           element("small", { text: assistantAnswerSectionDescription(section.kind) }),
         ),
@@ -1820,8 +1834,8 @@ export class CommercialReviewWorkspace {
       onInput: (event) => this.updateAssistantDraft((event.currentTarget as HTMLTextAreaElement).value),
       onKeydown: (event) => this.handleAssistantKeydown(event as KeyboardEvent),
     })),
-    element("div", { className: "assistant-composer__hint" },
-      element("span", { text: "Enter 전송 · Shift+Enter 줄바꿈" }),
+      element("div", { className: "assistant-composer__hint" },
+      element("span", { text: "Enter 전송 · Shift+Enter 줄바꿈 · 붙여넣은 문서 원문은 새 심사 근거가 아닙니다." }),
       submit(this.state.assistantSending ? "답변 준비 중" : "질문 보내기", this.state.assistantSending),
     ));
     const suggestions = assistantSuggestions(run, this.state.assistantMessages);
@@ -1840,8 +1854,31 @@ export class CommercialReviewWorkspace {
 
   private createAssistantMessage(item: AssistantMessage): HTMLElement {
     const label = item.role === "user" ? "나" : "AI 도우미";
+    const answerSections = item.answer_sections ?? [];
+    const hidesDuplicateDirectAnswer = item.role === "assistant"
+      && answerSections[0]?.kind === "case_analysis"
+      && answerSections[0].content === item.content;
     const metadata = item.role === "assistant" && item.answer_scope
       ? element("span", { className: "assistant-scope", text: assistantScopeLabel(item.answer_scope) })
+      : null;
+    const guidanceResolution = item.role === "assistant" ? item.guidance_resolution ?? null : null;
+    const guidanceCoverage = guidanceResolution
+      ? element("span", {
+        className: "assistant-scope assistant-scope--knowledge-coverage",
+        attributes: { "data-e2e": "case-guidance-coverage" },
+        text: knowledgeCoverageLabel(guidanceResolution.coverage),
+      })
+      : null;
+    const guidanceNotice = guidanceResolution ? caseGuidanceResolutionNotice(guidanceResolution) : null;
+    const caseInputNotice = item.role === "assistant" && item.case_input_notice === "unregistered_document_text"
+      ? "붙여넣은 문서 원문은 새 심사 근거로 사용하지 않았습니다. 반영하려면 문서를 등록하거나 교체한 뒤 새 Review Run으로 재심사하십시오."
+      : null;
+    const guidanceDetails = guidanceResolution
+      ? verificationDetails(
+        [technicalLine("지식 스냅샷 식별번호", guidanceResolution.snapshot_id)],
+        undefined,
+        "일반 통관 안내 검증 상세",
+      )
       : null;
     const citations = item.role === "assistant"
       ? this.createAssistantCitationList(citationsOutsideSections(item.citations, item.answer_sections ?? []), "추가 근거")
@@ -1864,17 +1901,31 @@ export class CommercialReviewWorkspace {
         : element("small", { className: "role-boundary-note", text: "정정 제안 초안은 심사자 역할에서만 기록할 수 있습니다." })
       : null;
     return element("li", { className: `assistant-message assistant-message--${item.role}`, attributes: { "data-e2e": "assistant-message", "data-message-role": item.role } },
-      element("header", {}, element("strong", { text: label }), metadata, element("small", { text: formatDate(item.created_at) })),
-      reviewerNarrativeElement(
-        "p",
-        "assistant-message__content",
-        item.content,
-        item.role === "assistant"
-          ? assistantNarrativeFallback(item.answer_scope ?? "case_grounded")
-          : undefined,
+      element("header", {},
+        element("strong", { text: label }),
+        metadata,
+        guidanceCoverage,
+        element("small", { text: `${formatDate(item.created_at)}${guidanceResolution ? ` · 지식 스냅샷 기준일 ${guidanceResolution.as_of}` : ""}` }),
       ),
-      item.role === "assistant" ? this.createAnswerSections(item.answer_sections ?? []) : null,
+      hidesDuplicateDirectAnswer
+        ? null
+        : reviewerNarrativeElement(
+          "p",
+          "assistant-message__content",
+          item.content,
+          item.role === "assistant"
+            ? assistantNarrativeFallback(item.answer_scope ?? "case_grounded")
+            : undefined,
+        ),
+      item.role === "assistant" ? this.createAnswerSections(answerSections) : null,
+      guidanceResolution ? element("p", {
+        className: "role-boundary-note knowledge-answer-boundary",
+        attributes: { "data-e2e": "case-guidance-resolution" },
+        text: `${guidanceScopeLabel(guidanceResolution.scope)} · ${guidanceDirectionLabel(guidanceResolution.applicable_directions)}${guidanceNotice ? ` · ${guidanceNotice}` : ""}`,
+      }) : null,
+      caseInputNotice ? element("p", { className: "role-boundary-note", attributes: { "data-e2e": "case-input-notice", role: "status" }, text: caseInputNotice }) : null,
       citations,
+      guidanceDetails,
       suggestions,
       correction,
     );

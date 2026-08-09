@@ -403,6 +403,22 @@ export interface GuidanceEvidenceCitation {
 }
 
 export type KnowledgeCoverage = "covered" | "no_coverage" | "partial" | "unavailable";
+export type GuidanceTradeDirection = "import" | "export" | "both";
+
+/**
+ * The safe, user-facing result of one bounded official-guidance lookup.
+ * Registry hashes and source identifiers remain internal verification data.
+ */
+export interface GuidanceResolution {
+  topic: string;
+  scope: string;
+  requested_direction: GuidanceTradeDirection;
+  applicable_directions: Exclude<GuidanceTradeDirection, "both">[];
+  coverage: KnowledgeCoverage;
+  snapshot_id?: string | null;
+  as_of: string;
+  registry_version: "1.0" | "2.0";
+}
 
 /** Registered source categories in the Backend OpenAPI contract. */
 export type KnowledgeSourceKind =
@@ -417,12 +433,12 @@ export type AssistantCitation = CaseCitation | GuidanceEvidenceCitation;
 export function isCaseCitation(citation: AssistantCitation): citation is CaseCitation {
   return citation.kind !== "guidance_evidence";
 }
-export type AssistantAnswerSectionKind = "case_analysis" | "general_guidance";
+export type AssistantAnswerSectionKind = "case_analysis" | "general_guidance" | "case_application";
 
 /**
- * An answer can contain a Case-grounded section and a separately labelled
- * general guidance section.  The UI must not merge them: their evidence
- * boundaries are intentionally different.
+ * An answer can contain a Case-grounded section, a separately labelled
+ * general guidance section, and a deterministic next-check section.  The UI
+ * must not merge them: their evidence boundaries are intentionally different.
  */
 export interface AssistantAnswerSection {
   kind: AssistantAnswerSectionKind;
@@ -464,6 +480,10 @@ export interface AssistantMessage {
   correction_draft?: AssistantCorrectionDraft | null;
   /** Additive V3.3-style answer projection; absent on older stored messages. */
   answer_sections?: AssistantAnswerSection[];
+  /** Present when this Case reply attempted one bounded official-guidance lookup. */
+  guidance_resolution?: GuidanceResolution | null;
+  /** The pasted Case-chat text was not admitted as Review evidence. */
+  case_input_notice?: "unregistered_document_text" | null;
   created_by: string;
   created_at: string;
 }
@@ -504,6 +524,8 @@ export interface KnowledgeMessage {
   knowledge_coverage?: KnowledgeCoverage | null;
   knowledge_snapshot_id?: string | null;
   knowledge_as_of?: string | null;
+  /** Additive V2 scope/direction result; absent on legacy stored messages. */
+  guidance_resolution?: GuidanceResolution | null;
   created_by: string;
   created_at: string;
 }
