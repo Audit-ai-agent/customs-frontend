@@ -1,27 +1,39 @@
-import { access, mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, rm, symlink } from "node:fs/promises";
 import * as path from "node:path";
 import { tmpdir } from "node:os";
 import type { FullResult, TestCase, TestResult } from "@playwright/test/reporter";
 import { afterEach, describe, expect, it } from "vitest";
 import FunctionalUatSafeFailureReporter, {
+  FUNCTIONAL_UAT_SAFE_FAILURE_ROOT,
   FUNCTIONAL_UAT_SAFE_FAILURE_SCHEMA,
   functionalUatReporterConfiguration,
   safeFailureLocation,
   validateSafeFailureFile,
+  writeSafeFailureReport,
 } from "../e2e/functional-uat-safe-failure-reporter";
 
 const temporaryRoots: string[] = [];
 
 afterEach(async () => {
-  await Promise.all(temporaryRoots.splice(0).map(async (root) => rm(root, { recursive: true, force: true })));
+  for (const root of temporaryRoots.splice(0).reverse()) {
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 async function safeFailureFile(): Promise<string> {
-  const root = await mkdtemp(path.join(tmpdir(), "functional-uat-safe-reporter-"));
-  temporaryRoots.push(root);
-  const runDirectory = path.join(root, "_local", "state", "e2e-runs", "run-1");
-  await mkdir(runDirectory, { recursive: true });
+  await mkdir(FUNCTIONAL_UAT_SAFE_FAILURE_ROOT, { recursive: true });
+  const runDirectory = await mkdtemp(path.join(FUNCTIONAL_UAT_SAFE_FAILURE_ROOT, ".functional-uat-safe-reporter-"));
+  temporaryRoots.push(runDirectory);
   return path.join(runDirectory, "failure.json");
+}
+
+function safeFailureReport() {
+  return {
+    schema_version: FUNCTIONAL_UAT_SAFE_FAILURE_SCHEMA,
+    status: "failed" as const,
+    failure_count: 1,
+    first_failure: null,
+  };
 }
 
 function testCase(location: unknown): TestCase {
@@ -117,7 +129,7 @@ describe("Functional-UAT safe failure reporter", () => {
     });
   });
 
-  it("does not write a report after a passing run and rejects destinations outside local state", async () => {
+  it("does not write a report after a passing run and accepts only the module-derived root", async () => {
     const outputFile = await safeFailureFile();
     const reporter = new FunctionalUatSafeFailureReporter({ outputFile });
     reporter.onTestEnd(
@@ -127,9 +139,50 @@ describe("Functional-UAT safe failure reporter", () => {
 
     await reporter.onEnd({ status: "passed" } as FullResult);
     await expect(access(outputFile)).rejects.toThrow();
-    expect(validateSafeFailureFile("C:\\workspace\\failure.json")).toBeNull();
-    expect(validateSafeFailureFile("C:\\workspace\\_local\\state\\e2e-runs\\run-1\\nested\\failure.json"))
-      .toBeNull();
-    expect(validateSafeFailureFile(outputFile)).toBe(outputFile);
+    expect(await validateSafeFailureFile("C:\\workspace\\failure.json")).toBeNull();
+    expect(await validateSafeFailureFile(path.join(
+      FUNCTIONAL_UAT_SAFE_FAILURE_ROOT,
+      "run-1",
+      "nested",
+      "failure.json",
+    ))).toBeNull();
+    expect(await validateSafeFailureFile(outputFile)).toBe(outputFile);
+  });
+
+  it("rejects an unrelated lookalike root and revalidates direct write calls", async () => {
+    const outsideRoot = await mkdtemp(path.join(tmpdir(), "functional-uat-lookalike-"));
+    temporaryRoots.push(outsideRoot);
+    const outsideFailureFile = path.join(
+      outsideRoot,
+      "_local",
+      "state",
+      "e2e-runs",
+      "run-1",
+      "failure.json",
+    );
+    await mkdir(path.dirname(outsideFailureFile), { recursive: true });
+
+    expect(await validateSafeFailureFile(outsideFailureFile)).toBeNull();
+    await writeSafeFailureReport(outsideFailureFile, safeFailureReport());
+    await expect(access(outsideFailureFile)).rejects.toThrow();
+  });
+
+  it("rejects a direct run directory symlink when the platform supports one", async () => {
+    await mkdir(FUNCTIONAL_UAT_SAFE_FAILURE_ROOT, { recursive: true });
+    const targetRunDirectory = await mkdtemp(path.join(FUNCTIONAL_UAT_SAFE_FAILURE_ROOT, ".functional-uat-safe-target-"));
+    const linkPath = await mkdtemp(path.join(FUNCTIONAL_UAT_SAFE_FAILURE_ROOT, ".functional-uat-safe-link-"));
+    temporaryRoots.push(targetRunDirectory, linkPath);
+    await rm(linkPath, { recursive: true, force: true });
+
+    try {
+      await symlink(targetRunDirectory, linkPath, process.platform === "win32" ? "junction" : "dir");
+    } catch {
+      return;
+    }
+
+    const symlinkFailureFile = path.join(linkPath, "failure.json");
+    expect(await validateSafeFailureFile(symlinkFailureFile)).toBeNull();
+    await writeSafeFailureReport(symlinkFailureFile, safeFailureReport());
+    await expect(access(symlinkFailureFile)).rejects.toThrow();
   });
 });
