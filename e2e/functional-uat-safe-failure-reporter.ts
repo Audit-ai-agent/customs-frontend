@@ -106,12 +106,16 @@ export function validateSafeFailureFile(value: string | undefined): string | nul
 
   const root = target.slice(0, markerIndex + marker.length - 1);
   const relation = pathApi.relative(root, target);
+  const segments = relation.split(pathApi.sep);
   if (
     !relation
     || relation === ".."
     || relation.startsWith(`..${pathApi.sep}`)
+    || segments.length !== 2
+    || !segments[0]
+    || segments[0] === "."
+    || segments[0] === ".."
     || pathApi.basename(relation) !== FAILURE_FILE_NAME
-    || pathApi.dirname(relation) === "."
   ) {
     return null;
   }

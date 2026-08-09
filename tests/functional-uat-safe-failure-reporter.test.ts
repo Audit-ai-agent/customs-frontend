@@ -128,6 +128,8 @@ describe("Functional-UAT safe failure reporter", () => {
     await reporter.onEnd({ status: "passed" } as FullResult);
     await expect(access(outputFile)).rejects.toThrow();
     expect(validateSafeFailureFile("C:\\workspace\\failure.json")).toBeNull();
+    expect(validateSafeFailureFile("C:\\workspace\\_local\\state\\e2e-runs\\run-1\\nested\\failure.json"))
+      .toBeNull();
     expect(validateSafeFailureFile(outputFile)).toBe(outputFile);
   });
 });
