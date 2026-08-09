@@ -1,5 +1,6 @@
 import { defineConfig } from "@playwright/test";
 import { loadFunctionalUatBrowserEnvironment } from "./e2e/functional-uat-environment";
+import { functionalUatReporterConfiguration } from "./e2e/functional-uat-safe-failure-reporter";
 
 const environment = loadFunctionalUatBrowserEnvironment();
 
@@ -17,7 +18,7 @@ export default defineConfig({
   expect: { timeout: 180_000 },
   outputDir: environment.transientOutputPath,
   globalTeardown: "./e2e/functional-uat-teardown.ts",
-  reporter: [["dot"]],
+  reporter: functionalUatReporterConfiguration(),
   use: {
     browserName: "chromium",
     channel: "msedge",
