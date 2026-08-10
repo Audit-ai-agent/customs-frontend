@@ -113,10 +113,21 @@ test("실제 기능 UAT에서 사건 작업대의 사람 검토 여정을 완료
       await reviewer.locator('[data-e2e="workspace-tab-evidence"]').click();
       await expect(reviewer.locator('[data-e2e="evidence-content"]')).toBeVisible();
       await expect(reviewer.locator('[data-e2e="evidence-card"]').first()).toBeVisible();
-      // The fixed Functional-UAT fixture remains a legacy three-law result.
-      // An omitted temporal_context must not create an empty or misleading
-      // provenance panel in the Browser workbench.
-      await expect(reviewer.locator('[data-e2e="evidence-temporal-context"]')).toHaveCount(0);
+      // The default Functional-UAT topology uses the 65-law history profile.
+      // Backend supplies the fixed baseline review date, so all three displayed
+      // dates must be present and must bind to the 2026-08-05 baseline.  This
+      // prevents the Browser from silently treating historical provenance as
+      // an optional legacy field on the default path.
+      await expect(reviewer.locator('[data-e2e="evidence-temporal-context"]')).toBeVisible();
+      await expect(reviewer.locator('[data-e2e="evidence-temporal-context-law"]')).toContainText(
+        "2026-08-05",
+      );
+      await expect(reviewer.locator('[data-e2e="evidence-temporal-context-hsk"]')).toContainText(
+        "2026-08-05",
+      );
+      await expect(
+        reviewer.locator('[data-e2e="evidence-temporal-context-requirements"]'),
+      ).toContainText("2026-08-05");
       checks.add("evidence_displayed");
       const retrievalStatus = reviewer.locator('[data-e2e="data-retrieval-status"]');
       await expect(retrievalStatus).toHaveAttribute("data-retrieval-semantics", "retrieval-complete");

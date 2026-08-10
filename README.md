@@ -93,9 +93,10 @@ headless로 사용하며 별도 Browser 다운로드, Docker 기동·정리, 서
 검증 범위는 reviewer 로그인 → Case·텍스트 문서 등록(.txt 업로드 포함) → 실제 심사 → 보고서·Evidence·인용 →
 AI 도우미 → finding 판단·정정 제안 → 독립 approver 승인 → 자식 심사 → 문서 대체와 새 심사 이력입니다.
 Browser는 Frontend의 `/api/v1` proxy만 사용해야 하며 Agent·Data 직접 요청은 실패로 처리합니다.
-현재 고정 Functional-UAT fixture는 기준 시점이 없는 기존 3법령 결과도 함께 확인하므로,
-Browser E2E는 Evidence 기준 시점 패널이 생기지 않는 호환 동작을 검증합니다. 기준 시점이
-있는 law-history 결과의 세 날짜 표시는 Frontend API·화면 계약 테스트로 별도 검증합니다.
+기본 Functional-UAT는 65법령 이력 Evidence를 사용하므로 Browser E2E는 Evidence 기준 시점
+패널의 법령·HSK·요건 세 날짜가 모두 `2026-08-05` baseline으로 표시되는지 검증합니다.
+기존 3법령 결과처럼 `temporal_context`가 없는 이력은 Frontend API·화면 계약 테스트에서
+패널 없이 계속 읽을 수 있는 호환 동작으로 별도 보장합니다.
 
 Playwright는 이 로컬 명령에만 쓰는 정확히 고정된 개발 의존성입니다. 일반 `test`, `check:quick`,
 CI에는 Browser E2E를 넣지 않습니다. trace·video·screenshot·HTML 보고서는 만들지 않고, 성공 시
