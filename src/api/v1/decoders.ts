@@ -20,6 +20,7 @@ import type {
   DocumentLineItem,
   DocumentView,
   EvidenceItem,
+  EvidenceTemporalContext,
   FactSourceReference,
   HumanProvidedSourceReference,
   JobRecord,
@@ -208,6 +209,9 @@ export function decodeReviewRun(value: unknown): ReviewRun {
     findings: array(raw.findings, "run.findings").map(decodeFinding),
     required_actions: array(raw.required_actions, "run.required_actions").map(decodeAction),
     reviewer_decisions: array(raw.reviewer_decisions, "run.reviewer_decisions").map(decodeReviewerDecision),
+    ...(raw.temporal_context === undefined || raw.temporal_context === null
+      ? {}
+      : { temporal_context: decodeEvidenceTemporalContext(raw.temporal_context) }),
     created_by: requiredString(raw.created_by, "run.created_by"),
     created_at: requiredString(raw.created_at, "run.created_at"),
     ...(raw.parent_review_run_id === undefined || raw.parent_review_run_id === null
@@ -216,6 +220,18 @@ export function decodeReviewRun(value: unknown): ReviewRun {
     ...(raw.applied_correction_proposal_ids === undefined
       ? {}
       : { applied_correction_proposal_ids: decodeIdentifierList(raw.applied_correction_proposal_ids, "run.applied_correction_proposal_ids") }),
+  };
+}
+
+function decodeEvidenceTemporalContext(value: unknown): EvidenceTemporalContext {
+  const raw = record(value, "run.temporal_context");
+  return {
+    law_as_of: isoDate(raw.law_as_of, "run.temporal_context.law_as_of"),
+    hsk_snapshot_as_of: isoDate(raw.hsk_snapshot_as_of, "run.temporal_context.hsk_snapshot_as_of"),
+    requirements_snapshot_as_of: isoDate(
+      raw.requirements_snapshot_as_of,
+      "run.temporal_context.requirements_snapshot_as_of",
+    ),
   };
 }
 

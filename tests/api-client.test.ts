@@ -165,6 +165,44 @@ describe("Backend API client", () => {
     ]));
     expect(result.comparisons).toEqual(expect.arrayContaining([expect.objectContaining({ comparison_id: "comparison-1" })]));
     expect(result.findings).toEqual(expect.arrayContaining([expect.objectContaining({ finding_id: "finding-1" })]));
+    expect(result.temporal_context).toBeUndefined();
+  });
+
+  it("decodes only the three additive Evidence temporal dates", async () => {
+    const payload = {
+      ...reviewRunPayload(),
+      temporal_context: {
+        law_as_of: "2024-01-01",
+        hsk_snapshot_as_of: "2025-12-31",
+        requirements_snapshot_as_of: "2025-12-31",
+        source_hash: "must-not-reach-the-workbench",
+        internal_path: "C:/private/data",
+        provider_error: "upstream diagnostic",
+      },
+    };
+    const api = new ApiClient(async () => json(payload), async () => "local-token");
+
+    await expect(api.getReviewRun("run-1")).resolves.toMatchObject({
+      temporal_context: {
+        law_as_of: "2024-01-01",
+        hsk_snapshot_as_of: "2025-12-31",
+        requirements_snapshot_as_of: "2025-12-31",
+      },
+    });
+    const result = await api.getReviewRun("run-1");
+    expect(result.temporal_context).not.toHaveProperty("source_hash");
+    expect(result.temporal_context).not.toHaveProperty("internal_path");
+    expect(result.temporal_context).not.toHaveProperty("provider_error");
+  });
+
+  it("rejects a partial temporal context instead of displaying a misleading date", async () => {
+    const payload = {
+      ...reviewRunPayload(),
+      temporal_context: { law_as_of: "2024-01-01", hsk_snapshot_as_of: "2025-12-31" },
+    };
+    const api = new ApiClient(async () => json(payload), async () => "local-token");
+
+    await expect(api.getReviewRun("run-1")).rejects.toThrow("requirements_snapshot_as_of");
   });
 
   it("keeps assistant, correction, and child-review actions on planned Backend v1 routes", async () => {
