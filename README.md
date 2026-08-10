@@ -70,6 +70,11 @@ Agent/Data/DB 값으로 Browser를 설정하지 마십시오.
 자동 승인이나 원문 변경으로 이어지지 않습니다. Browser는 심사 기준일을 보내지 않습니다. Backend가 개발 모드의
 로컬 날짜를 정하거나 Functional UAT의 2026-08-05를 강제합니다.
 
+Evidence 탭의 기준 시점 표시는 Review Run이 완전한 `temporal_context`를 제공할 때만
+법령·HSK 품목 기준·수입/수출 요건 스냅샷의 세 날짜를 분리해 보여 줍니다. 이 값은
+근거의 기준 시점 안내이며 개별 사건의 법적 적용 결론은 아닙니다. 기존 3법령 결과처럼
+값이 없거나 `null`인 심사 이력은 기준 시점 패널을 표시하지 않고 그대로 읽을 수 있습니다.
+
 ## 실제 Browser E2E
 
 현재 `main` 조합의 화면 연결을 실제로 확인할 때만 Backend 저장소에서 다음 명령을 실행합니다.
@@ -88,6 +93,9 @@ headless로 사용하며 별도 Browser 다운로드, Docker 기동·정리, 서
 검증 범위는 reviewer 로그인 → Case·텍스트 문서 등록(.txt 업로드 포함) → 실제 심사 → 보고서·Evidence·인용 →
 AI 도우미 → finding 판단·정정 제안 → 독립 approver 승인 → 자식 심사 → 문서 대체와 새 심사 이력입니다.
 Browser는 Frontend의 `/api/v1` proxy만 사용해야 하며 Agent·Data 직접 요청은 실패로 처리합니다.
+현재 고정 Functional-UAT fixture는 기준 시점이 없는 기존 3법령 결과도 함께 확인하므로,
+Browser E2E는 Evidence 기준 시점 패널이 생기지 않는 호환 동작을 검증합니다. 기준 시점이
+있는 law-history 결과의 세 날짜 표시는 Frontend API·화면 계약 테스트로 별도 검증합니다.
 
 Playwright는 이 로컬 명령에만 쓰는 정확히 고정된 개발 의존성입니다. 일반 `test`, `check:quick`,
 CI에는 Browser E2E를 넣지 않습니다. trace·video·screenshot·HTML 보고서는 만들지 않고, 성공 시

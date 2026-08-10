@@ -504,7 +504,7 @@ describe("commercial review workspace", () => {
     expect(retrieval?.textContent).not.toContain("Data Evidence");
     const temporal = root.querySelector<HTMLElement>('[data-e2e="evidence-temporal-context"]');
     expect(temporal?.textContent).toContain("법령 기준일");
-    expect(temporal?.textContent).toContain("2024-01-01");
+    expect(root.querySelector<HTMLElement>('[data-e2e="evidence-temporal-context-law"]')?.textContent).toContain("2024-01-01");
     expect(root.querySelector<HTMLElement>('[data-e2e="evidence-temporal-context-hsk"]')?.textContent).toContain("2025-12-31");
     expect(root.querySelector<HTMLElement>('[data-e2e="evidence-temporal-context-requirements"]')?.textContent).toContain("2025-12-31");
     expect(root.querySelectorAll('[data-e2e="evidence-card"]')).toHaveLength(1);
