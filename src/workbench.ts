@@ -2233,10 +2233,12 @@ export class CommercialReviewWorkspace {
     const run = this.state.selectedRun;
     if (!run) return emptyState("아직 법령 근거가 없습니다.", "심사를 완료하면 AI가 법령 근거를 연결합니다.");
     const retrievalStatus = this.createEvidenceRetrievalStatus(run);
+    const temporalContext = this.createEvidenceTemporalContext(run);
     if (!run.evidence.length) {
       return element("section", { className: "surface evidence-surface", attributes: { "data-e2e": "evidence-content" } },
         sectionHeading("법령 근거", "이번 심사 항목과 연결된 법령·수입 요건을 확인합니다."),
         retrievalStatus,
+        temporalContext,
         element("p", { className: "empty-copy", text: "현재 문서와 품목 기준으로 연결된 법령 근거가 없습니다." }),
       );
     }
@@ -2258,11 +2260,8 @@ export class CommercialReviewWorkspace {
         ),
         group.items.length > 1 ? element("p", { className: "evidence-card__group-note", text: `같은 수입 요건 ${group.items.length}건을 하나로 묶어 표시합니다.` }) : null,
         verificationDetails([
-          technicalLine("법령 근거 식별번호", item.evidence_id),
           technicalLine("원본 제목", item.title),
           technicalLine("원본 법령명", item.law_name),
-          technicalLine("출처 유형", item.source_type),
-          technicalLine("원본 해시", item.source_hash),
           technicalLine("원본 내용", item.text),
         ]),
       ));
@@ -2276,8 +2275,25 @@ export class CommercialReviewWorkspace {
     return element("section", { className: "surface evidence-surface", attributes: { "data-e2e": "evidence-content" } },
       sectionHeading("법령 근거", "이번 심사 항목과 연결된 법령·수입 요건을 확인합니다."),
       retrievalStatus,
+      temporalContext,
       evidence,
     );
+  }
+
+  private createEvidenceTemporalContext(run: ReviewRun): HTMLElement | null {
+    const context = run.temporal_context;
+    if (!context) return null;
+    return element("aside", {
+      className: "evidence-temporal-context",
+      attributes: { "data-e2e": "evidence-temporal-context", "aria-label": "법령 근거 기준 시점" },
+    },
+    element("strong", { text: "법령 근거 기준 시점" }),
+    element("p", { text: "아래는 이 심사에서 조회한 자료의 기준 시점이며, 개별 법령의 최종 적용·효력 판단은 아닙니다." }),
+    element("dl", { className: "evidence-temporal-context__list" },
+      temporalContextDefinition("법령 기준일", context.law_as_of, "law"),
+      temporalContextDefinition("HSK 품목 기준 스냅샷 기준일", context.hsk_snapshot_as_of, "hsk"),
+      temporalContextDefinition("수입·수출 요건 스냅샷 기준일", context.requirements_snapshot_as_of, "requirements"),
+    ));
   }
 
   private createEvidenceRetrievalStatus(run: ReviewRun): HTMLElement {
@@ -2675,6 +2691,13 @@ function verificationDetails(
       ? element("dl", { className: "verification-details__list" }, ...available.map(([label, value]) => verificationDefinition(label, value)))
       : null,
     content ?? null,
+  );
+}
+
+function temporalContextDefinition(label: string, value: string, kind: "law" | "hsk" | "requirements"): HTMLElement {
+  return element("div", { attributes: { "data-e2e": `evidence-temporal-context-${kind}` } },
+    element("dt", { text: label }),
+    element("dd", { text: value }),
   );
 }
 

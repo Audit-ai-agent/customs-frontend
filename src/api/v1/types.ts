@@ -305,6 +305,16 @@ export interface ReviewRunSummary {
   applied_correction_proposal_ids?: string[];
 }
 
+/**
+ * Safe, user-facing dates for the distinct sources used by one Evidence
+ * retrieval.  They are provenance notices, not a legal-effect conclusion.
+ */
+export interface EvidenceTemporalContext {
+  law_as_of: string;
+  hsk_snapshot_as_of: string;
+  requirements_snapshot_as_of: string;
+}
+
 export interface ReviewRun {
   review_run_id: string;
   case_id: string;
@@ -331,6 +341,11 @@ export interface ReviewRun {
   findings: ReviewFinding[];
   required_actions: RequiredAction[];
   reviewer_decisions: ReviewerDecision[];
+  /**
+   * Additive for the law-history profile.  Older three-law Review Runs omit
+   * this field and must continue to render normally.
+   */
+  temporal_context?: EvidenceTemporalContext | null;
   created_by: string;
   created_at: string;
   /** A child run keeps its parent for an auditable, non-destructive history. */

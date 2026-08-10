@@ -407,6 +407,11 @@ describe("commercial review workspace", () => {
     const root = document.createElement("div");
     const caseDetail = { case_id: "case-1", org_id: "local-org", title: "입항 서류", status: "in_review" as const, revision: 1, updated_at: "2026-08-05T00:00:00Z" };
     const run = reviewRun() as unknown as ReviewRun;
+    run.temporal_context = {
+      law_as_of: "2024-01-01",
+      hsk_snapshot_as_of: "2025-12-31",
+      requirements_snapshot_as_of: "2025-12-31",
+    };
     const firstClaim = run.report.sections[0]?.claims[0];
     if (!firstClaim) throw new Error("report fixture conclusion is absent");
     firstClaim.text = "Document validation for matching-origin.txt failed at comparison-1515e58.";
@@ -497,7 +502,14 @@ describe("commercial review workspace", () => {
     expect(retrieval?.textContent).toContain("일부 문서에서 HS 코드를 확인할 수 없어");
     expect(retrieval?.textContent).toContain("일부 품목의 법령 근거를 확인하지 못했습니다.");
     expect(retrieval?.textContent).not.toContain("Data Evidence");
+    const temporal = root.querySelector<HTMLElement>('[data-e2e="evidence-temporal-context"]');
+    expect(temporal?.textContent).toContain("법령 기준일");
+    expect(temporal?.textContent).toContain("2024-01-01");
+    expect(root.querySelector<HTMLElement>('[data-e2e="evidence-temporal-context-hsk"]')?.textContent).toContain("2025-12-31");
+    expect(root.querySelector<HTMLElement>('[data-e2e="evidence-temporal-context-requirements"]')?.textContent).toContain("2025-12-31");
     expect(root.querySelectorAll('[data-e2e="evidence-card"]')).toHaveLength(1);
+    expect(root.textContent).not.toContain("a".repeat(64));
+    expect(root.textContent).not.toContain("evidence-requirement-1");
 
     await (app as unknown as { openAssistantCitation(value: { kind: "evidence"; reference_id: string }): Promise<void> }).openAssistantCitation({
       kind: "evidence",
@@ -521,6 +533,9 @@ describe("commercial review workspace", () => {
     expect(skippedRetrieval?.textContent).toContain("문서를 보완한 뒤 다시 심사하십시오.");
     expect(root.textContent).toContain("현재 문서와 품목 기준으로 연결된 법령 근거가 없습니다.");
     expect(root.querySelectorAll('[data-e2e="evidence-card"]')).toHaveLength(0);
+    run.temporal_context = null;
+    (app as unknown as { render(): void }).render();
+    expect(root.querySelector('[data-e2e="evidence-temporal-context"]')).toBeNull();
     app.destroy();
   });
 
