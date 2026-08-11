@@ -128,6 +128,9 @@ test("실제 기능 UAT에서 사건 작업대의 사람 검토 여정을 완료
       await expect(
         reviewer.locator('[data-e2e="evidence-temporal-context-requirements"]'),
       ).toContainText("2026-08-05");
+      await expect(reviewer.locator('[data-e2e="evidence-temporal-coverage-law"]')).toBeVisible();
+      await expect(reviewer.locator('[data-e2e="evidence-temporal-coverage-hsk"]')).toBeVisible();
+      await expect(reviewer.locator('[data-e2e="evidence-temporal-coverage-requirements"]')).toBeVisible();
       checks.add("evidence_displayed");
       const retrievalStatus = reviewer.locator('[data-e2e="data-retrieval-status"]');
       await expect(retrievalStatus).toHaveAttribute("data-retrieval-semantics", "retrieval-complete");
@@ -326,17 +329,28 @@ test("실제 기능 UAT에서 사건 작업대의 사람 검토 여정을 완료
       await expect(selectedConversation.locator("strong")).toHaveText(selectedConversationTitle);
       checks.add("knowledge_v2_scope_coverage");
 
-      // These are two independent V2 scopes.  The safe contract asks the
-      // reviewer to select one; it must not search only the first match.
+      // These are two independent V2 scopes.  A bounded two-scope checklist
+      // must retain both scope/date/coverage partitions instead of silently
+      // choosing the first one or blending their citations.
       await form.locator('textarea[name="knowledge_message"]').fill("HS 품목분류와 수입 관세를 함께 알려 주세요.");
       await form.getByRole("button", { name: "질문 보내기" }).click();
       expectedKnowledgeAnswerCount += 1;
       await waitForKnowledgeAnswer(reviewer, answers, expectedKnowledgeAnswerCount);
-      const clarification = answers.nth(expectedKnowledgeAnswerCount - 1);
-      await expect(clarification.locator('[data-e2e="knowledge-answer-scope"]')).toHaveText("추가 확인 필요");
-      await expect(clarification.locator(".knowledge-citation")).toHaveCount(0);
-      await expect(clarification.locator(".knowledge-answer-boundary")).toContainText("대상 절차를 조금 더 구체적으로");
-      checks.add("knowledge_multiscope_clarification");
+      const multiScope = answers.nth(expectedKnowledgeAnswerCount - 1);
+      await expect(multiScope.locator('[data-e2e="knowledge-answer-scope"]')).toHaveText("일반 통관 안내");
+      const firstScope = multiScope.locator('[data-e2e="answer-section-general_guidance"][data-resolution-index="0"]');
+      const secondScope = multiScope.locator('[data-e2e="answer-section-general_guidance"][data-resolution-index="1"]');
+      await expect(firstScope).toHaveCount(1);
+      await expect(secondScope).toHaveCount(1);
+      await expect(firstScope).toContainText("주제 1 공식 안내");
+      await expect(secondScope).toContainText("주제 2 공식 안내");
+      await expect(firstScope.locator('.knowledge-citation[data-resolution-index="0"]').first()).toBeVisible();
+      await expect(firstScope.locator('.knowledge-citation[data-resolution-index="1"]')).toHaveCount(0);
+      await expect(secondScope.locator('.knowledge-citation[data-resolution-index="1"]').first()).toBeVisible();
+      await expect(firstScope.locator('[data-e2e="guidance-resolution-summary"]')).toContainText("지식 스냅샷 기준일");
+      await expect(secondScope.locator('[data-e2e="guidance-resolution-summary"]')).toContainText("지식 스냅샷 기준일");
+      await assertNoTechnicalIdentifierInDefaultMessage(multiScope);
+      checks.add("knowledge_multiscope_checklist");
     } finally {
       await reviewer.context().close();
     }

@@ -415,7 +415,13 @@ export function assistantScopeLabel(value: NonNullable<AssistantMessage["answer_
   })[value];
 }
 
-export function assistantAnswerSectionLabel(value: AssistantAnswerSection["kind"]): string {
+export function assistantAnswerSectionLabel(
+  value: AssistantAnswerSection["kind"],
+  resolutionIndex?: 0 | 1 | null,
+): string {
+  if (value === "general_guidance" && (resolutionIndex === 0 || resolutionIndex === 1)) {
+    return `주제 ${resolutionIndex + 1} 공식 안내`;
+  }
   return ({
     case_analysis: "현재 사건 기준",
     general_guidance: "일반 통관 안내",
@@ -431,7 +437,13 @@ export function assistantAnswerSectionIcon(value: AssistantAnswerSection["kind"]
   })[value];
 }
 
-export function assistantAnswerSectionDescription(value: AssistantAnswerSection["kind"]): string {
+export function assistantAnswerSectionDescription(
+  value: AssistantAnswerSection["kind"],
+  resolutionIndex?: 0 | 1 | null,
+): string {
+  if (value === "general_guidance" && (resolutionIndex === 0 || resolutionIndex === 1)) {
+    return "이 주제의 공식 지식 스냅샷만 인용한 일반 안내이며, 다른 주제나 현재 사건의 결론은 아닙니다.";
+  }
   return ({
     case_analysis: "현재 심사 건의 문서, 비교 결과와 연결된 근거를 바탕으로 정리한 내용입니다.",
     general_guidance: "공식 지식 스냅샷을 바탕으로 한 일반 안내이며, 현재 심사 건의 결론은 아닙니다.",

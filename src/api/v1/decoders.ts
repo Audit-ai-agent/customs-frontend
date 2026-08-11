@@ -27,6 +27,7 @@ import type {
   ExtractionPage,
   ExtractionSpan,
   EvidenceItem,
+  EvidenceTemporalCoverage,
   EvidenceTemporalContext,
   FactSourceReference,
   HumanProvidedSourceReference,
@@ -36,6 +37,7 @@ import type {
   KnowledgeCoverage,
   KnowledgeConversation,
   GuidanceResolution,
+  GuidanceResolutionPair,
   GuidanceEvidenceCitation,
   KnowledgeMessage,
   KnowledgeMessageExchange,
@@ -301,6 +303,15 @@ export function decodeReviewRunSummary(value: unknown): ReviewRunSummary {
 
 export function decodeReviewRun(value: unknown): ReviewRun {
   const raw = record(value, "review run");
+  const temporalContext = raw.temporal_context === undefined || raw.temporal_context === null
+    ? undefined
+    : decodeEvidenceTemporalContext(raw.temporal_context);
+  const temporalCoverage = raw.temporal_coverage === undefined || raw.temporal_coverage === null
+    ? undefined
+    : decodeEvidenceTemporalCoverage(raw.temporal_coverage);
+  if (temporalCoverage && !temporalContext) {
+    throw new ContractError("run.temporal_coverage requires run.temporal_context");
+  }
   return {
     review_run_id: requiredString(raw.review_run_id, "run.review_run_id"),
     case_id: requiredString(raw.case_id, "run.case_id"),
@@ -326,9 +337,8 @@ export function decodeReviewRun(value: unknown): ReviewRun {
     findings: array(raw.findings, "run.findings").map(decodeFinding),
     required_actions: array(raw.required_actions, "run.required_actions").map(decodeAction),
     reviewer_decisions: array(raw.reviewer_decisions, "run.reviewer_decisions").map(decodeReviewerDecision),
-    ...(raw.temporal_context === undefined || raw.temporal_context === null
-      ? {}
-      : { temporal_context: decodeEvidenceTemporalContext(raw.temporal_context) }),
+    ...(temporalContext === undefined ? {} : { temporal_context: temporalContext }),
+    ...(temporalCoverage === undefined ? {} : { temporal_coverage: temporalCoverage }),
     created_by: requiredString(raw.created_by, "run.created_by"),
     created_at: requiredString(raw.created_at, "run.created_at"),
     ...(raw.parent_review_run_id === undefined || raw.parent_review_run_id === null
@@ -348,6 +358,19 @@ function decodeEvidenceTemporalContext(value: unknown): EvidenceTemporalContext 
     requirements_snapshot_as_of: isoDate(
       raw.requirements_snapshot_as_of,
       "run.temporal_context.requirements_snapshot_as_of",
+    ),
+  };
+}
+
+function decodeEvidenceTemporalCoverage(value: unknown): EvidenceTemporalCoverage {
+  const raw = record(value, "run.temporal_coverage");
+  return {
+    law: oneOf(raw.law, ["covered", "unavailable"] as const, "run.temporal_coverage.law"),
+    hsk: oneOf(raw.hsk, ["covered", "unavailable"] as const, "run.temporal_coverage.hsk"),
+    requirements: oneOf(
+      raw.requirements,
+      ["covered", "unavailable"] as const,
+      "run.temporal_coverage.requirements",
     ),
   };
 }
@@ -377,31 +400,63 @@ export function decodeAssistantMessage(
 ): AssistantMessage {
   const raw = record(value, "assistant message");
   assertCaseMessageHasNoKnowledgeProvenance(raw, "assistant message");
+  assertNoInternalGuidanceFields(raw, "assistant message");
   const role = raw.role === undefined
     ? inferredRole
     : oneOf(raw.role, ["user", "assistant"], "assistant message.role");
   if (!role) throw new ContractError("assistant message.role is absent");
   const content = raw.content ?? raw.direct_answer;
+  const answerScope = decodeAssistantAnswerScope(raw.answer_scope, role);
+  const citations = raw.citations === undefined
+    ? []
+    : decodeAssistantCitationList(raw.citations, "assistant message.citations");
+  const answerSections = raw.answer_sections === undefined || raw.answer_sections === null
+    ? []
+    : decodeAssistantAnswerSections(raw.answer_sections, role, "assistant message.answer_sections");
+  const suggestedQuestions = raw.suggested_questions === undefined
+    ? []
+    : decodeSuggestedQuestions(raw.suggested_questions);
+  const guidanceResolution = decodeSingleGuidanceResolution(raw, role, "assistant message");
+  const guidanceResolutions = decodeGuidanceResolutionPair(raw, role, "assistant message");
+  const answerFormat = decodeMultiScopeAnswerFormat(raw, role, "assistant message");
+  const caseInputNotice = decodeCaseInputNotice(raw, role, "assistant message");
+  const correctionDraft = raw.correction_draft === undefined || raw.correction_draft === null
+    ? undefined
+    : decodeAssistantCorrectionDraft(raw.correction_draft, "assistant message.correction_draft");
+  validateGuidanceMetadata({
+    role,
+    guidanceResolution,
+    guidanceResolutions,
+    answerFormat,
+    citations,
+    answerSections,
+    context: "assistant message",
+  });
+  if (guidanceResolutions) {
+    validateCaseMultiScopeChecklist({
+      answerScope: answerScope.answer_scope,
+      citations,
+      answerSections,
+      resolutions: guidanceResolutions,
+      caseInputNotice: caseInputNotice.case_input_notice,
+      hasCorrectionDraft: correctionDraft !== undefined,
+      context: "assistant message",
+    });
+  }
   return {
     message_id: requiredString(raw.message_id, "assistant message.message_id"),
     conversation_id: requiredString(raw.conversation_id, "assistant message.conversation_id"),
     role,
     content: displayText(content, "assistant message.content"),
-    ...decodeAssistantAnswerScope(raw.answer_scope, role),
-    citations: raw.citations === undefined
-      ? []
-      : decodeAssistantCitationList(raw.citations, "assistant message.citations"),
-    suggested_questions: raw.suggested_questions === undefined
-      ? []
-      : decodeSuggestedQuestions(raw.suggested_questions),
-    ...(raw.correction_draft === undefined || raw.correction_draft === null
-      ? {}
-      : { correction_draft: decodeAssistantCorrectionDraft(raw.correction_draft, "assistant message.correction_draft") }),
-    ...(raw.answer_sections === undefined || raw.answer_sections === null
-      ? {}
-      : { answer_sections: decodeAssistantAnswerSections(raw.answer_sections, role, "assistant message.answer_sections") }),
-    ...decodeCaseGuidanceResolution(raw, role, "assistant message"),
-    ...decodeCaseInputNotice(raw, role, "assistant message"),
+    ...answerScope,
+    citations,
+    suggested_questions: suggestedQuestions,
+    ...(correctionDraft === undefined ? {} : { correction_draft: correctionDraft }),
+    ...(answerSections.length ? { answer_sections: answerSections } : {}),
+    ...(guidanceResolution === undefined ? {} : { guidance_resolution: guidanceResolution }),
+    ...(guidanceResolutions === undefined ? {} : { guidance_resolutions: guidanceResolutions }),
+    ...(answerFormat === undefined ? {} : { answer_format: answerFormat }),
+    ...caseInputNotice,
     created_by: requiredString(raw.created_by, "assistant message.created_by"),
     created_at: requiredString(raw.created_at, "assistant message.created_at"),
   };
@@ -415,14 +470,321 @@ export function decodeAssistantMessageExchange(value: unknown): AssistantMessage
   };
 }
 
-function decodeCaseGuidanceResolution(
+function decodeSingleGuidanceResolution(
   raw: Record<string, unknown>,
-  role: AssistantMessage["role"],
+  role: "user" | "assistant",
   context: string,
-): Pick<AssistantMessage, "guidance_resolution"> {
-  if (raw.guidance_resolution === undefined || raw.guidance_resolution === null) return {};
+): GuidanceResolution | undefined {
+  if (raw.guidance_resolution === undefined || raw.guidance_resolution === null) return undefined;
   if (role !== "assistant") throw new ContractError(`${context} user message cannot carry guidance resolution`);
-  return { guidance_resolution: decodeGuidanceResolutionValue(raw.guidance_resolution, `${context}.guidance_resolution`) };
+  return decodeGuidanceResolutionValue(raw.guidance_resolution, `${context}.guidance_resolution`);
+}
+
+function decodeGuidanceResolutionPair(
+  raw: Record<string, unknown>,
+  role: "user" | "assistant",
+  context: string,
+): GuidanceResolutionPair | undefined {
+  if (raw.guidance_resolutions === undefined || raw.guidance_resolutions === null) return undefined;
+  if (role !== "assistant") throw new ContractError(`${context} user message cannot carry multi-scope guidance resolutions`);
+  const values = array(raw.guidance_resolutions, `${context}.guidance_resolutions`);
+  if (values.length !== 2) throw new ContractError(`${context}.guidance_resolutions must contain exactly two scopes`);
+  const first = decodeGuidanceResolutionValue(values[0], `${context}.guidance_resolutions[0]`);
+  const second = decodeGuidanceResolutionValue(values[1], `${context}.guidance_resolutions[1]`);
+  if (first.registry_version !== "2.0" || second.registry_version !== "2.0") {
+    throw new ContractError(`${context}.guidance_resolutions require the V2 registry`);
+  }
+  if (first.topic === second.topic && first.scope === second.scope) {
+    throw new ContractError(`${context}.guidance_resolutions must be independent`);
+  }
+  return [first, second];
+}
+
+function decodeMultiScopeAnswerFormat(
+  raw: Record<string, unknown>,
+  role: "user" | "assistant",
+  context: string,
+): "multi_scope_checklist" | undefined {
+  if (raw.answer_format === undefined || raw.answer_format === null) return undefined;
+  if (role !== "assistant") throw new ContractError(`${context} user message cannot carry an answer format`);
+  return literal(raw.answer_format, "multi_scope_checklist", `${context}.answer_format`);
+}
+
+function validateGuidanceMetadata({
+  role,
+  guidanceResolution,
+  guidanceResolutions,
+  answerFormat,
+  citations,
+  answerSections,
+  context,
+}: {
+  role: "user" | "assistant";
+  guidanceResolution: GuidanceResolution | undefined;
+  guidanceResolutions: GuidanceResolutionPair | undefined;
+  answerFormat: "multi_scope_checklist" | undefined;
+  citations: readonly AssistantCitation[];
+  answerSections: readonly AssistantAnswerSection[];
+  context: string;
+}): void {
+  if (role !== "assistant") {
+    if (guidanceResolution || guidanceResolutions || answerFormat) {
+      throw new ContractError(`${context} user message cannot carry guidance answer metadata`);
+    }
+    return;
+  }
+  if (guidanceResolution && guidanceResolutions) {
+    throw new ContractError(`${context} guidance_resolution and guidance_resolutions are mutually exclusive`);
+  }
+  if (!guidanceResolutions) {
+    if (answerFormat !== undefined) {
+      throw new ContractError(`${context} single-scope answer cannot claim a multi-scope format`);
+    }
+    if (hasResolutionIndex(citations) || hasResolutionIndex(answerSections)) {
+      throw new ContractError(`${context} single-scope answer cannot carry a resolution index`);
+    }
+    validateLegacyAnswerSections(answerSections, context);
+    return;
+  }
+  if (answerFormat !== "multi_scope_checklist") {
+    throw new ContractError(`${context} multi-scope answer requires multi_scope_checklist`);
+  }
+}
+
+function validateLegacyAnswerSections(
+  sections: readonly AssistantAnswerSection[],
+  context: string,
+): void {
+  if (!sections.length) return;
+  if (sections.length > 3) {
+    throw new ContractError(`${context}.answer_sections: at most three legacy sections are allowed`);
+  }
+  if (new Set(sections.map((section) => section.kind)).size !== sections.length) {
+    throw new ContractError(`${context}.answer_sections: duplicate legacy section kind is not allowed`);
+  }
+  const ordering = sections[0]?.kind === "general_guidance"
+    ? ["general_guidance"] as const
+    : ["case_analysis", "general_guidance", "case_application"] as const;
+  if (sections.some((section, index) => ordering[index] !== section.kind)) {
+    throw new ContractError(`${context}.answer_sections must use the Case, general guidance, application order`);
+  }
+}
+
+function validateCaseMultiScopeChecklist({
+  answerScope,
+  citations,
+  answerSections,
+  resolutions,
+  caseInputNotice,
+  hasCorrectionDraft,
+  context,
+}: {
+  answerScope: AssistantAnswerScope | undefined;
+  citations: readonly AssistantCitation[];
+  answerSections: readonly AssistantAnswerSection[];
+  resolutions: GuidanceResolutionPair;
+  caseInputNotice: AssistantMessage["case_input_notice"] | undefined;
+  hasCorrectionDraft: boolean;
+  context: string;
+}): void {
+  if (caseInputNotice !== undefined || hasCorrectionDraft) {
+    throw new ContractError(`${context} multi-scope answer cannot carry Case input or correction metadata`);
+  }
+  if (answerScope === "insufficient_evidence") {
+    if (citations.length || answerSections.length) {
+      throw new ContractError(`${context} incomplete multi-scope answer must not expose citations or sections`);
+    }
+    return;
+  }
+  if (answerScope !== "case_grounded" && answerScope !== "evidence_grounded") {
+    throw new ContractError(`${context} multi-scope checklist requires a Case-grounded answer`);
+  }
+  if (resolutions.some((resolution) => resolution.coverage !== "covered")) {
+    throw new ContractError(`${context} multi-scope checklist requires both scopes covered`);
+  }
+  const guidanceCitations = citations.filter(isGuidanceCitation);
+  const caseCitations = citations.filter((citation) => !isGuidanceCitation(citation));
+  if (!guidanceCitations.length || !caseCitations.length) {
+    throw new ContractError(`${context} multi-scope checklist requires Case and guidance citations`);
+  }
+  validateMultiScopeGuidanceCitations(guidanceCitations, resolutions, context);
+  if (answerScope === "case_grounded" && !caseCitations.some((citation) => citation.kind === "fact" || citation.kind === "comparison")) {
+    throw new ContractError(`${context} case-grounded multi-scope answer requires a fact or comparison citation`);
+  }
+  if (answerScope === "evidence_grounded" && !caseCitations.some((citation) => citation.kind === "evidence")) {
+    throw new ContractError(`${context} evidence-grounded multi-scope answer requires an evidence citation`);
+  }
+  const expected = [
+    ["case_analysis", undefined],
+    ["general_guidance", 0],
+    ["general_guidance", 1],
+    ["case_application", undefined],
+  ] as const;
+  if (answerSections.length !== expected.length || answerSections.some((section, index) => {
+    const expectedSection = expected[index];
+    return expectedSection === undefined
+      || section.kind !== expectedSection[0]
+      || normalizedResolutionIndex(section.resolution_index) !== expectedSection[1];
+  })) {
+    throw new ContractError(`${context} multi-scope checklist must use the fixed four-section order`);
+  }
+  const [caseSection, firstGuidance, secondGuidance, application] = answerSections;
+  if (!caseSection || !firstGuidance || !secondGuidance || !application) {
+    throw new ContractError(`${context} multi-scope checklist is incomplete`);
+  }
+  if (!caseSection.citations.length || caseSection.citations.some(isGuidanceCitation)) {
+    throw new ContractError(`${context} multi-scope Case analysis may use only Case citations`);
+  }
+  for (const [index, section] of [firstGuidance, secondGuidance].entries()) {
+    if (!section.citations.length || section.citations.some((citation) => !isGuidanceCitation(citation) || citation.resolution_index !== index)) {
+      throw new ContractError(`${context} multi-scope guidance section must use only its own scope citations`);
+    }
+  }
+  const applicationGuidanceIndexes = new Set(
+    application.citations
+      .filter(isGuidanceCitation)
+      .map((citation) => citation.resolution_index),
+  );
+  if (
+    !application.citations.some((citation) => !isGuidanceCitation(citation))
+    || applicationGuidanceIndexes.size !== 2
+    || !applicationGuidanceIndexes.has(0)
+    || !applicationGuidanceIndexes.has(1)
+  ) {
+    throw new ContractError(`${context} multi-scope application requires Case and both scope citations`);
+  }
+  assertSectionCitationsAreTopLevel(citations, answerSections, context);
+}
+
+function validateKnowledgeMultiScopeChecklist({
+  answerScope,
+  citations,
+  answerSections,
+  resolutions,
+  knowledgeCoverage,
+  context,
+}: {
+  answerScope: KnowledgeAnswerScope | undefined;
+  citations: readonly GuidanceEvidenceCitation[];
+  answerSections: readonly KnowledgeAnswerSection[];
+  resolutions: GuidanceResolutionPair;
+  knowledgeCoverage: KnowledgeCoverage | undefined;
+  context: string;
+}): void {
+  if (answerScope === "insufficient_evidence") {
+    if (citations.length || answerSections.length) {
+      throw new ContractError(`${context} incomplete multi-scope answer must not expose citations or sections`);
+    }
+    return;
+  }
+  if (answerScope !== "general_customs_guidance") {
+    throw new ContractError(`${context} multi-scope knowledge answer requires general official guidance`);
+  }
+  if (knowledgeCoverage !== "covered" || resolutions.some((resolution) => resolution.coverage !== "covered")) {
+    throw new ContractError(`${context} multi-scope knowledge answer requires both scopes covered`);
+  }
+  const [first, second] = resolutions;
+  if (!first?.snapshot_id || first.snapshot_id !== second?.snapshot_id) {
+    throw new ContractError(`${context} multi-scope knowledge answer requires one immutable snapshot`);
+  }
+  validateMultiScopeGuidanceCitations(citations, resolutions, context);
+  const expected = [["general_guidance", 0], ["general_guidance", 1]] as const;
+  if (answerSections.length !== expected.length || answerSections.some((section, index) => {
+    const expectedSection = expected[index];
+    return expectedSection === undefined
+      || section.kind !== expectedSection[0]
+      || normalizedResolutionIndex(section.resolution_index) !== expectedSection[1];
+  })) {
+    throw new ContractError(`${context} multi-scope knowledge answer must use two indexed guidance sections`);
+  }
+  for (const [index, section] of answerSections.entries()) {
+    if (!section.citations.length || section.citations.some((citation) => citation.resolution_index !== index)) {
+      throw new ContractError(`${context} multi-scope knowledge section must use only its own scope citations`);
+    }
+  }
+  assertSectionCitationsAreTopLevel(citations, answerSections, context);
+}
+
+function validateMultiScopeGuidanceCitations(
+  citations: readonly GuidanceEvidenceCitation[],
+  resolutions: GuidanceResolutionPair,
+  context: string,
+): void {
+  const indexes = new Set<number>();
+  const identities = new Set<string>();
+  for (const citation of citations) {
+    const index = normalizedResolutionIndex(citation.resolution_index);
+    if (index !== 0 && index !== 1) {
+      throw new ContractError(`${context} multi-scope guidance citation requires resolution_index 0 or 1`);
+    }
+    const resolution = resolutions[index];
+    if (
+      citation.snapshot_id !== resolution.snapshot_id
+      || citation.as_of !== resolution.as_of
+      || citation.coverage !== resolution.coverage
+    ) {
+      throw new ContractError(`${context} multi-scope guidance citation provenance does not match its resolution`);
+    }
+    indexes.add(index);
+    const identity = `${citation.source_id}\u001f${index}`;
+    if (identities.has(identity)) {
+      throw new ContractError(`${context} multi-scope guidance citations must be unique within each scope`);
+    }
+    identities.add(identity);
+  }
+  if (indexes.size !== 2 || !indexes.has(0) || !indexes.has(1)) {
+    throw new ContractError(`${context} multi-scope guidance citations must cover both scopes`);
+  }
+}
+
+function assertSectionCitationsAreTopLevel(
+  citations: readonly AssistantCitation[],
+  sections: readonly AssistantAnswerSection[],
+  context: string,
+): void {
+  const topLevel = new Set(citations.map(assistantCitationIdentity));
+  for (const citation of sections.flatMap((section) => section.citations)) {
+    if (!topLevel.has(assistantCitationIdentity(citation))) {
+      throw new ContractError(`${context} section citation is not present in the top-level citation list`);
+    }
+  }
+}
+
+function assistantCitationIdentity(citation: AssistantCitation): string {
+  return isGuidanceCitation(citation)
+    ? `${citation.kind}\u001f${citation.source_id}\u001f${normalizedResolutionIndex(citation.resolution_index) ?? "single"}`
+    : `${citation.kind}\u001f${citation.reference_id}`;
+}
+
+function isGuidanceCitation(citation: AssistantCitation): citation is GuidanceEvidenceCitation {
+  return citation.kind === "guidance_evidence";
+}
+
+function hasResolutionIndex(values: readonly (AssistantCitation | AssistantAnswerSection)[]): boolean {
+  return values.some(
+    (value) =>
+      "resolution_index" in value && normalizedResolutionIndex(value.resolution_index) !== undefined,
+  );
+}
+
+function normalizedResolutionIndex(value: 0 | 1 | null | undefined): 0 | 1 | undefined {
+  return value === null ? undefined : value;
+}
+
+function assertNoInternalGuidanceFields(raw: Record<string, unknown>, context: string): void {
+  const prohibited = [
+    "guidance_registry_sha256",
+    "registry_sha256",
+    "provider_error",
+    "provider_errors",
+    "internal_error",
+    "source_hash",
+    "source_path",
+    "internal_path",
+    "engine",
+  ];
+  const found = prohibited.find((key) => raw[key] !== undefined && raw[key] !== null);
+  if (found) throw new ContractError(`${context} must not expose internal guidance diagnostics (${found})`);
 }
 
 function decodeGuidanceResolutionValue(value: unknown, context: string): GuidanceResolution {
@@ -496,6 +858,7 @@ export function decodeKnowledgeMessage(
 ): KnowledgeMessage {
   const raw = record(value, "knowledge message");
   assertKnowledgeIsCaseIndependent(raw, "knowledge message");
+  assertNoInternalGuidanceFields(raw, "knowledge message");
   const role = raw.role === undefined
     ? inferredRole
     : oneOf(raw.role, ["user", "assistant"], "knowledge message.role");
@@ -514,7 +877,9 @@ export function decodeKnowledgeMessage(
     : decodeSuggestedQuestions(raw.suggested_questions);
   const answerScope = decodeKnowledgeAnswerScope(raw.answer_scope, role);
   const provenance = decodeKnowledgeMessageProvenance(raw, role, "knowledge message");
-  const guidanceResolution = decodeKnowledgeGuidanceResolution(raw, role, "knowledge message");
+  const guidanceResolution = decodeSingleGuidanceResolution(raw, role, "knowledge message");
+  const guidanceResolutions = decodeGuidanceResolutionPair(raw, role, "knowledge message");
+  const answerFormat = decodeMultiScopeAnswerFormat(raw, role, "knowledge message");
   if ([...citations, ...answerSections.flatMap((section) => section.citations)].some((citation) => citation.kind !== "guidance_evidence")) {
     throw new ContractError("knowledge message citations must not reference a Case or review run");
   }
@@ -523,6 +888,25 @@ export function decodeKnowledgeMessage(
   }
   if (role === "assistant" && answerSections.some((section) => section.kind !== "general_guidance")) {
     throw new ContractError("knowledge answer cannot contain a Case analysis section");
+  }
+  validateGuidanceMetadata({
+    role,
+    guidanceResolution,
+    guidanceResolutions,
+    answerFormat,
+    citations,
+    answerSections,
+    context: "knowledge message",
+  });
+  if (guidanceResolutions) {
+    validateKnowledgeMultiScopeChecklist({
+      answerScope: answerScope.answer_scope,
+      citations: citations as GuidanceEvidenceCitation[],
+      answerSections: answerSections as KnowledgeAnswerSection[],
+      resolutions: guidanceResolutions,
+      knowledgeCoverage: provenance.knowledge_coverage ?? undefined,
+      context: "knowledge message",
+    });
   }
   return {
     message_id: requiredString(raw.message_id, "knowledge message.message_id"),
@@ -534,20 +918,12 @@ export function decodeKnowledgeMessage(
     ...(answerSections.length ? { answer_sections: answerSections as KnowledgeAnswerSection[] } : {}),
     suggested_questions: suggestedQuestions,
     ...provenance,
-    ...guidanceResolution,
+    ...(guidanceResolution === undefined ? {} : { guidance_resolution: guidanceResolution }),
+    ...(guidanceResolutions === undefined ? {} : { guidance_resolutions: guidanceResolutions }),
+    ...(answerFormat === undefined ? {} : { answer_format: answerFormat }),
     created_by: requiredString(raw.created_by, "knowledge message.created_by"),
     created_at: requiredString(raw.created_at, "knowledge message.created_at"),
   };
-}
-
-function decodeKnowledgeGuidanceResolution(
-  raw: Record<string, unknown>,
-  role: KnowledgeMessage["role"],
-  context: string,
-): Pick<KnowledgeMessage, "guidance_resolution"> {
-  if (raw.guidance_resolution === undefined || raw.guidance_resolution === null) return {};
-  if (role !== "assistant") throw new ContractError(`${context} user message cannot carry guidance resolution`);
-  return { guidance_resolution: decodeGuidanceResolutionValue(raw.guidance_resolution, `${context}.guidance_resolution`) };
 }
 
 /**
@@ -1052,6 +1428,9 @@ function decodeAssistantCitation(value: unknown, context: string): AssistantCita
       as_of: isoDate(raw.as_of, `${context}.as_of`),
       snapshot_id: requiredString(raw.snapshot_id, `${context}.snapshot_id`),
       coverage: oneOf(raw.coverage, ["covered", "no_coverage", "partial", "unavailable"] as const, `${context}.coverage`),
+      ...(raw.resolution_index === undefined || raw.resolution_index === null
+        ? {}
+        : { resolution_index: resolutionIndex(raw.resolution_index, `${context}.resolution_index`) }),
     } satisfies GuidanceEvidenceCitation;
   }
   if (
@@ -1062,6 +1441,7 @@ function decodeAssistantCitation(value: unknown, context: string): AssistantCita
     || raw.as_of !== undefined
     || raw.snapshot_id !== undefined
     || raw.coverage !== undefined
+    || raw.resolution_index !== undefined
   ) {
     throw new ContractError(`${context}: Case citation cannot include guidance provenance`);
   }
@@ -1151,20 +1531,8 @@ function decodeAssistantAnswerSections(
   const sections = array(value, context);
   if (!sections.length) return [];
   if (role !== "assistant") throw new ContractError(`${context}: only assistant messages can include sections`);
-  if (sections.length > 3) {
-    throw new ContractError(`${context}: at most three bounded sections are allowed`);
-  }
-  const decoded = sections.map((section, index) => decodeAssistantAnswerSection(section, `${context}[${index}]`));
-  if (new Set(decoded.map((section) => section.kind)).size !== decoded.length) {
-    throw new ContractError(`${context}: duplicate section kind is not allowed`);
-  }
-  const ordering = decoded[0]?.kind === "general_guidance"
-    ? ["general_guidance"] as const
-    : ["case_analysis", "general_guidance", "case_application"] as const;
-  if (decoded.some((section, index) => ordering[index] !== section.kind)) {
-    throw new ContractError(`${context}: sections must use the Case, general guidance, application order`);
-  }
-  return decoded;
+  if (sections.length > 4) throw new ContractError(`${context}: at most four bounded sections are allowed`);
+  return sections.map((section, index) => decodeAssistantAnswerSection(section, `${context}[${index}]`));
 }
 
 function decodeAssistantAnswerSection(value: unknown, context: string): AssistantAnswerSection {
@@ -1177,6 +1545,9 @@ function decodeAssistantAnswerSection(value: unknown, context: string): Assistan
     title: displayText(raw.title, `${context}.title`),
     content: displayText(raw.content, `${context}.content`),
     citations,
+    ...(raw.resolution_index === undefined || raw.resolution_index === null
+      ? {}
+      : { resolution_index: resolutionIndex(raw.resolution_index, `${context}.resolution_index`) }),
   };
 }
 
@@ -1248,6 +1619,11 @@ function warningCode(value: unknown, context: string): string {
 
 function nonNegativeInteger(value: unknown, context: string): number {
   if (typeof value !== "number" || !Number.isInteger(value) || value < 0 || value > 1_000_000_000) throw new ContractError(`${context}: non-negative integer expected`);
+  return value;
+}
+
+function resolutionIndex(value: unknown, context: string): 0 | 1 {
+  if (value !== 0 && value !== 1) throw new ContractError(`${context}: 0 or 1 expected`);
   return value;
 }
 

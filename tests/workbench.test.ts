@@ -209,6 +209,74 @@ describe("commercial review workspace", () => {
     app.destroy();
   });
 
+  it("renders two official scopes in their own indexed sections and stops a partial synthesis", async () => {
+    window.location.hash = "#/knowledge";
+    const root = document.createElement("div");
+    const conversation = {
+      conversation_id: "knowledge-multi", title: "HS와 관세", trade_type: "import" as const, as_of: "2026-08-05",
+      snapshot_id: "snapshot-v2", created_by: "local-reviewer", created_at: "2026-08-05T00:00:00Z", updated_at: "2026-08-05T00:01:00Z",
+    };
+    const resolution = [
+      { topic: "customs_duty", scope: "duty_payment_basics", requested_direction: "import" as const, applicable_directions: ["import" as const], coverage: "covered" as const, snapshot_id: "snapshot-v2", as_of: "2026-08-05", registry_version: "2.0" as const },
+      { topic: "hs_classification", scope: "classification_principles", requested_direction: "import" as const, applicable_directions: ["import" as const], coverage: "covered" as const, snapshot_id: "snapshot-v2", as_of: "2026-08-05", registry_version: "2.0" as const },
+    ] as const;
+    const firstCitation = { kind: "guidance_evidence" as const, source_id: "duty-source", source_kind: "official_agency_guidance" as const, source_title: "관세 납부 안내", source_uri: "https://example.test/duty", as_of: "2026-08-05", snapshot_id: "snapshot-v2", coverage: "covered" as const, resolution_index: 0 as const };
+    const secondCitation = { kind: "guidance_evidence" as const, source_id: "hs-source", source_kind: "official_agency_guidance" as const, source_title: "품목분류 안내", source_uri: "https://example.test/hs", as_of: "2026-08-05", snapshot_id: "snapshot-v2", coverage: "covered" as const, resolution_index: 1 as const };
+    const messages = [
+      {
+        message_id: "knowledge-multi-complete", conversation_id: "knowledge-multi", role: "assistant" as const, content: "두 공식 안내를 분리해 확인하십시오.",
+        answer_scope: "general_customs_guidance" as const, citations: [firstCitation, secondCitation],
+        answer_sections: [
+          { kind: "general_guidance" as const, resolution_index: 0 as const, title: "주제 1 공식 안내", content: "관세 납부 항목을 확인하십시오.", citations: [firstCitation] },
+          { kind: "general_guidance" as const, resolution_index: 1 as const, title: "주제 2 공식 안내", content: "품목분류 기준을 확인하십시오.", citations: [secondCitation] },
+        ],
+        suggested_questions: [], knowledge_coverage: "covered" as const, knowledge_snapshot_id: "snapshot-v2", knowledge_as_of: "2026-08-05",
+        guidance_resolutions: resolution, answer_format: "multi_scope_checklist" as const, created_by: "agent", created_at: "2026-08-05T00:01:00Z",
+      },
+      {
+        message_id: "knowledge-multi-partial", conversation_id: "knowledge-multi", role: "assistant" as const, content: "두 주제 가운데 일부 공식 근거를 확인하지 못해 종합 안내를 만들지 않았습니다.",
+        answer_scope: "insufficient_evidence" as const, citations: [], answer_sections: [], suggested_questions: [],
+        knowledge_coverage: "partial" as const, knowledge_as_of: "2026-08-05",
+        guidance_resolutions: [resolution[0], { ...resolution[1], coverage: "partial" as const }], answer_format: "multi_scope_checklist" as const,
+        created_by: "agent", created_at: "2026-08-05T00:02:00Z",
+      },
+    ];
+    const api = {
+      getSession: async () => ({ subject: "local-reviewer", org_id: "local-org", roles: ["reviewer"] }),
+      listCases: vi.fn(async () => ({ items: [] })),
+      listKnowledgeConversations: vi.fn(async () => [conversation]),
+      listKnowledgeMessages: vi.fn(async () => messages),
+    };
+    const auth = { logout: async () => undefined, freshAccessToken: async () => "token", isAuthenticated: () => true };
+    const app = new LightweightWorkbench(root, api as never, auth, "local-development");
+    await app.start();
+
+    const assistantAnswers = root.querySelectorAll<HTMLElement>('[data-e2e="knowledge-message"][data-message-role="assistant"]');
+    const complete = assistantAnswers[0];
+    if (!complete) throw new Error("multi-scope knowledge answer is absent");
+    const sections = complete.querySelectorAll<HTMLElement>('[data-e2e="answer-section-general_guidance"]');
+    expect(sections).toHaveLength(2);
+    expect(sections[0]?.dataset.resolutionIndex).toBe("0");
+    expect(sections[1]?.dataset.resolutionIndex).toBe("1");
+    expect(sections[0]?.textContent).toContain("주제 1 공식 안내");
+    expect(sections[0]?.textContent).toContain("관세 납세 기초");
+    expect(sections[0]?.textContent).toContain("한국 수입 기준");
+    expect(sections[1]?.textContent).toContain("주제 2 공식 안내");
+    expect(sections[1]?.textContent).toContain("품목분류 원칙");
+    expect(sections[1]?.textContent).toContain("한국 수입 기준");
+    expect(sections[0]?.querySelectorAll('.knowledge-citation[data-resolution-index="0"]')).toHaveLength(1);
+    expect(sections[0]?.querySelectorAll('.knowledge-citation[data-resolution-index="1"]')).toHaveLength(0);
+    expect(sections[1]?.querySelectorAll('.knowledge-citation[data-resolution-index="1"]')).toHaveLength(1);
+
+    const partial = assistantAnswers[1];
+    expect(partial?.querySelectorAll('[data-e2e="answer-section-general_guidance"]')).toHaveLength(0);
+    expect(partial?.querySelectorAll('.knowledge-citation')).toHaveLength(0);
+    expect(partial?.querySelector('[data-e2e="knowledge-guidance-resolutions"]')?.textContent).toContain("주제 1");
+    expect(partial?.querySelector('[data-e2e="knowledge-guidance-resolutions"]')?.textContent).toContain("일부 근거 확인됨");
+    expect(root.textContent).not.toContain("guidance_registry_sha256");
+    app.destroy();
+  });
+
   it("creates a new standalone knowledge conversation when its trade direction or date changes", async () => {
     window.location.hash = "#/knowledge";
     const root = document.createElement("div");
@@ -483,6 +551,7 @@ describe("commercial review workspace", () => {
       hsk_snapshot_as_of: "2025-12-31",
       requirements_snapshot_as_of: "2025-12-31",
     };
+    run.temporal_coverage = { law: "covered", hsk: "unavailable", requirements: "unavailable" };
     const firstClaim = run.report.sections[0]?.claims[0];
     if (!firstClaim) throw new Error("report fixture conclusion is absent");
     firstClaim.text = "Document validation for matching-origin.txt failed at comparison-1515e58.";
@@ -578,6 +647,10 @@ describe("commercial review workspace", () => {
     expect(root.querySelector<HTMLElement>('[data-e2e="evidence-temporal-context-law"]')?.textContent).toContain("2024-01-01");
     expect(root.querySelector<HTMLElement>('[data-e2e="evidence-temporal-context-hsk"]')?.textContent).toContain("2025-12-31");
     expect(root.querySelector<HTMLElement>('[data-e2e="evidence-temporal-context-requirements"]')?.textContent).toContain("2025-12-31");
+    expect(root.querySelector<HTMLElement>('[data-e2e="evidence-temporal-coverage-law"]')?.textContent).toContain("자료 확인됨");
+    expect(root.querySelector<HTMLElement>('[data-e2e="evidence-temporal-coverage-hsk"]')?.textContent).toContain("자료 없음");
+    expect(root.querySelector<HTMLElement>('[data-e2e="evidence-temporal-coverage-requirements"]')?.textContent).toContain("자료 없음");
+    expect(retrieval?.textContent).toContain("HSK 품목·수입·수출 요건 기준일 자료를 확인할 수 없어");
     expect(root.querySelectorAll('[data-e2e="evidence-card"]')).toHaveLength(1);
     expect(root.textContent).not.toContain("a".repeat(64));
     expect(root.textContent).not.toContain("evidence-requirement-1");
@@ -605,6 +678,7 @@ describe("commercial review workspace", () => {
     expect(root.textContent).toContain("현재 문서와 품목 기준으로 연결된 법령 근거가 없습니다.");
     expect(root.querySelectorAll('[data-e2e="evidence-card"]')).toHaveLength(0);
     run.temporal_context = null;
+    run.temporal_coverage = null;
     (app as unknown as { render(): void }).render();
     expect(root.querySelector('[data-e2e="evidence-temporal-context"]')).toBeNull();
     app.destroy();
