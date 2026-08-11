@@ -78,6 +78,76 @@ export interface DocumentView {
   content_text: string;
 }
 
+/**
+ * A binary source is intentionally separate from a CaseDocument.  It is not
+ * part of the text-review input until a reviewer explicitly confirms edited
+ * extraction text through the dedicated Backend route.
+ */
+export type DocumentAssetMediaType = "application/pdf" | "image/jpeg" | "image/png";
+
+export interface DocumentAsset {
+  asset_id: string;
+  case_id: string;
+  document_type: DocumentType;
+  filename: string;
+  media_type: DocumentAssetMediaType;
+  byte_size: number;
+  page_count: number;
+  pixel_count: number;
+  created_by: string;
+  created_at: string;
+}
+
+export interface ExtractionBoundingBox {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+export interface ExtractionSpan {
+  span_id: string;
+  ordinal: number;
+  text: string;
+  bbox?: ExtractionBoundingBox | null;
+  reading_order: number;
+}
+
+export interface ExtractionPage {
+  page_number: number;
+  width: number;
+  height: number;
+  coordinate_unit: "pixels" | "pdf_points";
+  spans: ExtractionSpan[];
+}
+
+/**
+ * This is a human-review preview only.  It deliberately excludes the source
+ * hash, object path, canonical-text hash, and provider diagnostics.
+ */
+export interface DocumentExtractionPreview {
+  status: "preview_ready" | "needs_review" | "unavailable";
+  extractor_revision?: string | null;
+  pages: ExtractionPage[];
+  warnings: string[];
+}
+
+export interface ExtractionJob {
+  extraction_job_id: string;
+  asset_id: string;
+  case_id: string;
+  status: "queued" | "preview_ready" | "needs_review" | "unavailable" | "failed";
+  result?: DocumentExtractionPreview | null;
+  created_by: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface DocumentAssetExtraction {
+  asset: DocumentAsset;
+  job: ExtractionJob;
+}
+
 export interface ReviewReport {
   overall_status: "needs_review" | "blocked";
   summary: string;
@@ -613,6 +683,22 @@ export interface AddDocumentRequest {
   document_type: DocumentType;
   filename: string;
   media_type?: "text/plain";
+  content_text: string;
+  replaces_document_id?: string | null;
+}
+
+/** Raw file bytes remain in the Browser-to-Backend request body only. */
+export interface UploadDocumentAssetRequest {
+  document_type: DocumentType;
+  filename: string;
+  media_type: DocumentAssetMediaType;
+  content: Blob;
+}
+
+/** Only reviewer-confirmed text can enter the existing text-review workflow. */
+export interface ConfirmDocumentExtractionRequest {
+  extraction_job_id: string;
+  filename: string;
   content_text: string;
   replaces_document_id?: string | null;
 }

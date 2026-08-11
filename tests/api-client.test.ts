@@ -113,6 +113,100 @@ describe("Backend API client", () => {
     expect(requests[1]?.init?.method).toBe("PUT");
   });
 
+  it("keeps PDF/image extraction on the preview boundary until confirmed text is explicitly sent", async () => {
+    const calls: Array<{ url: string; init: RequestInit | undefined }> = [];
+    const asset = {
+      asset_id: "asset-1", case_id: "case-1", document_type: "CI", filename: "invoice.pdf",
+      media_type: "application/pdf", byte_size: 24, page_count: 1, pixel_count: 0,
+      created_by: "reviewer", created_at: "2026-08-11T00:00:00Z",
+      source_sha256: "a".repeat(64), object_key: "must-not-reach-browser",
+    };
+    const extraction = {
+      asset,
+      job: {
+        extraction_job_id: "extraction-1", asset_id: "asset-1", case_id: "case-1", status: "needs_review",
+        result: {
+          status: "needs_review", extractor_revision: "local-preview-r1",
+          pages: [{
+            page_number: 1, width: 100, height: 120, coordinate_unit: "pdf_points",
+            spans: [{ span_id: "span-1", ordinal: 1, text: "INVOICE 001", bbox: { x: 0, y: 0, width: 1, height: 0.1 }, reading_order: 1 }],
+          }],
+          warnings: ["human_confirmation_required"],
+        },
+        error_code: "must-not-be-rendered", created_by: "reviewer", created_at: "2026-08-11T00:00:00Z", updated_at: "2026-08-11T00:00:01Z",
+      },
+    };
+    const confirmed = {
+      record: {
+        document_id: "document-1", case_id: "case-1", document_type: "CI", filename: "invoice.txt", media_type: "text/plain",
+        content_sha256: "b".repeat(64), byte_size: 11, character_count: 11, created_by: "reviewer", created_at: "2026-08-11T00:01:00Z",
+      },
+      content_text: "INVOICE 001",
+    };
+    const fetcher: typeof fetch = async (input, init) => {
+      const url = String(input);
+      calls.push({ url, init });
+      if (url.includes("/document-assets?") && init?.method === "POST") return json(asset, 201);
+      if (url.endsWith("/extractions") && init?.method === "POST") return json(extraction, 202);
+      if (url.endsWith("/confirmed-document") && init?.method === "POST") return json(confirmed, 201);
+      return json({ detail: "unexpected request" }, 500);
+    };
+    const api = new ApiClient(fetcher, async () => "local-token");
+    const file = new Blob(["%PDF-preview-only"], { type: "application/pdf" });
+
+    const uploaded = await api.uploadDocumentAsset("case-1", {
+      document_type: "CI", filename: "invoice.pdf", media_type: "application/pdf", content: file,
+    });
+    const preview = await api.requestDocumentExtraction("case-1", uploaded.asset_id);
+    const document = await api.confirmDocumentExtraction("case-1", uploaded.asset_id, {
+      extraction_job_id: preview.job.extraction_job_id, filename: "invoice.txt", content_text: "INVOICE 001",
+    });
+
+    expect(calls.map((call) => call.url)).toEqual([
+      "/api/v1/cases/case-1/document-assets?document_type=CI&filename=invoice.pdf",
+      "/api/v1/cases/case-1/document-assets/asset-1/extractions",
+      "/api/v1/cases/case-1/document-assets/asset-1/confirmed-document",
+    ]);
+    expect(calls[0]?.init?.body).toBe(file);
+    expect(new Headers(calls[0]?.init?.headers).get("Content-Type")).toBe("application/pdf");
+    expect(calls[0]?.init?.body).not.toBe(JSON.stringify({ content: "%PDF-preview-only" }));
+    expect(preview.job.result?.pages[0]?.spans[0]?.text).toBe("INVOICE 001");
+    expect(preview.asset).not.toHaveProperty("source_sha256");
+    expect(preview.job).not.toHaveProperty("error_code");
+    expect(JSON.parse(String(calls[2]?.init?.body))).toEqual({
+      extraction_job_id: "extraction-1", filename: "invoice.txt", content_text: "INVOICE 001",
+    });
+    expect(document.document_id).toBe("document-1");
+  });
+
+  it("allows exactly 16 MiB of a preview asset and blocks one extra byte before any request", async () => {
+    const maximum = 16 * 1024 * 1024;
+    const calls: Array<{ url: string; init: RequestInit | undefined }> = [];
+    const fetcher: typeof fetch = async (input, init) => {
+      calls.push({ url: String(input), init });
+      return json({
+        asset_id: "asset-boundary", case_id: "case-1", document_type: "CI", filename: "boundary.pdf",
+        media_type: "application/pdf", byte_size: maximum, page_count: 1, pixel_count: 0,
+        created_by: "reviewer", created_at: "2026-08-11T00:00:00Z",
+      }, 201);
+    };
+    const api = new ApiClient(fetcher, async () => "local-token");
+    const exactLimit = new Blob([new ArrayBuffer(maximum)], { type: "application/pdf" });
+    const overLimit = new Blob([new ArrayBuffer(maximum + 1)], { type: "application/pdf" });
+    expect(exactLimit.size).toBe(maximum);
+    expect(overLimit.size).toBe(maximum + 1);
+
+    await expect(api.uploadDocumentAsset("case-1", {
+      document_type: "CI", filename: "boundary.pdf", media_type: "application/pdf", content: exactLimit,
+    })).resolves.toMatchObject({ asset_id: "asset-boundary", byte_size: maximum });
+    expect(() => api.uploadDocumentAsset("case-1", {
+      document_type: "CI", filename: "too-large.pdf", media_type: "application/pdf", content: overLimit,
+    })).toThrow("document asset binary content is invalid");
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.init?.body).toBe(exactLimit);
+  });
+
   it("uses bounded execution budgets for review, revision, and official knowledge answers", async () => {
     const timeout = vi.spyOn(AbortSignal, "timeout");
     const fetcher: typeof fetch = async (input) => {

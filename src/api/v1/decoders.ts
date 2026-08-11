@@ -15,10 +15,17 @@ import type {
   CorrectionDecision,
   CorrectionProposal,
   CorrectionProposalHistoryEntry,
+  DocumentAsset,
+  DocumentAssetExtraction,
   DocumentAnalysis,
+  DocumentExtractionPreview,
   DocumentFact,
   DocumentLineItem,
   DocumentView,
+  ExtractionBoundingBox,
+  ExtractionJob,
+  ExtractionPage,
+  ExtractionSpan,
   EvidenceItem,
   EvidenceTemporalContext,
   FactSourceReference,
@@ -156,6 +163,116 @@ export function decodeDocumentView(value: unknown): DocumentView {
 export function decodeDocumentListItem(value: unknown): CaseDocument {
   const raw = record(value, "document list item");
   return decodeDocument(raw.record ?? raw);
+}
+
+/**
+ * Decode only the safe Browser projection of an uploaded binary source.  The
+ * Backend may retain source hashes and object keys, but neither is accepted
+ * into this Browser model.
+ */
+export function decodeDocumentAsset(value: unknown): DocumentAsset {
+  const raw = record(value, "document asset");
+  return {
+    asset_id: technicalIdentifier(raw.asset_id, "document asset.asset_id"),
+    case_id: technicalIdentifier(raw.case_id, "document asset.case_id"),
+    document_type: oneOf(raw.document_type, [
+      "CI", "PL", "BL", "CO", "AWB", "EXPORT_DECLARATION", "SUPPORTING_EVIDENCE", "UNKNOWN",
+    ] as const, "document asset.document_type"),
+    filename: filename(raw.filename, "document asset.filename"),
+    media_type: oneOf(raw.media_type, ["application/pdf", "image/jpeg", "image/png"] as const, "document asset.media_type"),
+    byte_size: positiveInteger(raw.byte_size, "document asset.byte_size"),
+    page_count: positiveInteger(raw.page_count, "document asset.page_count"),
+    pixel_count: nonNegativeInteger(raw.pixel_count, "document asset.pixel_count"),
+    created_by: requiredString(raw.created_by, "document asset.created_by"),
+    created_at: requiredString(raw.created_at, "document asset.created_at"),
+  };
+}
+
+export function decodeDocumentAssetExtraction(value: unknown): DocumentAssetExtraction {
+  const raw = record(value, "document asset extraction");
+  const asset = decodeDocumentAsset(raw.asset);
+  const job = decodeExtractionJob(raw.job);
+  if (job.asset_id !== asset.asset_id) throw new ContractError("extraction job asset does not match its response asset");
+  if (job.case_id !== asset.case_id) throw new ContractError("extraction job Case does not match its response asset");
+  return { asset, job };
+}
+
+function decodeExtractionJob(value: unknown): ExtractionJob {
+  const raw = record(value, "document extraction job");
+  const status = oneOf(raw.status, ["queued", "preview_ready", "needs_review", "unavailable", "failed"] as const, "document extraction job.status");
+  const result = raw.result === undefined || raw.result === null
+    ? undefined
+    : decodeDocumentExtractionPreview(raw.result);
+  if ((status === "queued" || status === "failed") && result !== undefined) {
+    throw new ContractError("pending or failed document extraction must not include a preview");
+  }
+  if ((status === "preview_ready" || status === "needs_review" || status === "unavailable") && result === undefined) {
+    throw new ContractError("completed document extraction preview is absent");
+  }
+  if (result !== undefined && result.status !== status) {
+    throw new ContractError("document extraction status does not match its preview");
+  }
+  return {
+    extraction_job_id: technicalIdentifier(raw.extraction_job_id, "document extraction job.extraction_job_id"),
+    asset_id: technicalIdentifier(raw.asset_id, "document extraction job.asset_id"),
+    case_id: technicalIdentifier(raw.case_id, "document extraction job.case_id"),
+    status,
+    ...(result === undefined ? {} : { result }),
+    created_by: requiredString(raw.created_by, "document extraction job.created_by"),
+    created_at: requiredString(raw.created_at, "document extraction job.created_at"),
+    updated_at: requiredString(raw.updated_at, "document extraction job.updated_at"),
+  };
+}
+
+function decodeDocumentExtractionPreview(value: unknown): DocumentExtractionPreview {
+  const raw = record(value, "document extraction preview");
+  const pages = array(raw.pages, "document extraction preview.pages");
+  const warnings = array(raw.warnings, "document extraction preview.warnings");
+  if (pages.length > 20 || warnings.length > 32) {
+    throw new ContractError("document extraction preview exceeds its safe limit");
+  }
+  return {
+    status: oneOf(raw.status, ["preview_ready", "needs_review", "unavailable"] as const, "document extraction preview.status"),
+    ...(raw.extractor_revision === undefined || raw.extractor_revision === null
+      ? {}
+      : { extractor_revision: technicalIdentifier(raw.extractor_revision, "document extraction preview.extractor_revision") }),
+    pages: pages.map((page, index) => decodeExtractionPage(page, `document extraction preview.pages[${index}]`)),
+    warnings: warnings.map((warning, index) => warningCode(warning, `document extraction preview.warnings[${index}]`)),
+  };
+}
+
+function decodeExtractionPage(value: unknown, context: string): ExtractionPage {
+  const raw = record(value, context);
+  const spans = array(raw.spans, `${context}.spans`);
+  if (spans.length > 20_000) throw new ContractError(`${context} exceeds its span limit`);
+  return {
+    page_number: positiveInteger(raw.page_number, `${context}.page_number`),
+    width: positiveInteger(raw.width, `${context}.width`),
+    height: positiveInteger(raw.height, `${context}.height`),
+    coordinate_unit: oneOf(raw.coordinate_unit, ["pixels", "pdf_points"] as const, `${context}.coordinate_unit`),
+    spans: spans.map((span, index) => decodeExtractionSpan(span, `${context}.spans[${index}]`)),
+  };
+}
+
+function decodeExtractionSpan(value: unknown, context: string): ExtractionSpan {
+  const raw = record(value, context);
+  return {
+    span_id: technicalIdentifier(raw.span_id, `${context}.span_id`),
+    ordinal: positiveInteger(raw.ordinal, `${context}.ordinal`),
+    text: displayText(raw.text, `${context}.text`),
+    ...(raw.bbox === undefined || raw.bbox === null ? {} : { bbox: decodeExtractionBoundingBox(raw.bbox, `${context}.bbox`) }),
+    reading_order: positiveInteger(raw.reading_order, `${context}.reading_order`),
+  };
+}
+
+function decodeExtractionBoundingBox(value: unknown, context: string): ExtractionBoundingBox {
+  const raw = record(value, context);
+  return {
+    x: unitIntervalNumber(raw.x, `${context}.x`, false),
+    y: unitIntervalNumber(raw.y, `${context}.y`, false),
+    width: unitIntervalNumber(raw.width, `${context}.width`, true),
+    height: unitIntervalNumber(raw.height, `${context}.height`, true),
+  };
 }
 
 export function decodeReviewRunSummary(value: unknown): ReviewRunSummary {
@@ -1115,6 +1232,20 @@ function optionalString(value: unknown, context: string): string | undefined {
   return value === undefined || value === null ? undefined : requiredString(value, context);
 }
 
+function filename(value: unknown, context: string): string {
+  const result = requiredString(value, context);
+  if (result.length > 255 || /[\\/]/u.test(result)) throw new ContractError(`${context}: safe filename expected`);
+  return result;
+}
+
+function warningCode(value: unknown, context: string): string {
+  const result = requiredString(value, context);
+  if (result.length > 128 || !/^[a-z][a-z0-9_]{1,127}$/u.test(result)) {
+    throw new ContractError(`${context}: warning code expected`);
+  }
+  return result;
+}
+
 function nonNegativeInteger(value: unknown, context: string): number {
   if (typeof value !== "number" || !Number.isInteger(value) || value < 0 || value > 1_000_000_000) throw new ContractError(`${context}: non-negative integer expected`);
   return value;
@@ -1122,6 +1253,13 @@ function nonNegativeInteger(value: unknown, context: string): number {
 
 function positiveInteger(value: unknown, context: string): number {
   if (typeof value !== "number" || !Number.isInteger(value) || value < 1 || value > 1_000_000_000) throw new ContractError(`${context}: positive integer expected`);
+  return value;
+}
+
+function unitIntervalNumber(value: unknown, context: string, mustBePositive: boolean): number {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0 || value > 1 || (mustBePositive && value <= 0)) {
+    throw new ContractError(`${context}: normalized coordinate expected`);
+  }
   return value;
 }
 
