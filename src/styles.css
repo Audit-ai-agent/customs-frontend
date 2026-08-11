@@ -340,7 +340,10 @@ textarea { min-height: 7rem; resize: vertical; line-height: 1.55; }
 .evidence-temporal-context__list { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .45rem; margin: .1rem 0 0; }
 .evidence-temporal-context__list > div { padding: .45rem .5rem; background: #fff; border: 1px solid #e2edf4; border-radius: .45rem; }
 .evidence-temporal-context__list dt { color: #516d82; font-size: .73rem; font-weight: 800; }
-.evidence-temporal-context__list dd { margin: .16rem 0 0; color: #274961; font-variant-numeric: tabular-nums; font-weight: 700; }
+.evidence-temporal-context__list dd { display: grid; gap: .18rem; margin: .16rem 0 0; color: #274961; font-variant-numeric: tabular-nums; font-weight: 700; }
+.evidence-temporal-coverage { width: fit-content; padding: .08rem .26rem; border-radius: 999px; font-size: .68rem; font-variant-numeric: normal; }
+.evidence-temporal-coverage--covered { color: #23603b; background: #e8f5ea; }
+.evidence-temporal-coverage--unavailable { color: #815420; background: #fff3de; }
 .evidence-retrieval-status { margin: .1rem 0 .9rem; padding: .65rem .72rem; color: #3f5e75; background: #f3f8fb; border: 1px solid #d7e6ef; border-radius: .55rem; font-size: .84rem; line-height: 1.55; }
 .evidence-retrieval-status > p { margin: 0; }
 .evidence-retrieval-status > p + p { margin-top: .42rem; padding-top: .42rem; border-top: 1px solid currentColor; }
@@ -460,6 +463,10 @@ textarea { min-height: 7rem; resize: vertical; line-height: 1.55; }
 .knowledge-sidebar .field { margin: 0; }
 .knowledge-panel { min-height: 40rem; }
 .assistant-answer-sections { display: grid; gap: .55rem; margin-top: .7rem; }
+.guidance-resolution-list { display: grid; gap: .42rem; padding: 0; margin: .68rem 0 0; list-style: none; }
+.guidance-resolution-list__item { padding: .54rem .6rem; background: #faf8fd; border: 1px solid #e1dced; border-radius: .52rem; }
+.guidance-resolution-list__item > strong { color: #5a4b85; font-size: .78rem; }
+.guidance-resolution-summary { margin-top: .42rem; }
 .assistant-answer-section { padding: .65rem .7rem; color: #425e76; background: #f6fafc; border: 1px solid #dbe8ef; border-radius: .62rem; }
 .assistant-answer-section--case_analysis { background: #f2f8fc; border-color: #c9e0ed; }
 .assistant-answer-section--general_guidance { background: #f8f7fc; border-color: #ddd9ed; }

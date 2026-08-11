@@ -385,6 +385,18 @@ export interface EvidenceTemporalContext {
   requirements_snapshot_as_of: string;
 }
 
+/**
+ * Availability is deliberately separate from the three displayed dates.  A
+ * historical Review can retain a baseline HSK or requirements date while the
+ * corresponding official archive is unavailable, so the Browser must never
+ * infer coverage from the date alone.
+ */
+export interface EvidenceTemporalCoverage {
+  law: "covered" | "unavailable";
+  hsk: "covered" | "unavailable";
+  requirements: "covered" | "unavailable";
+}
+
 export interface ReviewRun {
   review_run_id: string;
   case_id: string;
@@ -416,6 +428,12 @@ export interface ReviewRun {
    * this field and must continue to render normally.
    */
   temporal_context?: EvidenceTemporalContext | null;
+  /**
+   * Additive archive availability for a dated Evidence retrieval.  It is
+   * present only together with temporal_context; older Review Runs remain
+   * readable when both fields are absent.
+   */
+  temporal_coverage?: EvidenceTemporalCoverage | null;
   created_by: string;
   created_at: string;
   /** A child run keeps its parent for an auditable, non-destructive history. */
@@ -485,6 +503,11 @@ export interface GuidanceEvidenceCitation {
   as_of: string;
   snapshot_id: string;
   coverage: KnowledgeCoverage;
+  /**
+   * Present only for a two-scope checklist.  The index binds this citation to
+   * exactly one independently resolved guidance scope.
+   */
+  resolution_index?: 0 | 1 | null;
 }
 
 export type KnowledgeCoverage = "covered" | "no_coverage" | "partial" | "unavailable";
@@ -504,6 +527,9 @@ export interface GuidanceResolution {
   as_of: string;
   registry_version: "1.0" | "2.0";
 }
+
+/** Exactly two independently resolved V2 guidance scopes, in classifier order. */
+export type GuidanceResolutionPair = readonly [GuidanceResolution, GuidanceResolution];
 
 /** Registered source categories in the Backend OpenAPI contract. */
 export type KnowledgeSourceKind =
@@ -530,6 +556,8 @@ export interface AssistantAnswerSection {
   title: string;
   content: string;
   citations: AssistantCitation[];
+  /** Only a multi-scope general-guidance section owns one resolution index. */
+  resolution_index?: 0 | 1 | null;
 }
 
 /** The standalone knowledge route can render only general guidance sections. */
@@ -538,6 +566,8 @@ export interface KnowledgeAnswerSection {
   title: string;
   content: string;
   citations: GuidanceEvidenceCitation[];
+  /** Only a multi-scope section owns one independently resolved scope. */
+  resolution_index?: 0 | 1 | null;
 }
 
 /** Browser projection of one persisted assistant conversation. */
@@ -567,6 +597,13 @@ export interface AssistantMessage {
   answer_sections?: AssistantAnswerSection[];
   /** Present when this Case reply attempted one bounded official-guidance lookup. */
   guidance_resolution?: GuidanceResolution | null;
+  /**
+   * Additive V2 two-scope result.  It is XOR with guidance_resolution and
+   * always has exactly two independently resolved scopes.
+   */
+  guidance_resolutions?: GuidanceResolutionPair | null;
+  /** Present only when guidance_resolutions is present. */
+  answer_format?: "multi_scope_checklist" | null;
   /** The pasted Case-chat text was not admitted as Review evidence. */
   case_input_notice?: "unregistered_document_text" | null;
   created_by: string;
@@ -611,6 +648,10 @@ export interface KnowledgeMessage {
   knowledge_as_of?: string | null;
   /** Additive V2 scope/direction result; absent on legacy stored messages. */
   guidance_resolution?: GuidanceResolution | null;
+  /** Additive V2 two-scope result; XOR with the legacy singular field. */
+  guidance_resolutions?: GuidanceResolutionPair | null;
+  /** Present only when guidance_resolutions is present. */
+  answer_format?: "multi_scope_checklist" | null;
   created_by: string;
   created_at: string;
 }

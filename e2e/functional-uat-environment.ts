@@ -20,7 +20,7 @@ export const FUNCTIONAL_UAT_BROWSER_CHECKS = [
   "knowledge_conversation",
   "knowledge_recent_history",
   "knowledge_v2_scope_coverage",
-  "knowledge_multiscope_clarification",
+  "knowledge_multiscope_checklist",
   "knowledge_official_provenance",
   "knowledge_default_boundary",
   "finding_decision",

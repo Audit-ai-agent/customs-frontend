@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { ApiClient } from "../src/api/v1/client";
+import { decodeReviewRun } from "../src/api/v1/decoders";
 import { stableApiErrorMessage } from "../src/api/user-facing-errors";
 
 function json(value: unknown, status = 200): Response {
@@ -505,6 +506,43 @@ describe("Backend API client", () => {
     ]));
   });
 
+  it("requires the fixed four-section Case checklist for two V2 scopes", async () => {
+    const resolutions = [
+      { topic: "customs_duty", scope: "duty_payment_basics", requested_direction: "import", applicable_directions: ["import"], coverage: "covered", snapshot_id: "snapshot-v2", as_of: "2026-08-05", registry_version: "2.0" },
+      { topic: "hs_classification", scope: "classification_principles", requested_direction: "import", applicable_directions: ["import"], coverage: "covered", snapshot_id: "snapshot-v2", as_of: "2026-08-05", registry_version: "2.0" },
+    ];
+    const guidance = (sourceId: string, resolutionIndex: 0 | 1) => ({
+      kind: "guidance_evidence", source_id: sourceId, source_kind: "official_agency_guidance", source_title: sourceId,
+      source_uri: `https://example.test/${sourceId}`, as_of: "2026-08-05", snapshot_id: "snapshot-v2", coverage: "covered", resolution_index: resolutionIndex,
+    });
+    const first = guidance("duty-source", 0);
+    const second = guidance("hs-source", 1);
+    const response = {
+      message_id: "case-multi-1", conversation_id: "case-conversation-1", role: "assistant", content: "사건과 두 주제를 분리해 확인하십시오.",
+      answer_scope: "case_grounded", citations: [{ kind: "comparison", reference_id: "comparison-1" }, first, second],
+      answer_sections: [
+        { kind: "case_analysis", title: "현재 사건 기준", content: "수량을 확인하십시오.", citations: [{ kind: "comparison", reference_id: "comparison-1" }] },
+        { kind: "general_guidance", resolution_index: 0, title: "주제 1 공식 안내", content: "관세를 확인하십시오.", citations: [first] },
+        { kind: "general_guidance", resolution_index: 1, title: "주제 2 공식 안내", content: "품목분류를 확인하십시오.", citations: [second] },
+        { kind: "case_application", title: "사건 확인 목록", content: "두 범위와 수량을 확인하십시오.", citations: [{ kind: "comparison", reference_id: "comparison-1" }, first, second] },
+      ],
+      suggested_questions: [], guidance_resolutions: resolutions, answer_format: "multi_scope_checklist", created_by: "agent", created_at: "2026-08-05T00:00:00Z",
+    };
+    const api = new ApiClient(async () => json({ items: [response] }), async () => "local-token");
+    const messages = await api.listAssistantMessages("case-conversation-1");
+    expect(messages[0]).toMatchObject({
+      answer_format: "multi_scope_checklist",
+      guidance_resolutions: [{ scope: "duty_payment_basics" }, { scope: "classification_principles" }],
+    });
+    expect(messages[0]?.answer_sections?.map((section) => section.resolution_index)).toEqual([undefined, 0, 1, undefined]);
+
+    const missingCaseEvidence = new ApiClient(async () => json({ items: [{
+      ...response,
+      answer_sections: response.answer_sections.slice(1),
+    }] }), async () => "local-token");
+    await expect(missingCaseEvidence.listAssistantMessages("case-conversation-1")).rejects.toThrow("fixed four-section order");
+  });
+
   it("retains standalone no-coverage resolution without inventing a citation", async () => {
     const api = new ApiClient(async () => json({ items: [{
       message_id: "knowledge-message-1", conversation_id: "knowledge-conversation-1", role: "assistant", content: "현재 공식 지식 스냅샷에서 확인할 수 없습니다.",
@@ -572,5 +610,98 @@ describe("Backend API client", () => {
       created_by: "agent", created_at: "2026-08-05T00:00:00Z",
     }] }), async () => "local-token");
     await expect(api.listKnowledgeMessages("knowledge-conversation-1")).rejects.toThrow("source_kind");
+  });
+
+  it("keeps archive coverage separate from dated Evidence context", () => {
+    const covered = decodeReviewRun({
+      ...reviewRunPayload(),
+      temporal_context: {
+        law_as_of: "2026-08-05",
+        hsk_snapshot_as_of: "2026-01-01",
+        requirements_snapshot_as_of: "2026-01-01",
+      },
+      temporal_coverage: { law: "covered", hsk: "unavailable", requirements: "unavailable" },
+    });
+    expect(covered.temporal_context).toMatchObject({ hsk_snapshot_as_of: "2026-01-01" });
+    expect(covered.temporal_coverage).toEqual({ law: "covered", hsk: "unavailable", requirements: "unavailable" });
+    expect(() => decodeReviewRun({
+      ...reviewRunPayload(),
+      temporal_coverage: { law: "covered", hsk: "covered", requirements: "covered" },
+    })).toThrow("temporal_coverage requires run.temporal_context");
+  });
+
+  it("accepts only the partitioned two-scope checklist and keeps internal diagnostics out", async () => {
+    const resolutions = [
+      {
+        topic: "customs_duty", scope: "duty_payment_basics", requested_direction: "import", applicable_directions: ["import"],
+        coverage: "covered", snapshot_id: "snapshot-v2", as_of: "2026-08-05", registry_version: "2.0",
+      },
+      {
+        topic: "hs_classification", scope: "classification_principles", requested_direction: "import", applicable_directions: ["import"],
+        coverage: "covered", snapshot_id: "snapshot-v2", as_of: "2026-08-05", registry_version: "2.0",
+      },
+    ];
+    const citation = (sourceId: string, resolutionIndex: 0 | 1) => ({
+      kind: "guidance_evidence",
+      source_id: sourceId,
+      source_kind: "official_agency_guidance",
+      source_title: `공식 안내 ${resolutionIndex + 1}`,
+      source_uri: `https://example.test/guidance/${resolutionIndex + 1}`,
+      as_of: "2026-08-05",
+      snapshot_id: "snapshot-v2",
+      coverage: "covered",
+      resolution_index: resolutionIndex,
+    });
+    const first = citation("guidance-duty", 0);
+    const second = citation("guidance-hs", 1);
+    const completeKnowledge = {
+      message_id: "knowledge-multi-1", conversation_id: "knowledge-conversation-1", role: "assistant", content: "두 주제를 분리해 확인하십시오.",
+      answer_scope: "general_customs_guidance", citations: [first, second],
+      answer_sections: [
+        { kind: "general_guidance", resolution_index: 0, title: "주제 1 공식 안내", content: "관세 납부 항목을 확인하십시오.", citations: [first] },
+        { kind: "general_guidance", resolution_index: 1, title: "주제 2 공식 안내", content: "품목분류 기준을 확인하십시오.", citations: [second] },
+      ],
+      suggested_questions: [], knowledge_coverage: "covered", knowledge_snapshot_id: "snapshot-v2", knowledge_as_of: "2026-08-05",
+      guidance_resolutions: resolutions, answer_format: "multi_scope_checklist", created_by: "agent", created_at: "2026-08-05T00:00:00Z",
+    };
+    const api = new ApiClient(async () => json({ items: [completeKnowledge] }), async () => "local-token");
+    const messages = await api.listKnowledgeMessages("knowledge-conversation-1");
+    expect(messages[0]?.guidance_resolutions).toHaveLength(2);
+    expect(messages[0]?.guidance_resolution).toBeUndefined();
+    expect(messages[0]?.answer_sections?.map((section) => section.resolution_index)).toEqual([0, 1]);
+
+    const incomplete = new ApiClient(async () => json({ items: [{
+      ...completeKnowledge,
+      message_id: "knowledge-multi-partial",
+      answer_scope: "insufficient_evidence",
+      citations: [],
+      answer_sections: [],
+      knowledge_coverage: "partial",
+      guidance_resolutions: [resolutions[0], { ...resolutions[1], coverage: "partial" }],
+    }] }), async () => "local-token");
+    await expect(incomplete.listKnowledgeMessages("knowledge-conversation-1")).resolves.toMatchObject([
+      { answer_scope: "insufficient_evidence", citations: [] },
+    ]);
+
+    const crossScope = new ApiClient(async () => json({ items: [{
+      ...completeKnowledge,
+      answer_sections: [
+        { ...completeKnowledge.answer_sections[0], citations: [second] },
+        completeKnowledge.answer_sections[1],
+      ],
+    }] }), async () => "local-token");
+    await expect(crossScope.listKnowledgeMessages("knowledge-conversation-1")).rejects.toThrow("only its own scope citations");
+
+    const xor = new ApiClient(async () => json({ items: [{
+      ...completeKnowledge,
+      guidance_resolution: resolutions[0],
+    }] }), async () => "local-token");
+    await expect(xor.listKnowledgeMessages("knowledge-conversation-1")).rejects.toThrow("mutually exclusive");
+
+    const internal = new ApiClient(async () => json({ items: [{
+      ...completeKnowledge,
+      guidance_registry_sha256: "a".repeat(64),
+    }] }), async () => "local-token");
+    await expect(internal.listKnowledgeMessages("knowledge-conversation-1")).rejects.toThrow("must not expose internal guidance diagnostics");
   });
 });

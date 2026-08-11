@@ -88,6 +88,7 @@ import type {
   EvidenceItem,
   FindingDecisionRequest,
   GuidanceEvidenceCitation,
+  GuidanceResolution,
   JobRecord,
   KnowledgeConversation,
   KnowledgeMessage,
@@ -1399,6 +1400,7 @@ export class CommercialReviewWorkspace {
     const isAssistant = item.role === "assistant";
     const answerSections = item.answer_sections ?? [];
     const guidanceResolution = isAssistant ? item.guidance_resolution ?? null : null;
+    const guidanceResolutions = isAssistant ? item.guidance_resolutions ?? [] : [];
     // A standalone answer is persisted both as the legacy-compatible
     // `content`/`direct_answer` projection and as its labelled guidance
     // section.  When those two projections are exactly the same, show the
@@ -1423,7 +1425,10 @@ export class CommercialReviewWorkspace {
       : null;
     const provenance = isAssistant
       ? verificationDetails([
-        technicalLine("지식 스냅샷 식별번호", item.knowledge_snapshot_id ?? guidanceResolution?.snapshot_id),
+        technicalLine(
+          "지식 스냅샷 식별번호",
+          item.knowledge_snapshot_id ?? guidanceResolution?.snapshot_id ?? guidanceResolutions[0]?.snapshot_id,
+        ),
       ], undefined, "답변의 검증 상세")
       : null;
     const suggestions = isAssistant && item.suggested_questions.length
@@ -1450,30 +1455,80 @@ export class CommercialReviewWorkspace {
         attributes: { "data-e2e": "knowledge-guidance-resolution" },
         text: `${guidanceScopeLabel(guidanceResolution.scope)} · ${guidanceDirectionLabel(guidanceResolution.applicable_directions)}`,
       }) : null,
-      isAssistant ? this.createAnswerSections(answerSections) : null,
+      isAssistant && !answerSections.length
+        ? this.createGuidanceResolutionList(guidanceResolutions, "knowledge-guidance-resolutions")
+        : null,
+      isAssistant ? this.createAnswerSections(answerSections, guidanceResolutions) : null,
       isAssistant ? this.createAssistantCitationList(citationsOutsideSections(item.citations, answerSections), "추가 근거") : null,
       provenance,
       suggestions,
     );
   }
 
-  private createAnswerSections(sections: AssistantAnswerSection[]): HTMLElement | null {
+  private createAnswerSections(
+    sections: AssistantAnswerSection[],
+    guidanceResolutions: readonly GuidanceResolution[] = [],
+  ): HTMLElement | null {
     if (!sections.length) return null;
     return element("section", { className: "assistant-answer-sections", attributes: { "aria-label": "답변 구분과 공식 근거" } },
-      ...sections.map((section) => element("section", { className: `assistant-answer-section assistant-answer-section--${section.kind}`, attributes: { "data-e2e": `answer-section-${section.kind}` } },
+      ...sections.map((section) => {
+        const resolutionIndex = section.resolution_index === 0 || section.resolution_index === 1
+          ? section.resolution_index
+          : undefined;
+        const resolution = resolutionIndex === undefined ? undefined : guidanceResolutions[resolutionIndex];
+        const label = assistantAnswerSectionLabel(section.kind, resolutionIndex);
+        const description = assistantAnswerSectionDescription(section.kind, resolutionIndex);
+        return element("section", {
+          className: `assistant-answer-section assistant-answer-section--${section.kind}`,
+          attributes: {
+            "data-e2e": `answer-section-${section.kind}`,
+            "data-resolution-index": resolutionIndex === undefined ? undefined : String(resolutionIndex),
+          },
+        },
         element("header", {},
           element("strong", { className: "assistant-answer-section__label" },
             element("span", { className: "assistant-answer-section__icon", attributes: { "aria-hidden": "true" }, text: assistantAnswerSectionIcon(section.kind) }),
-            element("span", { text: assistantAnswerSectionLabel(section.kind) }),
+            element("span", { text: label }),
           ),
-          element("span", { text: reviewerNarrative(section.title, assistantAnswerSectionDescription(section.kind)) }),
-          element("small", { text: assistantAnswerSectionDescription(section.kind) }),
+          element("span", { text: reviewerNarrative(section.title, description) }),
+          element("small", { text: description }),
         ),
         reviewerNarrativeElement("p", undefined, section.content, "공식 근거 범위에서 추가 확인이 필요합니다."),
-        this.createAssistantCitationList(section.citations, `${assistantAnswerSectionLabel(section.kind)} 근거`)
+        resolution ? this.createGuidanceResolutionSummary(resolution, resolutionIndex as 0 | 1) : null,
+        this.createAssistantCitationList(section.citations, `${label} 근거`)
           ?? element("p", { className: "role-boundary-note", text: "이 안내에는 연결된 공식 근거가 아직 준비되지 않았습니다. 담당자가 공식 출처를 추가로 확인해야 합니다." }),
-      )),
+        );
+      }),
     );
+  }
+
+  private createGuidanceResolutionList(
+    resolutions: readonly GuidanceResolution[],
+    dataE2e: string,
+  ): HTMLElement | null {
+    if (!resolutions.length) return null;
+    return element("ol", {
+      className: "guidance-resolution-list",
+      attributes: { "data-e2e": dataE2e, "aria-label": "주제별 공식 안내 범위" },
+    }, ...resolutions.map((resolution, index) => element("li", {
+      className: "guidance-resolution-list__item",
+      attributes: { "data-e2e": "guidance-resolution", "data-resolution-index": String(index) },
+    },
+    element("strong", { text: `주제 ${index + 1} · ${guidanceScopeLabel(resolution.scope)}` }),
+    this.createGuidanceResolutionSummary(resolution, index as 0 | 1),
+    )));
+  }
+
+  private createGuidanceResolutionSummary(
+    resolution: GuidanceResolution,
+    index: 0 | 1,
+  ): HTMLElement {
+    const availability = multiScopeCoverageNotice(resolution.coverage);
+    return element("p", {
+      className: "role-boundary-note guidance-resolution-summary",
+      attributes: { "data-e2e": "guidance-resolution-summary", "data-resolution-index": String(index) },
+      text: `${guidanceScopeLabel(resolution.scope)} · ${guidanceDirectionLabel(resolution.applicable_directions)} · ${knowledgeCoverageLabel(resolution.coverage)} · 지식 스냅샷 기준일 ${resolution.as_of}${availability ? ` · ${availability}` : ""}`,
+    });
   }
 
   private createAssistantCitationList(citations: AssistantCitation[], label: string): HTMLElement | null {
@@ -1496,7 +1551,14 @@ export class CommercialReviewWorkspace {
 
   private createGuidanceCitation(citation: GuidanceEvidenceCitation): HTMLElement {
     const title = reviewerNarrative(guidanceCitationTitle(citation), "공식 통관 근거");
-    return element("li", { className: "knowledge-citation" },
+    return element("li", {
+      className: "knowledge-citation",
+      attributes: {
+        "data-resolution-index": citation.resolution_index === 0 || citation.resolution_index === 1
+          ? String(citation.resolution_index)
+          : undefined,
+      },
+    },
       element("strong", { text: title }),
       element("div", { className: "knowledge-citation__meta" },
         element("span", { text: knowledgeSourceKindLabel(citation.source_kind) }),
@@ -2180,11 +2242,19 @@ export class CommercialReviewWorkspace {
       ? element("span", { className: "assistant-scope", text: assistantScopeLabel(item.answer_scope) })
       : null;
     const guidanceResolution = item.role === "assistant" ? item.guidance_resolution ?? null : null;
+    const guidanceResolutions = item.role === "assistant" ? item.guidance_resolutions ?? [] : [];
     const guidanceCoverage = guidanceResolution
       ? element("span", {
         className: "assistant-scope assistant-scope--knowledge-coverage",
         attributes: { "data-e2e": "case-guidance-coverage" },
         text: knowledgeCoverageLabel(guidanceResolution.coverage),
+      })
+      : null;
+    const multiScopeNotice = guidanceResolutions.length === 2
+      ? element("span", {
+        className: "assistant-scope assistant-scope--knowledge-coverage",
+        attributes: { "data-e2e": "case-guidance-multi-scope" },
+        text: "일반 안내 2개 범위 분리 표시",
       })
       : null;
     const guidanceNotice = guidanceResolution ? caseGuidanceResolutionNotice(guidanceResolution) : null;
@@ -2197,7 +2267,13 @@ export class CommercialReviewWorkspace {
         undefined,
         "일반 통관 안내 검증 상세",
       )
-      : null;
+      : guidanceResolutions.length === 2
+        ? verificationDetails(
+          guidanceResolutions.map((resolution, index) => technicalLine(`주제 ${index + 1} 지식 스냅샷 식별번호`, resolution.snapshot_id)),
+          undefined,
+          "일반 통관 안내 검증 상세",
+        )
+        : null;
     const citations = item.role === "assistant"
       ? this.createAssistantCitationList(citationsOutsideSections(item.citations, item.answer_sections ?? []), "추가 근거")
       : null;
@@ -2223,6 +2299,7 @@ export class CommercialReviewWorkspace {
         element("strong", { text: label }),
         metadata,
         guidanceCoverage,
+        multiScopeNotice,
         element("small", { text: `${formatDate(item.created_at)}${guidanceResolution ? ` · 지식 스냅샷 기준일 ${guidanceResolution.as_of}` : ""}` }),
       ),
       hidesDuplicateDirectAnswer
@@ -2235,7 +2312,10 @@ export class CommercialReviewWorkspace {
             ? assistantNarrativeFallback(item.answer_scope ?? "case_grounded")
             : undefined,
         ),
-      item.role === "assistant" ? this.createAnswerSections(answerSections) : null,
+      item.role === "assistant" && !answerSections.length
+        ? this.createGuidanceResolutionList(guidanceResolutions, "case-guidance-resolutions")
+        : null,
+      item.role === "assistant" ? this.createAnswerSections(answerSections, guidanceResolutions) : null,
       guidanceResolution ? element("p", {
         className: "role-boundary-note knowledge-answer-boundary",
         attributes: { "data-e2e": "case-guidance-resolution" },
@@ -2597,16 +2677,17 @@ export class CommercialReviewWorkspace {
   private createEvidenceTemporalContext(run: ReviewRun): HTMLElement | null {
     const context = run.temporal_context;
     if (!context) return null;
+    const coverage = run.temporal_coverage ?? undefined;
     return element("aside", {
       className: "evidence-temporal-context",
       attributes: { "data-e2e": "evidence-temporal-context", "aria-label": "법령 근거 기준 시점" },
     },
     element("strong", { text: "법령 근거 기준 시점" }),
-    element("p", { text: "아래는 이 심사에서 조회한 자료의 기준 시점이며, 개별 법령의 최종 적용·효력 판단은 아닙니다." }),
+    element("p", { text: "아래는 이 심사에서 조회한 자료의 기준 시점과 자료 확인 상태입니다. 날짜만으로 자료가 준비되었다고 보지 않으며, 개별 법령의 최종 적용·효력 판단은 아닙니다." }),
     element("dl", { className: "evidence-temporal-context__list" },
-      temporalContextDefinition("법령 기준일", context.law_as_of, "law"),
-      temporalContextDefinition("HSK 품목 기준 스냅샷 기준일", context.hsk_snapshot_as_of, "hsk"),
-      temporalContextDefinition("수입·수출 요건 스냅샷 기준일", context.requirements_snapshot_as_of, "requirements"),
+      temporalContextDefinition("법령 기준일", context.law_as_of, "law", coverage?.law),
+      temporalContextDefinition("HSK 품목 기준 스냅샷 기준일", context.hsk_snapshot_as_of, "hsk", coverage?.hsk),
+      temporalContextDefinition("수입·수출 요건 스냅샷 기준일", context.requirements_snapshot_as_of, "requirements", coverage?.requirements),
     ));
   }
 
@@ -2614,7 +2695,10 @@ export class CommercialReviewWorkspace {
     const retrieval = run.workflow.stages.find((stage) => stage.stage === "retrieve_evidence");
     const hasHsInputGap = hasDocumentHsInputGap(run);
     const dataFailure = retrieval?.status === "failed";
+    const unavailableTemporalSources = temporalCoverageUnavailableSources(run);
+    const hasTemporalCoverageGap = unavailableTemporalSources.length > 0;
     const dataPartial = retrieval?.status === "needs_review"
+      || (!hasHsInputGap && hasTemporalCoverageGap)
       || (retrieval === undefined && run.execution_status === "partial" && !hasHsInputGap);
     const semantics = dataFailure && hasHsInputGap
       ? "input-hs-and-retrieval-failed"
@@ -2635,6 +2719,9 @@ export class CommercialReviewWorkspace {
       messages.push("법령 근거 조회를 완료하지 못했습니다. 연결 상태를 확인한 뒤 다시 시도하거나 담당자가 직접 확인하십시오.");
     } else if (dataPartial) {
       messages.push("일부 품목의 법령 근거를 확인하지 못했습니다. 담당자가 입력 정보와 법령 근거를 함께 확인해야 합니다.");
+    }
+    if (hasTemporalCoverageGap) {
+      messages.push(`${unavailableTemporalSources.join("·")} 기준일 자료를 확인할 수 없어 해당 근거는 반환하지 않았습니다. 날짜가 표시되어도 이 심사 결과를 완전한 시점 근거로 해석하지 마십시오.`);
     }
     if (!messages.length) messages.push("법령 근거 조회를 완료했습니다. 연결된 수입 요건과 제출 자료를 함께 확인하십시오.");
     return element("div", {
@@ -3008,11 +3095,44 @@ function verificationDetails(
   );
 }
 
-function temporalContextDefinition(label: string, value: string, kind: "law" | "hsk" | "requirements"): HTMLElement {
+function temporalContextDefinition(
+  label: string,
+  value: string,
+  kind: "law" | "hsk" | "requirements",
+  coverage?: "covered" | "unavailable",
+): HTMLElement {
   return element("div", { attributes: { "data-e2e": `evidence-temporal-context-${kind}` } },
     element("dt", { text: label }),
-    element("dd", { text: value }),
+    element("dd", {},
+      element("span", { text: value }),
+      coverage ? element("span", {
+        className: `evidence-temporal-coverage evidence-temporal-coverage--${coverage}`,
+        attributes: { "data-e2e": `evidence-temporal-coverage-${kind}` },
+        text: temporalCoverageLabel(coverage),
+      }) : null,
+    ),
   );
+}
+
+function temporalCoverageLabel(value: "covered" | "unavailable"): string {
+  return value === "covered" ? "해당 기준일 자료 확인됨" : "해당 기준일 자료 없음";
+}
+
+function temporalCoverageUnavailableSources(run: ReviewRun): string[] {
+  const coverage = run.temporal_coverage;
+  if (!coverage) return [];
+  return [
+    coverage.law === "unavailable" ? "법령" : null,
+    coverage.hsk === "unavailable" ? "HSK 품목" : null,
+    coverage.requirements === "unavailable" ? "수입·수출 요건" : null,
+  ].filter((value): value is string => value !== null);
+}
+
+function multiScopeCoverageNotice(value: GuidanceResolution["coverage"]): string | null {
+  if (value === "unavailable") return "이 주제의 공식 근거를 현재 조회할 수 없습니다.";
+  if (value === "no_coverage") return "이 주제의 공식 근거가 현재 스냅샷에 없습니다.";
+  if (value === "partial") return "이 주제는 일부 공식 근거만 확인되었습니다.";
+  return null;
 }
 
 function verificationDefinition(label: string, value: string): HTMLElement {
@@ -3301,7 +3421,7 @@ function citationsOutsideSections(
 
 function citationKey(citation: AssistantCitation): string {
   return citation.kind === "guidance_evidence"
-    ? `${citation.kind}:${citation.source_id}`
+    ? `${citation.kind}:${citation.source_id}:${citation.resolution_index ?? "single"}`
     : `${citation.kind}:${citation.reference_id}`;
 }
 
