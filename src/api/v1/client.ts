@@ -65,7 +65,9 @@ const REQUEST_TIMEOUT_MS = 30_000;
 // return its terminal Job projection.
 const REVIEW_EXECUTION_TIMEOUT_MS = 120_000;
 const DOCUMENT_EXTRACTION_TIMEOUT_MS = 120_000;
-const MAX_DOCUMENT_ASSET_UPLOAD_BYTES = 20 * 1024 * 1024;
+// Match the Agent's isolated binary-admission default.  Backend revalidates
+// the same bound before any source bytes reach the local preview adapter.
+const MAX_DOCUMENT_ASSET_UPLOAD_BYTES = 16 * 1024 * 1024;
 const MAX_TEXT_DOCUMENT_CHARACTERS = 200_000;
 // A standalone official-knowledge answer may make one bounded Data lookup
 // and one Claude presentation call.  Backend's normal Agent response budget

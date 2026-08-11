@@ -74,7 +74,7 @@ Agent/Data/DB 값으로 Browser를 설정하지 마십시오.
 
 문서 탭에서 PDF, JPEG, PNG를 별도의 **추출 미리보기용 파일 등록**으로 올릴 수 있습니다.
 Browser는 선택한 파일을 base64나 JSON으로 바꾸지 않고 Backend API v1에 raw body로만 전송하며,
-Backend가 실제 MIME·magic byte·크기·PDF 페이지·이미지 픽셀을 다시 검사합니다.
+Browser와 Backend는 16 MiB 이하만 받아들이고, Backend가 실제 MIME·magic byte·PDF 페이지·이미지 픽셀을 다시 검사합니다.
 
 - 업로드와 추출 미리보기는 기존 텍스트 문서와 분리됩니다. 파일만 올리거나 추출을 요청해도 AI 심사,
   Finding, 통관 결론은 시작하거나 바뀌지 않습니다.

@@ -179,6 +179,34 @@ describe("Backend API client", () => {
     expect(document.document_id).toBe("document-1");
   });
 
+  it("allows exactly 16 MiB of a preview asset and blocks one extra byte before any request", async () => {
+    const maximum = 16 * 1024 * 1024;
+    const calls: Array<{ url: string; init: RequestInit | undefined }> = [];
+    const fetcher: typeof fetch = async (input, init) => {
+      calls.push({ url: String(input), init });
+      return json({
+        asset_id: "asset-boundary", case_id: "case-1", document_type: "CI", filename: "boundary.pdf",
+        media_type: "application/pdf", byte_size: maximum, page_count: 1, pixel_count: 0,
+        created_by: "reviewer", created_at: "2026-08-11T00:00:00Z",
+      }, 201);
+    };
+    const api = new ApiClient(fetcher, async () => "local-token");
+    const exactLimit = new Blob([new ArrayBuffer(maximum)], { type: "application/pdf" });
+    const overLimit = new Blob([new ArrayBuffer(maximum + 1)], { type: "application/pdf" });
+    expect(exactLimit.size).toBe(maximum);
+    expect(overLimit.size).toBe(maximum + 1);
+
+    await expect(api.uploadDocumentAsset("case-1", {
+      document_type: "CI", filename: "boundary.pdf", media_type: "application/pdf", content: exactLimit,
+    })).resolves.toMatchObject({ asset_id: "asset-boundary", byte_size: maximum });
+    expect(() => api.uploadDocumentAsset("case-1", {
+      document_type: "CI", filename: "too-large.pdf", media_type: "application/pdf", content: overLimit,
+    })).toThrow("document asset binary content is invalid");
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.init?.body).toBe(exactLimit);
+  });
+
   it("uses bounded execution budgets for review, revision, and official knowledge answers", async () => {
     const timeout = vi.spyOn(AbortSignal, "timeout");
     const fetcher: typeof fetch = async (input) => {
