@@ -79,8 +79,12 @@ import type {
   CaseSummary,
   CorrectionProposal,
   CreateCorrectionProposalRequest,
+  DocumentAsset,
+  DocumentAssetMediaType,
   DocumentType,
   DocumentFact,
+  ExtractionJob,
+  ExtractionPage,
   EvidenceItem,
   FindingDecisionRequest,
   GuidanceEvidenceCitation,
@@ -121,9 +125,14 @@ interface WorkbenchState {
   casesLoaded: boolean;
   selectedCase: CaseDetail | null;
   documents: CaseDocument[];
+  /** Binary assets remain outside the review-document manifest until confirmed. */
+  documentAssets: DocumentAsset[];
   runs: ReviewRunSummary[];
   selectedRun: ReviewRun | null;
   selectedDocument: (CaseDocument & { content_text: string }) | null;
+  selectedDocumentAsset: DocumentAsset | null;
+  selectedExtractionJob: ExtractionJob | null;
+  extractionDraft: string;
   sourceFocus: SourceReference | null;
   factFocusId: string | null;
   activeJob: JobRecord | null;
@@ -201,9 +210,13 @@ export class CommercialReviewWorkspace {
     casesLoaded: false,
     selectedCase: null,
     documents: [],
+    documentAssets: [],
     runs: [],
     selectedRun: null,
     selectedDocument: null,
+    selectedDocumentAsset: null,
+    selectedExtractionJob: null,
+    extractionDraft: "",
     sourceFocus: null,
     factFocusId: null,
     activeJob: null,
@@ -362,16 +375,21 @@ export class CommercialReviewWorkspace {
   }
 
   private async loadCase(caseId: string): Promise<void> {
-    const [caseDetail, documents, runSummaries] = await Promise.all([
+    const [caseDetail, documents, documentAssets, runSummaries] = await Promise.all([
       this.api.getCase(caseId),
       this.api.listDocuments(caseId),
+      this.listDocumentAssets(caseId),
       this.api.listReviewRuns(caseId),
     ]);
     this.state.selectedCase = caseDetail;
     this.state.documents = documents;
+    this.state.documentAssets = documentAssets;
     this.state.runs = runSummaries;
     this.state.selectedRun = null;
     this.state.selectedDocument = null;
+    this.state.selectedDocumentAsset = null;
+    this.state.selectedExtractionJob = null;
+    this.state.extractionDraft = "";
     this.state.sourceFocus = null;
     this.state.factFocusId = null;
     this.state.activeJob = null;
@@ -380,12 +398,26 @@ export class CommercialReviewWorkspace {
     if (runSummaries[0]) await this.openRun(runSummaries[0].review_run_id);
   }
 
+  /**
+   * Existing stored-workbench fixtures predate the additive asset route.  A
+   * missing test-double method is treated as an empty preview-only list, not
+   * as a failed text-review load.  Production ApiClient always implements it.
+   */
+  private async listDocumentAssets(caseId: string): Promise<DocumentAsset[]> {
+    const client = this.api as ApiClient & { listDocumentAssets?: (id: string) => Promise<DocumentAsset[]> };
+    return typeof client.listDocumentAssets === "function" ? client.listDocumentAssets(caseId) : [];
+  }
+
   private clearCaseContext(): void {
     this.state.selectedCase = null;
     this.state.documents = [];
+    this.state.documentAssets = [];
     this.state.runs = [];
     this.state.selectedRun = null;
     this.state.selectedDocument = null;
+    this.state.selectedDocumentAsset = null;
+    this.state.selectedExtractionJob = null;
+    this.state.extractionDraft = "";
     this.state.sourceFocus = null;
     this.state.factFocusId = null;
     this.state.activeJob = null;
@@ -835,7 +867,21 @@ export class CommercialReviewWorkspace {
     const current = this.requireCase();
     const document = await this.api.getDocumentContent(current.case_id, documentId);
     this.state.selectedDocument = document;
+    this.state.selectedDocumentAsset = null;
+    this.state.selectedExtractionJob = null;
+    this.state.extractionDraft = "";
     this.state.sourceFocus = source;
+  }
+
+  private openDocumentAsset(asset: DocumentAsset): void {
+    this.state.selectedDocument = null;
+    this.state.sourceFocus = null;
+    this.state.selectedDocumentAsset = asset;
+    if (this.state.selectedExtractionJob?.asset_id !== asset.asset_id) {
+      this.state.selectedExtractionJob = null;
+      this.state.extractionDraft = "";
+    }
+    this.render();
   }
 
   private async createCase(form: HTMLFormElement): Promise<void> {
@@ -887,6 +933,101 @@ export class CommercialReviewWorkspace {
         : "텍스트 문서를 등록했습니다.";
       form.reset();
     });
+  }
+
+  /** Uploads a PDF/JPEG/PNG source for preview only; it never starts review. */
+  private async addDocumentAsset(form: HTMLFormElement): Promise<void> {
+    if (!this.hasRole("reviewer")) throw new Error("문서 업로드와 추출 미리보기는 심사자 역할에서만 할 수 있습니다.");
+    const current = this.requireCase();
+    const data = new FormData(form);
+    const documentType = stringValue(data, "document_type") as DocumentType;
+    if (!DOCUMENT_TYPES.includes(documentType)) throw new Error("허용되지 않은 문서 유형입니다.");
+    const selected = data.get("document_asset");
+    if (!(selected instanceof File) || selected.size < 1) {
+      throw new Error("PDF, JPEG 또는 PNG 파일을 하나 선택해 주십시오.");
+    }
+    const mediaType = uploadedAssetMediaType(selected);
+    await this.withBusy(async () => {
+      const asset = await this.api.uploadDocumentAsset(current.case_id, {
+        document_type: documentType,
+        filename: selected.name,
+        media_type: mediaType,
+        content: selected,
+      });
+      this.state.documentAssets = [asset, ...this.state.documentAssets.filter((item) => item.asset_id !== asset.asset_id)];
+      this.state.selectedDocument = null;
+      this.state.selectedDocumentAsset = asset;
+      this.state.selectedExtractionJob = null;
+      this.state.extractionDraft = "";
+      this.state.notice = "파일을 추출 미리보기용으로 등록했습니다. 아직 심사 입력이나 확인 사항에는 사용되지 않았습니다.";
+      form.reset();
+    });
+  }
+
+  private async requestDocumentExtraction(asset: DocumentAsset): Promise<void> {
+    if (!this.hasRole("reviewer")) throw new Error("추출 미리보기 요청은 심사자 역할에서만 할 수 있습니다.");
+    const current = this.requireCase();
+    await this.withBusy(async () => {
+      const extraction = await this.api.requestDocumentExtraction(current.case_id, asset.asset_id);
+      this.useDocumentExtraction(extraction.asset, extraction.job);
+      this.state.notice = extractionNotice(extraction.job.status);
+    });
+  }
+
+  private async refreshDocumentExtraction(): Promise<void> {
+    const current = this.requireCase();
+    const asset = this.requireDocumentAsset();
+    const job = this.state.selectedExtractionJob;
+    if (!job) throw new Error("먼저 추출 미리보기를 요청해 주십시오.");
+    await this.withBusy(async () => {
+      const extraction = await this.api.getDocumentExtraction(current.case_id, asset.asset_id, job.extraction_job_id);
+      this.useDocumentExtraction(extraction.asset, extraction.job);
+      this.state.notice = extractionNotice(extraction.job.status);
+    });
+  }
+
+  /** Only this explicit action promotes edited candidate text into a review document. */
+  private async confirmDocumentExtraction(form: HTMLFormElement): Promise<void> {
+    if (!this.hasRole("reviewer")) throw new Error("추출 텍스트 확인은 심사자 역할에서만 할 수 있습니다.");
+    const current = this.requireCase();
+    const asset = this.requireDocumentAsset();
+    const job = this.state.selectedExtractionJob;
+    if (!job || !canConfirmExtraction(job)) {
+      throw new Error("사람이 확인할 수 있는 추출 후보가 아직 준비되지 않았습니다.");
+    }
+    const data = new FormData(form);
+    const content = data.get("content_text");
+    const contentText = typeof content === "string" ? content : "";
+    const filename = stringValue(data, "filename");
+    if (!filename) throw new Error("확인한 텍스트의 파일명을 입력해 주십시오.");
+    if (!contentText.trim()) throw new Error("원문과 비교해 확인한 텍스트를 입력해 주십시오.");
+    const replaces = stringValue(data, "replaces_document_id");
+    await this.withBusy(async () => {
+      const document = await this.api.confirmDocumentExtraction(current.case_id, asset.asset_id, {
+        extraction_job_id: job.extraction_job_id,
+        filename,
+        content_text: contentText,
+        ...(replaces ? { replaces_document_id: replaces } : {}),
+      });
+      await this.loadCase(current.case_id);
+      await this.openDocument(document.document_id);
+      this.state.notice = replaces
+        ? "확인한 텍스트를 보완 문서로 등록했습니다. 이전 텍스트 문서는 새 심사 입력에서 제외됩니다. 심사는 자동으로 시작하지 않았습니다."
+        : "확인한 텍스트를 심사 문서로 등록했습니다. 심사는 자동으로 시작하지 않았습니다.";
+    });
+  }
+
+  private useDocumentExtraction(asset: DocumentAsset, job: ExtractionJob): void {
+    this.state.documentAssets = [asset, ...this.state.documentAssets.filter((item) => item.asset_id !== asset.asset_id)];
+    this.state.selectedDocument = null;
+    this.state.sourceFocus = null;
+    this.state.selectedDocumentAsset = asset;
+    this.state.selectedExtractionJob = job;
+    this.state.extractionDraft = extractionCandidateText(job);
+  }
+
+  private updateExtractionDraft(value: string): void {
+    this.state.extractionDraft = value.slice(0, 200_000);
   }
 
   private async startReview(): Promise<void> {
@@ -1014,6 +1155,11 @@ export class CommercialReviewWorkspace {
   private requireRun(): ReviewRun {
     if (!this.state.selectedRun) throw new Error("먼저 심사 결과를 선택해 주십시오.");
     return this.state.selectedRun;
+  }
+
+  private requireDocumentAsset(): DocumentAsset {
+    if (!this.state.selectedDocumentAsset) throw new Error("먼저 업로드한 문서를 선택해 주십시오.");
+    return this.state.selectedDocumentAsset;
   }
 
   private render(): void {
@@ -1549,9 +1695,32 @@ export class CommercialReviewWorkspace {
     }
     if (!this.state.documents.length) documents.append(element("p", { className: "empty-copy", text: "등록된 문서가 없습니다." }));
 
+    const assets = element("div", { className: "document-asset-table", attributes: { role: "list", "data-e2e": "document-asset-list" } });
+    for (const [index, asset] of this.state.documentAssets.entries()) {
+      const selected = this.state.selectedDocumentAsset?.asset_id === asset.asset_id;
+      const extraction = selected ? this.state.selectedExtractionJob : null;
+      assets.append(element("button", {
+        className: `document-asset-row${selected ? " is-selected" : ""}`,
+        attributes: {
+          type: "button",
+          role: "listitem",
+          "data-e2e": "document-asset-row",
+          "data-document-asset-id": asset.asset_id,
+        },
+        on: { click: () => this.openDocumentAsset(asset) },
+      },
+      element("span", { className: "document-type", text: documentDisplayName(asset) }),
+      element("span", { className: "document-name", text: `${documentDisplayName(asset)} · ${index + 1}번째 업로드` }),
+      element("span", { text: extraction ? extractionStatusLabel(extraction.status) : "추출 전" }),
+      element("small", { text: `${documentAssetMediaTypeLabel(asset.media_type)} · ${formatByteSize(asset.byte_size)} · ${asset.page_count}쪽` })));
+    }
+    if (!this.state.documentAssets.length) {
+      assets.append(element("p", { className: "empty-copy", text: "업로드한 PDF·이미지 문서가 없습니다." }));
+    }
+
     const active = this.activeDocuments();
     const form = element("form", { className: "document-form", attributes: { "data-e2e": "document-form" }, on: { submit: (event) => { event.preventDefault(); void this.addDocument(event.currentTarget as HTMLFormElement); } } },
-      element("p", { className: "form-hint", text: "텍스트 붙여넣기 또는 .txt 파일만 지원합니다. PDF·이미지·OCR은 이 기능 범위에 포함되지 않습니다." }),
+      element("p", { className: "form-hint", text: "텍스트 붙여넣기 또는 .txt 파일을 바로 심사 문서로 등록합니다." }),
       element("div", { className: "form-grid" },
         field("문서 유형", select("document_type", DOCUMENT_TYPES.map((type): [string, string] => [type, documentTypeLabel(type)]))),
         field("파일명", input("filename", { required: true, maxLength: 255, placeholder: "상업송장.txt" })),
@@ -1562,6 +1731,24 @@ export class CommercialReviewWorkspace {
       submit("텍스트 문서 등록", this.state.busy),
     );
 
+    const assetForm = element("form", {
+      className: "document-asset-form",
+      attributes: { "data-e2e": "document-asset-form" },
+      on: { submit: (event) => { event.preventDefault(); void this.addDocumentAsset(event.currentTarget as HTMLFormElement); } },
+    },
+    element("p", { className: "form-hint", text: "PDF·JPEG·PNG은 파일 형식과 크기를 서버에서 다시 확인한 뒤 추출 후보로만 보관합니다. 업로드만으로 AI 심사는 시작되지 않습니다." }),
+    element("div", { className: "form-grid" },
+      field("문서 유형", select("document_type", DOCUMENT_TYPES.map((type): [string, string] => [type, documentTypeLabel(type)]))),
+      field("파일", input("document_asset", {
+        type: "file",
+        required: true,
+        accept: ".pdf,application/pdf,.jpg,.jpeg,image/jpeg,.png,image/png",
+        ariaLabel: "PDF, JPEG 또는 PNG 파일 선택",
+      })),
+    ),
+    submit("추출 미리보기용 파일 등록", this.state.busy),
+    );
+
     return element("section", { className: "tab-layout documents-layout" },
       element("section", { className: "surface document-panel" },
         sectionHeading("문서", "활성 문서는 다음 심사 입력에 포함됩니다."),
@@ -1569,12 +1756,20 @@ export class CommercialReviewWorkspace {
         this.hasRole("reviewer")
           ? element("details", { className: "document-add-panel", attributes: { "data-e2e": "document-add-panel" } }, element("summary", { text: "문서 등록 또는 보완" }), form)
           : element("p", { className: "role-boundary-note", text: "승인 담당자는 원문과 심사 이력을 읽을 수 있지만 문서를 등록하거나 보완할 수는 없습니다." }),
+        element("section", { className: "document-asset-panel" },
+          sectionHeading("PDF·이미지 추출 미리보기", "추출 후보는 사람이 원문과 대조해 확인하기 전까지 심사에 사용되지 않습니다."),
+          assets,
+          this.hasRole("reviewer")
+            ? element("details", { className: "document-add-panel", attributes: { "data-e2e": "document-asset-add-panel" } }, element("summary", { text: "PDF·이미지 파일 등록" }), assetForm)
+            : element("p", { className: "role-boundary-note", text: "승인 담당자는 추출 후보를 읽을 수 있지만 파일 등록·추출 요청·확정은 할 수 없습니다." }),
+        ),
       ),
       element("section", { className: "surface document-preview" }, this.createDocumentPreview()),
     );
   }
 
   private createDocumentPreview(): HTMLElement {
+    if (this.state.selectedDocumentAsset) return this.createDocumentAssetPreview(this.state.selectedDocumentAsset);
     const document = this.state.selectedDocument;
     if (!document) return emptyState("문서 미리보기", "왼쪽 목록에서 문서를 선택하면 원문과 인용 위치를 확인할 수 있습니다.");
     const details = verificationDetails([
@@ -1587,6 +1782,125 @@ export class CommercialReviewWorkspace {
       sectionHeading(documentDisplayName(document), `${document.character_count.toLocaleString()}자 · ${document.superseded_by_document_id ? "대체된 문서" : "현재 심사에 사용 중"}`),
       element("p", { className: "document-preview__hint", text: "원문 인용 위치와 등록 정보는 아래 상세를 열어 확인할 수 있습니다." }),
       details,
+    );
+  }
+
+  /**
+   * This surface is intentionally separate from the text-document preview:
+   * preview text is neither a Case document nor an input to the review job.
+   */
+  private createDocumentAssetPreview(asset: DocumentAsset): HTMLElement {
+    const job = this.state.selectedExtractionJob?.asset_id === asset.asset_id
+      ? this.state.selectedExtractionJob
+      : null;
+    const metadata = element("p", {
+      className: "document-preview__hint",
+      text: `${documentAssetMediaTypeLabel(asset.media_type)} · ${formatByteSize(asset.byte_size)} · ${asset.page_count}쪽. 원본 파일은 추출 미리보기에만 사용됩니다.`,
+    });
+    if (!job) {
+      return element("div", { className: "document-asset-preview", attributes: { "data-e2e": "document-asset-preview" } },
+        sectionHeading(`${documentDisplayName(asset)} 추출 미리보기`, "아직 추출 후보가 없습니다."),
+        metadata,
+        element("section", { className: "extraction-boundary-notice" },
+          element("strong", { text: "심사 입력과 분리됨" }),
+          element("p", { text: "추출은 미리보기만 만들며, 자동 심사·확인 사항·통관 결론에는 사용하지 않습니다." }),
+        ),
+        this.hasRole("reviewer")
+          ? element("button", {
+            className: "button button--secondary",
+            text: "추출 미리보기 요청",
+            attributes: { type: "button", disabled: this.state.busy ? "" : undefined, "data-e2e": "request-document-extraction" },
+            on: { click: () => void this.requestDocumentExtraction(asset) },
+          })
+          : element("p", { className: "role-boundary-note", text: "추출 미리보기 요청은 심사자 역할에서만 할 수 있습니다." }),
+      );
+    }
+
+    const status = statusChip(extractionStatusLabel(job.status), job.status);
+    status.setAttribute("data-e2e", "document-extraction-status");
+    const actions: HTMLElement[] = [];
+    if (job.status === "queued") {
+      actions.push(element("button", {
+        className: "button button--secondary",
+        text: "추출 상태 새로고침",
+        attributes: { type: "button", disabled: this.state.busy ? "" : undefined, "data-e2e": "refresh-document-extraction" },
+        on: { click: () => void this.refreshDocumentExtraction() },
+      }));
+    }
+    if (this.hasRole("reviewer") && job.status !== "queued") {
+      actions.push(element("button", {
+        className: "button button--quiet",
+        text: "추출 미리보기 다시 요청",
+        attributes: { type: "button", disabled: this.state.busy ? "" : undefined, "data-e2e": "retry-document-extraction" },
+        on: { click: () => void this.requestDocumentExtraction(asset) },
+      }));
+    }
+
+    const preview = job.result;
+    const previewContent = preview && preview.pages.length
+      ? element("section", { className: "extraction-preview-candidate", attributes: { "data-e2e": "document-extraction-candidate" } },
+        element("header", { className: "extraction-preview-candidate__heading" },
+          element("h3", { text: "검증 전 추출 후보" }),
+          element("p", { text: "아래 텍스트는 원본과 대조해야 하며, 아직 심사에 사용되지 않습니다." }),
+        ),
+        preview.warnings.length
+          ? element("ul", { className: "extraction-warning-list" }, ...preview.warnings.map((warning) =>
+            element("li", { text: extractionWarningLabel(warning) }),
+          ))
+          : element("p", { className: "form-hint", text: "서버가 추가 확인 알림을 보내지 않았습니다. 그래도 원본과 대조해 확인해야 합니다." }),
+        ...preview.pages.map((page) => renderExtractionPage(page)),
+      )
+      : element("section", { className: "extraction-boundary-notice" },
+        element("strong", { text: job.status === "queued" ? "추출 요청 처리 중" : "추출 후보를 제공하지 못함" }),
+        element("p", { text: extractionStatusDescription(job.status) }),
+      );
+
+    const confirmation = canConfirmExtraction(job)
+      ? this.createExtractionConfirmationForm(asset, job)
+      : null;
+
+    return element("div", { className: "document-asset-preview", attributes: { "data-e2e": "document-asset-preview" } },
+      sectionHeading(`${documentDisplayName(asset)} 추출 미리보기`, "원본과 후보 텍스트를 사람이 대조한 뒤에만 텍스트 문서로 등록할 수 있습니다."),
+      element("div", { className: "extraction-status-row" }, status, ...actions),
+      metadata,
+      previewContent,
+      confirmation,
+    );
+  }
+
+  private createExtractionConfirmationForm(asset: DocumentAsset, job: ExtractionJob): HTMLElement {
+    const active = this.activeDocuments();
+    return element("form", {
+      className: "extraction-confirmation-form",
+      attributes: { "data-e2e": "document-extraction-confirmation-form" },
+      on: { submit: (event) => { event.preventDefault(); void this.confirmDocumentExtraction(event.currentTarget as HTMLFormElement); } },
+    },
+    element("header", { className: "extraction-confirmation-form__heading" },
+      element("h3", { text: "사람 확인 후 텍스트 문서 등록" }),
+      element("p", { text: "수정한 텍스트를 원본과 대조한 뒤 등록하십시오. 이 단계도 심사를 자동 실행하지 않습니다." }),
+    ),
+    field("텍스트 파일명", input("filename", {
+      required: true,
+      maxLength: 255,
+      value: confirmedTextFilename(asset.filename),
+      placeholder: "확인한-상업송장.txt",
+    })),
+    field("대체할 활성 텍스트 문서", select("replaces_document_id", [
+      ["", "새 텍스트 문서로 등록"],
+      ...active.map((document): [string, string] => [document.document_id, documentDisplayName(document)]),
+    ])),
+    field("원본과 대조해 확인한 텍스트", textarea("content_text", {
+      required: true,
+      maxLength: 200_000,
+      value: this.state.extractionDraft,
+      placeholder: "추출 후보를 원본과 대조해 수정·확인한 텍스트를 입력하십시오.",
+      onInput: (event) => {
+        const target = event.currentTarget;
+        if (target instanceof HTMLTextAreaElement) this.updateExtractionDraft(target.value);
+      },
+    })),
+    element("p", { className: "form-hint", text: `현재 추출 상태: ${extractionStatusLabel(job.status)}. 등록 후에도 별도로 “AI 심사 시작”을 눌러야 합니다.` }),
+    submit("확인한 텍스트를 심사 문서로 등록", this.state.busy),
     );
   }
 
@@ -2645,11 +2959,11 @@ function protectedStructuredDetails(
 }
 
 function statusChip(label: string, technicalStatus: string): HTMLElement {
-  const tone = technicalStatus === "closed" || technicalStatus === "succeeded" || technicalStatus === "completed"
+  const tone = technicalStatus === "closed" || technicalStatus === "succeeded" || technicalStatus === "completed" || technicalStatus === "preview_ready"
     ? "success"
     : technicalStatus === "in_review" || technicalStatus === "needs_review" || technicalStatus === "partial"
       ? "warning"
-      : technicalStatus === "failed" || technicalStatus === "blocked"
+      : technicalStatus === "failed" || technicalStatus === "blocked" || technicalStatus === "unavailable"
         ? "danger"
         : "neutral";
   return element("span", { className: `status-chip status-chip--${tone}`, text: label });
@@ -2761,6 +3075,25 @@ function renderDocumentText(content: string, source: SourceReference | null): HT
   pre.append(document.createTextNode(content.slice(index + source.quote.length)));
   queueMicrotask(() => scrollIntoViewIfAvailable(pre.querySelector("mark")));
   return pre;
+}
+
+/** Keep the visual preview bounded; the editable confirmation text retains all admitted spans. */
+function renderExtractionPage(page: ExtractionPage): HTMLElement {
+  const sorted = [...page.spans]
+    .sort((left, right) => left.reading_order - right.reading_order || left.ordinal - right.ordinal);
+  const visible = sorted.slice(0, 160);
+  return element("details", { className: "extraction-page" },
+    element("summary", { text: `${page.page_number}쪽 · 추출 문장 ${page.spans.length.toLocaleString()}개` }),
+    element("ol", { className: "extraction-span-list" }, ...visible.map((span) =>
+      element("li", { className: "extraction-span", attributes: { "data-has-bbox": span.bbox ? "true" : "false" } },
+        element("span", { text: span.text }),
+        element("small", { text: span.bbox ? "원본 위치 정보 포함" : "원본 위치 정보 없음" }),
+      ),
+    )),
+    sorted.length > visible.length
+      ? element("p", { className: "form-hint", text: `화면에는 앞 ${visible.length}개만 표시합니다. 전체 후보는 아래 확인 텍스트에서 원본과 대조해 검토하십시오.` })
+      : null,
+  );
 }
 
 type FindingDisplayGroup = {
@@ -3064,6 +3397,104 @@ function severityWeight(value: ReviewFinding["severity"]): number {
 function formatDate(value: string): string {
   const parsed = new Date(value);
   return Number.isNaN(parsed.getTime()) ? value : new Intl.DateTimeFormat("ko-KR", { dateStyle: "medium", timeStyle: "short" }).format(parsed);
+}
+
+function documentAssetMediaTypeLabel(value: DocumentAssetMediaType): string {
+  return ({
+    "application/pdf": "PDF",
+    "image/jpeg": "JPEG 이미지",
+    "image/png": "PNG 이미지",
+  })[value];
+}
+
+/** Browser-side selection is only a convenience; Backend rechecks magic bytes. */
+function uploadedAssetMediaType(file: File): DocumentAssetMediaType {
+  const filename = file.name.toLocaleLowerCase();
+  const fromExtension: DocumentAssetMediaType | null = filename.endsWith(".pdf")
+    ? "application/pdf"
+    : filename.endsWith(".jpg") || filename.endsWith(".jpeg")
+      ? "image/jpeg"
+      : filename.endsWith(".png")
+        ? "image/png"
+        : null;
+  const declared = file.type.toLocaleLowerCase().split(";", 1)[0];
+  const fromMime: DocumentAssetMediaType | null = declared === "application/pdf" || declared === "image/jpeg" || declared === "image/png"
+    ? declared
+    : null;
+  if (fromMime && fromExtension && fromMime !== fromExtension) {
+    throw new Error("파일 확장자와 브라우저가 알린 형식이 다릅니다. 원본 파일을 확인해 주십시오.");
+  }
+  const selected = fromMime ?? fromExtension;
+  if (selected) return selected;
+  throw new Error("PDF, JPEG 또는 PNG 파일만 추출 미리보기로 등록할 수 있습니다.");
+}
+
+function formatByteSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes}B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)}KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)}MB`;
+}
+
+function extractionStatusLabel(value: ExtractionJob["status"]): string {
+  return ({
+    queued: "추출 대기",
+    preview_ready: "검증 전 추출 후보 준비됨",
+    needs_review: "추출 후보 추가 확인 필요",
+    unavailable: "추출 후보 제공 불가",
+    failed: "추출 미리보기 실패",
+  })[value];
+}
+
+function extractionStatusDescription(value: ExtractionJob["status"]): string {
+  return ({
+    queued: "추출 요청을 처리 중입니다. 잠시 후 상태를 새로고침하십시오.",
+    preview_ready: "원본과 대조해 사람이 확인할 수 있는 추출 후보가 준비되었습니다.",
+    needs_review: "일부 확인이 필요한 추출 후보입니다. 원본과 대조해 수정한 뒤에만 텍스트 문서로 등록하십시오.",
+    unavailable: "현재 설정된 로컬 미리보기 환경에서 추출 후보를 만들 수 없습니다. 추출 결과를 추정하거나 심사에 사용하지 않습니다.",
+    failed: "추출 미리보기를 완료하지 못했습니다. 원본 파일과 서비스 상태를 확인한 뒤 다시 요청하십시오.",
+  })[value];
+}
+
+function extractionNotice(value: ExtractionJob["status"]): string {
+  return `${extractionStatusLabel(value)}. ${extractionStatusDescription(value)}`;
+}
+
+function extractionWarningLabel(code: string): string {
+  const labels: Record<string, string> = {
+    human_confirmation_required: "원본과 대조한 사람 확인이 필요합니다.",
+    preview_engine_unavailable: "현재 설정된 미리보기 엔진이 추출 후보를 제공하지 못했습니다.",
+    pdf_text_layer_empty: "PDF의 텍스트 레이어에서 충분한 후보를 찾지 못했습니다.",
+    ocr_low_confidence: "일부 글자 인식 신뢰도가 낮을 수 있어 원본 대조가 필요합니다.",
+    table_structure_uncertain: "표 구조가 불확실할 수 있어 행·열을 원본과 대조해야 합니다.",
+  };
+  return labels[code] ?? "추출 후보에 추가 확인이 필요합니다.";
+}
+
+function extractionCandidateText(job: ExtractionJob, maximum = 200_001): string {
+  const pages = job.result?.pages ?? [];
+  let result = "";
+  for (const [pageIndex, page] of [...pages].sort((left, right) => left.page_number - right.page_number).entries()) {
+    const pageText = [...page.spans]
+      .sort((left, right) => left.reading_order - right.reading_order || left.ordinal - right.ordinal)
+      .map((span) => span.text)
+      .join("\n");
+    const next = `${pageIndex ? "\n\n" : ""}${pageText}`;
+    if (result.length + next.length > maximum) return `${result}${next}`.slice(0, maximum);
+    result += next;
+  }
+  return result;
+}
+
+function canConfirmExtraction(job: ExtractionJob): boolean {
+  if (job.status !== "preview_ready" && job.status !== "needs_review") return false;
+  const candidate = extractionCandidateText(job);
+  return Boolean(candidate.trim()) && candidate.length <= 200_000;
+}
+
+function confirmedTextFilename(filename: string): string {
+  const extension = /\.[A-Za-z0-9]{1,12}$/u;
+  const base = filename.replace(extension, "").trim() || "확인문서";
+  return `${base}.txt`;
 }
 
 function userMessage(error: unknown, fallback: string): string {

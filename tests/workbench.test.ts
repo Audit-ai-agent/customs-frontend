@@ -73,6 +73,77 @@ describe("commercial review workspace", () => {
     app.destroy();
   });
 
+  it("keeps a PDF extraction candidate out of review until a reviewer explicitly confirms edited text", async () => {
+    window.location.hash = "#/cases/case-1/documents";
+    const root = document.createElement("div");
+    const caseDetail = { case_id: "case-1", org_id: "local-org", title: "입항 서류", status: "open" as const, revision: 0, updated_at: "2026-08-11T00:00:00Z" };
+    const asset = {
+      asset_id: "asset-1", case_id: "case-1", document_type: "CI" as const, filename: "invoice.pdf",
+      media_type: "application/pdf" as const, byte_size: 24, page_count: 1, pixel_count: 0,
+      created_by: "local-reviewer", created_at: "2026-08-11T00:00:00Z",
+    };
+    const textDocument = {
+      document_id: "document-1", case_id: "case-1", document_type: "CI" as const, filename: "invoice.txt", media_type: "text/plain" as const,
+      content_sha256: "a".repeat(64), byte_size: 11, character_count: 11, created_by: "local-reviewer", created_at: "2026-08-11T00:01:00Z",
+    };
+    let confirmed = false;
+    const preview = {
+      asset,
+      job: {
+        extraction_job_id: "extraction-1", asset_id: "asset-1", case_id: "case-1", status: "needs_review" as const,
+        result: {
+          status: "needs_review" as const, extractor_revision: "local-preview-r1",
+          pages: [{ page_number: 1, width: 100, height: 100, coordinate_unit: "pdf_points" as const, spans: [{ span_id: "span-1", ordinal: 1, text: "INVOICE 001", bbox: { x: 0, y: 0, width: 1, height: 0.1 }, reading_order: 1 }] }],
+          warnings: ["human_confirmation_required"],
+        },
+        created_by: "local-reviewer", created_at: "2026-08-11T00:00:01Z", updated_at: "2026-08-11T00:00:01Z",
+      },
+    };
+    const api = {
+      getSession: vi.fn(async () => ({ subject: "local-reviewer", org_id: "local-org", roles: ["reviewer"] })),
+      listCases: vi.fn(async () => ({ items: [caseDetail] })),
+      getCase: vi.fn(async () => caseDetail),
+      listDocuments: vi.fn(async () => confirmed ? [textDocument] : []),
+      listDocumentAssets: vi.fn(async () => [asset]),
+      listReviewRuns: vi.fn(async () => []),
+      requestDocumentExtraction: vi.fn(async () => preview),
+      confirmDocumentExtraction: vi.fn(async () => {
+        confirmed = true;
+        return textDocument;
+      }),
+      getDocumentContent: vi.fn(async () => ({ ...textDocument, content_text: "INVOICE 001" })),
+      enqueueReview: vi.fn(),
+    };
+    const auth = { logout: async () => undefined, freshAccessToken: async () => "token", isAuthenticated: () => true };
+    const app = new LightweightWorkbench(root, api as never, auth, "local-development");
+    await app.start();
+
+    root.querySelector<HTMLButtonElement>('[data-e2e="document-asset-row"]')?.click();
+    expect(root.textContent).toContain("심사 입력과 분리됨");
+    expect(root.textContent).toContain("자동 심사·확인 사항·통관 결론에는 사용하지 않습니다.");
+    expect(api.enqueueReview).not.toHaveBeenCalled();
+
+    await (app as unknown as { requestDocumentExtraction(value: typeof asset): Promise<void> }).requestDocumentExtraction(asset);
+    expect(root.querySelector('[data-e2e="document-extraction-candidate"]')?.textContent).toContain("검증 전 추출 후보");
+    expect(root.textContent).toContain("원본과 대조한 사람 확인이 필요합니다.");
+    expect(root.textContent).not.toContain("local-preview-r1");
+    expect(api.enqueueReview).not.toHaveBeenCalled();
+
+    const form = root.querySelector<HTMLFormElement>('[data-e2e="document-extraction-confirmation-form"]');
+    const textarea = form?.querySelector<HTMLTextAreaElement>('textarea[name="content_text"]');
+    if (!form || !textarea) throw new Error("confirmation form is unavailable");
+    textarea.value = "INVOICE 001\n원본 대조 완료";
+    await (app as unknown as { confirmDocumentExtraction(value: HTMLFormElement): Promise<void> }).confirmDocumentExtraction(form);
+
+    expect(api.confirmDocumentExtraction).toHaveBeenCalledWith("case-1", "asset-1", expect.objectContaining({
+      extraction_job_id: "extraction-1", content_text: "INVOICE 001\n원본 대조 완료",
+    }));
+    expect(api.enqueueReview).not.toHaveBeenCalled();
+    expect(root.textContent).toContain("심사는 자동으로 시작하지 않았습니다.");
+    expect(root.querySelector('[data-e2e="document-row"]')).not.toBeNull();
+    app.destroy();
+  });
+
   it("renders the global knowledge assistant apart from a Case and keeps answer sections distinct", async () => {
     window.location.hash = "#/knowledge";
     const root = document.createElement("div");

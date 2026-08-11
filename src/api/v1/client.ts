@@ -6,6 +6,8 @@ import {
   decodeAssistantMessageExchange,
   decodeCaseSummary,
   decodeCorrectionProposal,
+  decodeDocumentAsset,
+  decodeDocumentAssetExtraction,
   decodeDocumentListItem,
   decodeDocumentView,
   decodeJob,
@@ -27,11 +29,14 @@ import type {
   CaseDetail,
   CaseDocument,
   CaseSummary,
+  ConfirmDocumentExtractionRequest,
   CreateCaseRequest,
   CreateAssistantConversationRequest,
   CreateCorrectionProposalRequest,
   CorrectionDecisionRequest,
   CorrectionProposal,
+  DocumentAsset,
+  DocumentAssetExtraction,
   CreateRevisionRequest,
   EnqueueReviewRequest,
   FindingDecisionRequest,
@@ -46,6 +51,7 @@ import type {
   SendAssistantMessageRequest,
   SendKnowledgeMessageRequest,
   Session,
+  UploadDocumentAssetRequest,
 } from "./types";
 import type { LocalDevelopmentSessionResponse } from "../../auth";
 import { stableApiErrorMessage, technicalApiErrorDetail } from "../user-facing-errors";
@@ -58,6 +64,9 @@ const REQUEST_TIMEOUT_MS = 30_000;
 // do not abandon a real review before the Backend has had a fair chance to
 // return its terminal Job projection.
 const REVIEW_EXECUTION_TIMEOUT_MS = 120_000;
+const DOCUMENT_EXTRACTION_TIMEOUT_MS = 120_000;
+const MAX_DOCUMENT_ASSET_UPLOAD_BYTES = 20 * 1024 * 1024;
+const MAX_TEXT_DOCUMENT_CHARACTERS = 200_000;
 // A standalone official-knowledge answer may make one bounded Data lookup
 // and one Claude presentation call.  Backend's normal Agent response budget
 // is 180 seconds, so the Browser must not abort the public request first.
@@ -156,6 +165,108 @@ export class ApiClient {
         this.assertIdentity(item.record.case_id, caseId, "Document Case");
         this.assertIdentity(item.record.document_id, documentId, "Document");
         return { ...item.record, content_text: item.content_text };
+      },
+    );
+  }
+
+  /** Binary assets have a distinct preview-only boundary from text documents. */
+  listDocumentAssets(caseId: string): Promise<DocumentAsset[]> {
+    return this.request(`/cases/${segment(caseId)}/document-assets`, { method: "GET" }, (value) => {
+      const assets = itemsFrom(value, "Document asset list").map(decodeDocumentAsset);
+      assets.forEach((asset, index) => this.assertIdentity(asset.case_id, caseId, `documentAssets[${index}] Case`));
+      return assets;
+    });
+  }
+
+  /**
+   * Sends the selected file as an opaque raw body.  It never turns source
+   * bytes into JSON, base64, Browser storage, or a review request.
+  */
+  uploadDocumentAsset(caseId: string, payload: UploadDocumentAssetRequest): Promise<DocumentAsset> {
+    const assetDocumentType = validDocumentType(payload.document_type);
+    const filename = uploadFilename(payload.filename);
+    const mediaType = documentAssetMediaType(payload.media_type);
+    if (!(payload.content instanceof Blob) || payload.content.size < 1 || payload.content.size > MAX_DOCUMENT_ASSET_UPLOAD_BYTES) {
+      throw new ContractError("document asset binary content is invalid");
+    }
+    const query = new URLSearchParams({ document_type: assetDocumentType, filename });
+    return this.request(
+      `/cases/${segment(caseId)}/document-assets?${query.toString()}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": mediaType },
+        body: payload.content,
+      },
+      (value) => {
+        const asset = decodeDocumentAsset(value);
+        this.assertIdentity(asset.case_id, caseId, "Document asset Case");
+        return asset;
+      },
+      true,
+      DOCUMENT_EXTRACTION_TIMEOUT_MS,
+    );
+  }
+
+  requestDocumentExtraction(caseId: string, assetId: string): Promise<DocumentAssetExtraction> {
+    return this.request(
+      `/cases/${segment(caseId)}/document-assets/${segment(assetId)}/extractions`,
+      { method: "POST" },
+      (value) => {
+        const extraction = decodeDocumentAssetExtraction(value);
+        this.assertIdentity(extraction.asset.case_id, caseId, "Document extraction Case");
+        this.assertIdentity(extraction.asset.asset_id, assetId, "Document extraction asset");
+        return extraction;
+      },
+      true,
+      DOCUMENT_EXTRACTION_TIMEOUT_MS,
+    );
+  }
+
+  getDocumentExtraction(
+    caseId: string,
+    assetId: string,
+    extractionJobId: string,
+  ): Promise<DocumentAssetExtraction> {
+    return this.request(
+      `/cases/${segment(caseId)}/document-assets/${segment(assetId)}/extractions/${segment(extractionJobId)}`,
+      { method: "GET" },
+      (value) => {
+        const extraction = decodeDocumentAssetExtraction(value);
+        this.assertIdentity(extraction.asset.case_id, caseId, "Document extraction Case");
+        this.assertIdentity(extraction.asset.asset_id, assetId, "Document extraction asset");
+        this.assertIdentity(extraction.job.extraction_job_id, extractionJobId, "Document extraction job");
+        return extraction;
+      },
+    );
+  }
+
+  /** A reviewer-confirmed text copy is the sole OCR-to-review transition. */
+  confirmDocumentExtraction(
+    caseId: string,
+    assetId: string,
+    payload: ConfirmDocumentExtractionRequest,
+  ): Promise<CaseDocument> {
+    const filename = uploadFilename(payload.filename);
+    const contentText = payload.content_text;
+    if (!contentText.trim() || contentText.length > MAX_TEXT_DOCUMENT_CHARACTERS) {
+      throw new ContractError("confirmed extraction text is invalid");
+    }
+    const extractionJobId = requestIdentifier(payload.extraction_job_id, "extraction job ID");
+    const replacesDocumentId = payload.replaces_document_id === undefined || payload.replaces_document_id === null
+      ? undefined
+      : requestIdentifier(payload.replaces_document_id, "replacement document ID");
+    return this.request(
+      `/cases/${segment(caseId)}/document-assets/${segment(assetId)}/confirmed-document`,
+      this.json("POST", {
+        extraction_job_id: extractionJobId,
+        filename,
+        content_text: contentText,
+        ...(replacesDocumentId === undefined ? {} : { replaces_document_id: replacesDocumentId }),
+      }),
+      (value) => {
+        const item = decodeDocumentView(value);
+        this.assertIdentity(item.record.case_id, caseId, "Confirmed document Case");
+        return item.record;
       },
     );
   }
@@ -589,6 +700,40 @@ async function readJson(response: Response): Promise<unknown> {
   } catch {
     throw new ContractError("Backend response contains invalid JSON");
   }
+}
+
+function validDocumentType(value: unknown): UploadDocumentAssetRequest["document_type"] {
+  const allowed = [
+    "CI", "PL", "BL", "CO", "AWB", "EXPORT_DECLARATION", "SUPPORTING_EVIDENCE", "UNKNOWN",
+  ] as const;
+  if (typeof value !== "string" || !allowed.includes(value as (typeof allowed)[number])) {
+    throw new ContractError("document asset type is invalid");
+  }
+  return value as UploadDocumentAssetRequest["document_type"];
+}
+
+function documentAssetMediaType(value: unknown): UploadDocumentAssetRequest["media_type"] {
+  if (value !== "application/pdf" && value !== "image/jpeg" && value !== "image/png") {
+    throw new ContractError("document asset media type is invalid");
+  }
+  return value;
+}
+
+function uploadFilename(value: unknown): string {
+  if (
+    typeof value !== "string" || !value.trim() || value.length > 255 ||
+    /[\\/\r\n\0]/u.test(value)
+  ) {
+    throw new ContractError("document asset filename is invalid");
+  }
+  return value;
+}
+
+function requestIdentifier(value: unknown, label: string): string {
+  if (typeof value !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u.test(value)) {
+    throw new ContractError(`${label} is invalid`);
+  }
+  return value;
 }
 
 function segment(value: string): string {
