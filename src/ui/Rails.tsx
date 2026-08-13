@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import type { ReviewRun } from "../api/v1/types";
 import { display, documentTypeLabel, plannerActionLabel, workflowLabel } from "./labels";
 import { EmptyCopy, RoleBoundaryNote, TraceCount } from "./primitives";
@@ -90,11 +91,13 @@ export function TraceRail() {
           </button>
         </div>
         <p className="trace-head__sub">
-          {run
-            ? `실행 상태 ${display(run.workflow.status)} · 이 실행에서 실제로 수행한 제한형 workflow입니다.`
-            : "아직 실행된 심사가 없습니다."}
+          {state.reviewInFlight
+            ? "AI 심사 실행 중 · Agent가 제한형 workflow를 수행하고 있습니다."
+            : run
+              ? `실행 상태 ${display(run.workflow.status)} · 이 실행에서 실제로 수행한 제한형 workflow입니다.`
+              : "아직 실행된 심사가 없습니다."}
         </p>
-        {run ? (
+        {run && !state.reviewInFlight ? (
           <div className="trace-counts">
             <TraceCount value={run.workflow.stages.length} label="처리 단계" />
             <TraceCount value={run.workflow.planner.actions.length} label="계획 실행" />
@@ -103,7 +106,13 @@ export function TraceRail() {
         ) : null}
       </div>
       <div className="trace-body">
-        {run ? <Workflow run={run} /> : <EmptyCopy>심사를 실행하면 Agent 처리 트레이스가 표시됩니다.</EmptyCopy>}
+        {state.reviewInFlight ? (
+          <ReviewInFlight />
+        ) : run ? (
+          <Workflow run={run} />
+        ) : (
+          <EmptyCopy>심사를 실행하면 Agent 처리 트레이스가 표시됩니다.</EmptyCopy>
+        )}
       </div>
       <div className="trace-foot">
         <button
@@ -117,6 +126,52 @@ export function TraceRail() {
         </button>
       </div>
     </aside>
+  );
+}
+
+/**
+ * Honest in-flight state: the Backend runs the whole Agent workflow inside one
+ * request, so there is no per-stage event to show yet. This displays elapsed
+ * time and the fixed stage names as pending — never a completion it hasn't seen.
+ */
+function ReviewInFlight() {
+  const [seconds, setSeconds] = useState(0);
+  useEffect(() => {
+    const timer = window.setInterval(() => setSeconds((value) => value + 1), 1_000);
+    return () => window.clearInterval(timer);
+  }, []);
+  const minutes = Math.floor(seconds / 60);
+  const elapsed = minutes > 0 ? `${minutes}분 ${seconds % 60}초` : `${seconds}초`;
+  const plannedStages = [
+    "classify_documents",
+    "extract_facts",
+    "normalize_facts",
+    "match_documents",
+    "validate_documents",
+    "retrieve_evidence",
+    "generate_result",
+  ];
+  return (
+    <div className="trace-inflight" role="status">
+      <p className="trace-inflight__pulse">
+        <span className="trace-inflight__dot" aria-hidden="true" />
+        {`실행 중 · ${elapsed} 경과`}
+      </p>
+      <p className="trace-inflight__hint">
+        실제 모델 심사는 수 분이 걸릴 수 있습니다. 단계별 실측 기록은 완료 즉시 이 자리에 표시됩니다.
+      </p>
+      <ol className="workflow-list">
+        {plannedStages.map((stage) => (
+          <li key={stage} className="workflow-step workflow-step--pending">
+            <span className="workflow-dot" aria-hidden="true" />
+            <div>
+              <strong>{workflowLabel(stage)}</strong>
+              <small>예정된 제한형 단계</small>
+            </div>
+          </li>
+        ))}
+      </ol>
+    </div>
   );
 }
 

@@ -42,7 +42,7 @@ export function Dashboard() {
       <div className="dash-stats">
         <DashStat label="전체 Case" value={counts.all} hint="업무함에 등록된 전체 건" />
         <DashStat label="진행 전" value={counts.open} hint="심사를 아직 시작하지 않은 건" tone="open" />
-        <DashStat label="사람 검토 중" value={counts.in_review} hint="담당자 판단이 필요한 건" tone="review" />
+        <DashStat label="검토 중" value={counts.in_review} hint="담당자 판단이 필요한 건" tone="review" />
         <DashStat label="종료" value={counts.closed} hint="검토가 끝난 건" tone="done" />
       </div>
 

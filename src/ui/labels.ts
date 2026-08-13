@@ -29,7 +29,7 @@ export function roleLabel(value: string): string {
 
 export function display(value: string): string {
   const labels: Record<string, string> = {
-    open: "진행 전", in_review: "사람 검토 중", closed: "종료", queued: "대기", running: "처리 중", succeeded: "완료", failed: "실패",
+    open: "진행 전", in_review: "검토 중", closed: "종료", queued: "대기", running: "처리 중", succeeded: "완료", failed: "실패",
     partial: "부분 완료", no_issue_detected: "주요 이슈 없음", issues_detected: "확인 사항 있음", indeterminate: "판단 보류",
     human_review_required: "사람 검토 필요", blocked: "차단됨", completed: "완료", skipped: "건너뜀", needs_review: "검토 필요",
   };

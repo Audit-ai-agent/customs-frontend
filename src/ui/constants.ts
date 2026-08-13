@@ -45,7 +45,7 @@ export const LEGACY_VIEW_ALIASES: Record<string, WorkspaceView> = { analysis: "r
 export const CASE_FILTERS: readonly { id: CaseFilter; label: string }[] = [
   { id: "all", label: "전체" },
   { id: "open", label: "진행 전" },
-  { id: "in_review", label: "사람 검토 중" },
+  { id: "in_review", label: "검토 중" },
   { id: "closed", label: "종료" },
 ];
 

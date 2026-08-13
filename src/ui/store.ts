@@ -114,6 +114,8 @@ export interface WorkbenchState {
   query: string;
   fontScale: FontScale;
   createCaseOpen: boolean;
+  /** True while a review or revision request is running on the Backend. */
+  reviewInFlight: boolean;
   busy: boolean;
   notice: string | null;
   error: string | null;
@@ -179,6 +181,7 @@ const INITIAL_STATE: WorkbenchState = {
   query: "",
   fontScale: 1,
   createCaseOpen: false,
+  reviewInFlight: false,
   busy: false,
   notice: null,
   error: null,
@@ -755,13 +758,18 @@ export class WorkbenchStore {
       return;
     }
     await this.withBusy(async () => {
-      const job = await this.api.enqueueReview(current.case_id, { trade_type: "import" }, crypto.randomUUID());
-      this.patch({ activeJob: job });
-      if (job.status === "succeeded") {
-        await this.showSucceededReview(job);
-      } else {
-        this.patch({ notice: "심사를 요청했습니다. 완료 상태가 확인되면 결과를 표시합니다." });
-        this.scheduleJobPoll(job);
+      this.patch({ reviewInFlight: true });
+      try {
+        const job = await this.api.enqueueReview(current.case_id, { trade_type: "import" }, crypto.randomUUID());
+        this.patch({ activeJob: job });
+        if (job.status === "succeeded") {
+          await this.showSucceededReview(job);
+        } else {
+          this.patch({ notice: "심사를 요청했습니다. 완료 상태가 확인되면 결과를 표시합니다." });
+          this.scheduleJobPoll(job);
+        }
+      } finally {
+        this.patch({ reviewInFlight: false });
       }
     });
   }
@@ -1163,12 +1171,17 @@ export class WorkbenchStore {
       return;
     }
     await this.withBusy(async () => {
-      const job = await this.api.enqueueRevision(run.review_run_id, { proposal_ids: proposalIds }, crypto.randomUUID());
-      this.patch({ selectedCorrectionProposalIds: new Set<string>(), activeJob: job });
-      if (job.status === "succeeded") await this.showSucceededReview(job);
-      else {
-        this.patch({ notice: "승인된 정정 제안을 반영하는 자식 심사를 요청했습니다. 완료되면 새 심사 이력으로 이동합니다." });
-        this.scheduleJobPoll(job);
+      this.patch({ reviewInFlight: true });
+      try {
+        const job = await this.api.enqueueRevision(run.review_run_id, { proposal_ids: proposalIds }, crypto.randomUUID());
+        this.patch({ selectedCorrectionProposalIds: new Set<string>(), activeJob: job });
+        if (job.status === "succeeded") await this.showSucceededReview(job);
+        else {
+          this.patch({ notice: "승인된 정정 제안을 반영하는 자식 심사를 요청했습니다. 완료되면 새 심사 이력으로 이동합니다." });
+          this.scheduleJobPoll(job);
+        }
+      } finally {
+        this.patch({ reviewInFlight: false });
       }
     });
   }

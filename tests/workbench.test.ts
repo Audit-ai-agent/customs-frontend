@@ -132,7 +132,7 @@ describe("commercial review workspace", () => {
     const { root, dispose } = await mount(api, AUTH, "local-development");
     expect(root.textContent).toContain("문서와 근거를 한 화면에서 검토합니다.");
     expect(root.textContent).toContain("팀 개발 환경");
-    expect(root.textContent).toContain("사람 검토");
+    expect(root.textContent).toContain("검토 중");
     expect(root.textContent).not.toContain("릴리스");
     dispose();
   });

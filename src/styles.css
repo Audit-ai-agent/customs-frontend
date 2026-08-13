@@ -102,6 +102,36 @@
 .modal-bd--block .case-create-form{display:flex;flex-direction:column;gap:12px}
 .modal-bd--block .form-grid{display:grid;grid-template-columns:1fr;gap:12px}
 
+/* ── 세율 사다리: 배지가 줄 아래로 떨어지지 않게 한 줄 고정 ──── */
+.rate{flex-wrap:nowrap}
+.rate .nm{width:140px;min-width:0}
+.rate .track{min-width:48px}
+.rate .flag{flex:none;white-space:nowrap;background:var(--krds-surface-2);color:var(--krds-muted)}
+
+/* ── KRDS 드롭다운: 기본 셀렉트를 칩 모양 + 셰브론으로 ───────── */
+select{
+  appearance:none;-webkit-appearance:none;
+  background-image:url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1.5l5 5 5-5' fill='none' stroke='%236b7684' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat:no-repeat;background-position:right .75rem center;
+  padding-right:2.2rem;cursor:pointer;
+  transition:border-color .15s,box-shadow .15s,background-color .15s;
+}
+select:hover{border-color:var(--krds-primary);background-color:var(--krds-primary-bg-soft)}
+select:focus{
+  background-image:url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1.5l5 5 5-5' fill='none' stroke='%23256ef4' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+}
+select::-ms-expand{display:none}
+
+/* ── 트레이스 실행 중 표시 ────────────────────────────────────── */
+.trace-inflight{display:flex;flex-direction:column;gap:8px}
+.trace-inflight__pulse{display:flex;align-items:center;gap:8px;font-size:13px;font-weight:700;color:var(--krds-primary-strong)}
+.trace-inflight__dot{width:9px;height:9px;border-radius:50%;background:var(--krds-primary);position:relative;flex:none}
+.trace-inflight__dot::after{content:"";position:absolute;inset:-4px;border-radius:50%;border:2px solid var(--krds-primary);
+  animation:pulse-ring 1.4s ease-out infinite}
+.trace-inflight__hint{font-size:12px;color:var(--krds-muted);line-height:1.6}
+.workflow-step--pending{opacity:.55}
+.workflow-step--pending .workflow-dot{background:var(--krds-line-3)}
+
 @keyframes card-rise{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
 @keyframes notice-in{from{opacity:0;transform:translateY(-8px)}to{opacity:1;transform:none}}
 @keyframes icon-pop{from{transform:scale(.4);opacity:0}60%{transform:scale(1.15)}to{transform:scale(1);opacity:1}}
@@ -110,7 +140,7 @@
 /* 정부 화면 요건: 모션 최소화 사용자에게는 전부 끕니다. */
 @media (prefers-reduced-motion: reduce){
   .dash-stat,.dash-flow,.dash-table-panel,.case-screen .surface,.notice,.notice::before,
-  .finding-card,.asset-row,.asset-status{animation:none}
+  .finding-card,.asset-row,.asset-status,.trace-inflight__dot::after{animation:none}
   .stagebar .stage.is-active .stage__n::after{animation:none;opacity:0}
   .new-btn::after{display:none}
   .dash-stat,.case-row,.case-row__go,.finding-card{transition:none}
