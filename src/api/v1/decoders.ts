@@ -15,9 +15,15 @@ import type {
   CorrectionProposal,
   CorrectionProposalHistoryEntry,
   DocumentAnalysis,
+  DocumentAsset,
   DocumentFact,
   DocumentLineItem,
   DocumentView,
+  ExtractionJob,
+  ExtractionJobEnvelope,
+  ExtractionPage,
+  ExtractionPreview,
+  ExtractionSpan,
   EvidenceItem,
   FactSourceReference,
   HumanProvidedSourceReference,
@@ -45,6 +51,17 @@ export class ContractError extends Error {
     this.name = "ContractError";
   }
 }
+
+const DOCUMENT_TYPE_VALUES = [
+  "CI",
+  "PL",
+  "BL",
+  "CO",
+  "AWB",
+  "EXPORT_DECLARATION",
+  "SUPPORTING_EVIDENCE",
+  "UNKNOWN",
+] as const;
 
 export interface ApiProblem {
   detail: string;
@@ -105,7 +122,7 @@ export function decodeCaseSummary(value: unknown): CaseSummary {
 
 export function decodeDocument(value: unknown): CaseDocument {
   const raw = record(value, "document");
-  const type = oneOf(raw.document_type, ["CI", "PL", "BL", "CO", "UNKNOWN"], "document.document_type");
+  const type = oneOf(raw.document_type, DOCUMENT_TYPE_VALUES, "document.document_type");
   if (raw.media_type !== "text/plain") throw new ContractError("only text/plain documents are supported");
   return {
     document_id: requiredString(raw.document_id, "document.document_id"),
@@ -524,7 +541,11 @@ function decodeDocumentAnalysis(value: unknown): DocumentAnalysis {
     document_id: requiredString(raw.document_id, "document analysis.document_id"),
     filename: requiredString(raw.filename, "document analysis.filename"),
     declared_type: raw.declared_type === null ? null : requiredString(raw.declared_type, "document analysis.declared_type"),
-    document_type: oneOf(raw.document_type, ["invoice", "packing_list", "bill_of_lading", "certificate_of_origin", "unknown"], "document analysis.document_type"),
+    document_type: oneOf(
+      raw.document_type,
+      ["invoice", "packing_list", "bill_of_lading", "certificate_of_origin", "air_waybill", "export_declaration", "supporting_evidence", "unknown"],
+      "document analysis.document_type",
+    ),
     classification_source: raw.classification_source === null ? null : decodeDocumentSource(raw.classification_source),
     extraction_status: oneOf(raw.extraction_status, ["complete", "needs_review"], "document analysis.extraction_status"),
     facts: array(raw.facts, "document analysis.facts").map(decodeFact),
@@ -722,6 +743,94 @@ function decodeAssistantCorrectionDraft(value: unknown, context: string): Assist
 
 function decodeIdentifierList(value: unknown, context: string): string[] {
   return array(value, context).map((item, index) => requiredString(item, `${context}[${index}]`));
+}
+
+/* ── binary document assets and the extraction preview boundary ── */
+
+export function decodeDocumentAsset(value: unknown): DocumentAsset {
+  const raw = record(value, "document asset");
+  return {
+    asset_id: requiredString(raw.asset_id, "document asset.asset_id"),
+    case_id: requiredString(raw.case_id, "document asset.case_id"),
+    document_type: oneOf(raw.document_type, DOCUMENT_TYPE_VALUES, "document asset.document_type"),
+    filename: requiredString(raw.filename, "document asset.filename"),
+    media_type: oneOf(raw.media_type, ["application/pdf", "image/jpeg", "image/png"], "document asset.media_type"),
+    byte_size: positiveInteger(raw.byte_size, "document asset.byte_size"),
+    page_count: nonNegativeInteger(raw.page_count, "document asset.page_count"),
+    pixel_count: nonNegativeInteger(raw.pixel_count, "document asset.pixel_count"),
+    created_by: requiredString(raw.created_by, "document asset.created_by"),
+    created_at: requiredString(raw.created_at, "document asset.created_at"),
+  };
+}
+
+function decodeExtractionSpan(value: unknown, context: string): ExtractionSpan {
+  const raw = record(value, context);
+  const bbox = raw.bbox;
+  return {
+    span_id: requiredString(raw.span_id, `${context}.span_id`),
+    ordinal: positiveInteger(raw.ordinal, `${context}.ordinal`),
+    text: displayText(raw.text, `${context}.text`),
+    ...(bbox === undefined || bbox === null
+      ? {}
+      : { bbox: decodeBoundingBox(bbox, `${context}.bbox`) }),
+    reading_order: positiveInteger(raw.reading_order, `${context}.reading_order`),
+  };
+}
+
+function decodeBoundingBox(value: unknown, context: string): Record<string, number> {
+  const raw = record(value, context);
+  const result: Record<string, number> = {};
+  for (const [key, item] of Object.entries(raw)) {
+    if (typeof item !== "number" || !Number.isFinite(item)) throw new ContractError(`${context}.${key}: number expected`);
+    result[key] = item;
+  }
+  return result;
+}
+
+function decodeExtractionPage(value: unknown, context: string): ExtractionPage {
+  const raw = record(value, context);
+  return {
+    page_number: positiveInteger(raw.page_number, `${context}.page_number`),
+    width: positiveInteger(raw.width, `${context}.width`),
+    height: positiveInteger(raw.height, `${context}.height`),
+    coordinate_unit: oneOf(raw.coordinate_unit, ["pixels", "pdf_points"], `${context}.coordinate_unit`),
+    spans: array(raw.spans, `${context}.spans`).map((item, index) => decodeExtractionSpan(item, `${context}.spans[${index}]`)),
+  };
+}
+
+function decodeExtractionPreview(value: unknown): ExtractionPreview {
+  const raw = record(value, "extraction preview");
+  const revision = optionalString(raw.extractor_revision, "extraction preview.extractor_revision");
+  return {
+    status: oneOf(raw.status, ["preview_ready", "needs_review", "unavailable"], "extraction preview.status"),
+    pages: array(raw.pages, "extraction preview.pages").map((item, index) => decodeExtractionPage(item, `extraction preview.pages[${index}]`)),
+    warnings: array(raw.warnings, "extraction preview.warnings").map((item, index) => requiredString(item, `extraction preview.warnings[${index}]`)),
+    ...(revision === undefined ? {} : { extractor_revision: revision }),
+  };
+}
+
+export function decodeExtractionJob(value: unknown): ExtractionJob {
+  const raw = record(value, "extraction job");
+  const errorCode = optionalString(raw.error_code, "extraction job.error_code");
+  return {
+    extraction_job_id: requiredString(raw.extraction_job_id, "extraction job.extraction_job_id"),
+    asset_id: requiredString(raw.asset_id, "extraction job.asset_id"),
+    case_id: requiredString(raw.case_id, "extraction job.case_id"),
+    status: oneOf(raw.status, ["queued", "preview_ready", "needs_review", "unavailable", "failed"], "extraction job.status"),
+    ...(errorCode === undefined ? {} : { error_code: errorCode }),
+    ...(raw.result === undefined || raw.result === null ? {} : { result: decodeExtractionPreview(raw.result) }),
+    created_by: requiredString(raw.created_by, "extraction job.created_by"),
+    created_at: requiredString(raw.created_at, "extraction job.created_at"),
+    updated_at: requiredString(raw.updated_at, "extraction job.updated_at"),
+  };
+}
+
+export function decodeExtractionJobEnvelope(value: unknown): ExtractionJobEnvelope {
+  const raw = record(value, "extraction job response");
+  return {
+    asset: decodeDocumentAsset(raw.asset),
+    job: decodeExtractionJob(raw.job),
+  };
 }
 
 function record(value: unknown, context: string): Record<string, unknown> {

@@ -1,0 +1,37 @@
+%PDF-1.4
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>
+endobj
+4 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>
+endobj
+5 0 obj
+<< /Length 390 >>
+stream
+BT /F1 16 Tf 72 720 Td (PACKING LIST) Tj ET
+BT /F1 11 Tf 72 690 Td (Packing No: PL-001) Tj ET
+BT /F1 11 Tf 72 668 Td (B/L No: BL-001) Tj ET
+BT /F1 11 Tf 72 646 Td (Container No: ABCD1234567) Tj ET
+BT /F1 11 Tf 72 624 Td (Total Gross Weight: 100 KG) Tj ET
+BT /F1 11 Tf 72 602 Td (Description: Frozen mackerel | HS Code: 0303540000 | Quantity: 2 PCS | Unit: PCS | Gross Weight: 100 KG) Tj ET
+endstream
+endobj
+xref
+0 6
+0000000000 65535 f 
+0000000009 00000 n 
+0000000058 00000 n 
+0000000115 00000 n 
+0000000241 00000 n 
+0000000338 00000 n 
+trailer
+<< /Size 6 /Root 1 0 R >>
+startxref
+778
+%%EOF

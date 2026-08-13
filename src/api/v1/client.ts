@@ -6,8 +6,10 @@ import {
   decodeAssistantMessageExchange,
   decodeCaseSummary,
   decodeCorrectionProposal,
+  decodeDocumentAsset,
   decodeDocumentListItem,
   decodeDocumentView,
+  decodeExtractionJobEnvelope,
   decodeJob,
   decodeProblem,
   decodeReviewerDecision,
@@ -24,13 +26,18 @@ import type {
   CaseDetail,
   CaseDocument,
   CaseSummary,
+  ConfirmExtractedTextRequest,
   CreateCaseRequest,
   CreateAssistantConversationRequest,
   CreateCorrectionProposalRequest,
   CorrectionDecisionRequest,
   CorrectionProposal,
   CreateRevisionRequest,
+  DocumentAsset,
+  DocumentAssetMediaType,
+  DocumentType,
   EnqueueReviewRequest,
+  ExtractionJobEnvelope,
   FindingDecisionRequest,
   JobRecord,
   ReviewerDecision,
@@ -44,7 +51,16 @@ import { stableApiErrorMessage, technicalApiErrorDetail } from "../user-facing-e
 
 const API_BASE = "/api/v1" as const;
 const MAX_JSON_BODY_BYTES = 4 * 1024 * 1024;
+/** The Backend's document-asset byte bound; checked client-side for a fast, clear error. */
+const MAX_ASSET_BODY_BYTES = 32 * 1024 * 1024;
 const REQUEST_TIMEOUT_MS = 30_000;
+/**
+ * Backend runs the whole AI workflow inside the request for review start,
+ * revision, and assistant replies: with the real model connected these
+ * complete in minutes, not seconds. Aborting sooner loses work the server
+ * keeps doing, so those calls get the long bound instead.
+ */
+const AI_WORKFLOW_TIMEOUT_MS = 600_000;
 
 type Decoder<T> = (value: unknown) => T;
 type AccessTokenProvider = () => string | undefined | Promise<string | undefined>;
@@ -128,6 +144,83 @@ export class ApiClient {
     });
   }
 
+  listDocumentAssets(caseId: string): Promise<DocumentAsset[]> {
+    return this.request(`/cases/${segment(caseId)}/document-assets`, { method: "GET" }, (value) => {
+      const assets = itemsFrom(value, "Document asset list").map(decodeDocumentAsset);
+      assets.forEach((item) => this.assertIdentity(item.case_id, caseId, "Document asset Case"));
+      return assets;
+    });
+  }
+
+  /** Uploads one immutable PDF/JPEG/PNG source file for the extraction preview. */
+  addDocumentAsset(
+    caseId: string,
+    input: { documentType: DocumentType; filename: string; mediaType: DocumentAssetMediaType; body: Blob },
+  ): Promise<DocumentAsset> {
+    const filename = input.filename.trim();
+    if (!filename || filename.length > 255 || /[\r\n\0]/u.test(filename)) {
+      throw new ContractError("document asset filename is invalid");
+    }
+    if (input.body.size < 1 || input.body.size > MAX_ASSET_BODY_BYTES) {
+      throw new ContractError("document asset size is outside the allowed limit");
+    }
+    const query = new URLSearchParams({ document_type: input.documentType, filename });
+    return this.request(
+      `/cases/${segment(caseId)}/document-assets?${query.toString()}`,
+      { method: "POST", headers: { "Content-Type": input.mediaType }, body: input.body },
+      (value) => {
+        const asset = decodeDocumentAsset(value);
+        this.assertIdentity(asset.case_id, caseId, "Document asset Case");
+        return asset;
+      },
+    );
+  }
+
+  startExtraction(caseId: string, assetId: string): Promise<ExtractionJobEnvelope> {
+    return this.request(
+      `/cases/${segment(caseId)}/document-assets/${segment(assetId)}/extractions`,
+      { method: "POST" },
+      (value) => {
+        const envelope = decodeExtractionJobEnvelope(value);
+        this.assertIdentity(envelope.job.case_id, caseId, "Extraction Case");
+        this.assertIdentity(envelope.job.asset_id, assetId, "Extraction asset");
+        return envelope;
+      },
+    );
+  }
+
+  getExtraction(caseId: string, assetId: string, extractionJobId: string): Promise<ExtractionJobEnvelope> {
+    return this.request(
+      `/cases/${segment(caseId)}/document-assets/${segment(assetId)}/extractions/${segment(extractionJobId)}`,
+      { method: "GET" },
+      (value) => {
+        const envelope = decodeExtractionJobEnvelope(value);
+        this.assertIdentity(envelope.job.extraction_job_id, extractionJobId, "Extraction job");
+        return envelope;
+      },
+    );
+  }
+
+  /** Human-confirmed extracted text enters the existing text-review workflow. */
+  confirmExtractedText(
+    caseId: string,
+    assetId: string,
+    payload: ConfirmExtractedTextRequest,
+  ): Promise<CaseDocument> {
+    if (!payload.content_text.trim() || payload.content_text.length > 200_000) {
+      throw new ContractError("confirmed text is invalid");
+    }
+    return this.request(
+      `/cases/${segment(caseId)}/document-assets/${segment(assetId)}/confirmed-document`,
+      this.json("POST", payload),
+      (value) => {
+        const item = decodeDocumentView(value);
+        this.assertIdentity(item.record.case_id, caseId, "Document Case");
+        return item.record;
+      },
+    );
+  }
+
   getDocumentContent(caseId: string, documentId: string): Promise<CaseDocument & { content_text: string }> {
     return this.request(
       `/cases/${segment(caseId)}/documents/${segment(documentId)}/content`,
@@ -177,11 +270,17 @@ export class ApiClient {
     const init = this.json("POST", canonicalPayload);
     const headers = new Headers(init.headers);
     headers.set("Idempotency-Key", idempotencyKey);
-    return this.request(`/cases/${segment(caseId)}/reviews`, { ...init, headers }, (value) => {
-      const job = decodeJobEnvelope(value);
-      this.assertIdentity(job.case_id, caseId, "Review Job Case");
-      return job;
-    });
+    return this.request(
+      `/cases/${segment(caseId)}/reviews`,
+      { ...init, headers },
+      (value) => {
+        const job = decodeJobEnvelope(value);
+        this.assertIdentity(job.case_id, caseId, "Review Job Case");
+        return job;
+      },
+      true,
+      AI_WORKFLOW_TIMEOUT_MS,
+    );
   }
 
   async getJob(jobId: string): Promise<JobRecord> {
@@ -279,6 +378,8 @@ export class ApiClient {
         this.assertIdentity(exchange.assistant_message.conversation_id, conversationId, "Assistant answer conversation");
         return exchange;
       },
+      true,
+      AI_WORKFLOW_TIMEOUT_MS,
     );
   }
 
@@ -352,6 +453,8 @@ export class ApiClient {
       `/review-runs/${segment(reviewRunId)}/revisions`,
       { ...init, headers },
       decodeJobEnvelope,
+      true,
+      AI_WORKFLOW_TIMEOUT_MS,
     );
   }
 
@@ -368,6 +471,7 @@ export class ApiClient {
     init: RequestInit,
     decoder: Decoder<T>,
     authenticate = true,
+    timeoutMs: number = REQUEST_TIMEOUT_MS,
   ): Promise<T> {
     const headers = new Headers(init.headers);
     headers.set("Accept", "application/json");
@@ -385,7 +489,7 @@ export class ApiClient {
         credentials: "same-origin",
         redirect: "error",
         referrerPolicy: "same-origin",
-        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+        signal: AbortSignal.timeout(timeoutMs),
       });
     } catch {
       throw new ApiError("Backend request failed before a response", 503);

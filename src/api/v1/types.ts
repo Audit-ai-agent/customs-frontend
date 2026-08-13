@@ -1,6 +1,14 @@
 /** Exact Browser projection of the compact Backend API v1 contract. */
 
-export type DocumentType = "CI" | "PL" | "BL" | "CO" | "UNKNOWN";
+export type DocumentType =
+  | "CI"
+  | "PL"
+  | "BL"
+  | "CO"
+  | "AWB"
+  | "EXPORT_DECLARATION"
+  | "SUPPORTING_EVIDENCE"
+  | "UNKNOWN";
 export type ReviewDisposition = "human_review_required" | "blocked";
 export type ExecutionStatus = "succeeded" | "partial" | "failed";
 export type Assessment = "no_issue_detected" | "issues_detected" | "indeterminate";
@@ -218,7 +226,15 @@ export interface DocumentAnalysis {
   document_id: string;
   filename: string;
   declared_type: string | null;
-  document_type: "invoice" | "packing_list" | "bill_of_lading" | "certificate_of_origin" | "unknown";
+  document_type:
+    | "invoice"
+    | "packing_list"
+    | "bill_of_lading"
+    | "certificate_of_origin"
+    | "air_waybill"
+    | "export_declaration"
+    | "supporting_evidence"
+    | "unknown";
   classification_source: SourceReference | null;
   extraction_status: "complete" | "needs_review";
   facts: DocumentFact[];
@@ -418,6 +434,75 @@ export interface JobRecord {
   created_by: string;
   created_at: string;
   updated_at: string;
+}
+
+/* ── binary document assets and the extraction preview boundary ── */
+
+export type DocumentAssetMediaType = "application/pdf" | "image/jpeg" | "image/png";
+
+/** Safe Browser projection of one immutable uploaded binary document. */
+export interface DocumentAsset {
+  asset_id: string;
+  case_id: string;
+  document_type: DocumentType;
+  filename: string;
+  media_type: DocumentAssetMediaType;
+  byte_size: number;
+  page_count: number;
+  pixel_count: number;
+  created_by: string;
+  created_at: string;
+}
+
+export type ExtractionJobStatus = "queued" | "preview_ready" | "needs_review" | "unavailable" | "failed";
+
+export interface ExtractionSpan {
+  span_id: string;
+  ordinal: number;
+  text: string;
+  /** Normalized page-relative rectangle; absent when the adapter has no geometry. */
+  bbox?: Record<string, number> | null;
+  reading_order: number;
+}
+
+export interface ExtractionPage {
+  page_number: number;
+  width: number;
+  height: number;
+  coordinate_unit: "pixels" | "pdf_points";
+  spans: ExtractionSpan[];
+}
+
+/** A human-editable extraction candidate; never a verified review fact. */
+export interface ExtractionPreview {
+  status: "preview_ready" | "needs_review" | "unavailable";
+  pages: ExtractionPage[];
+  warnings: string[];
+  extractor_revision?: string | null;
+}
+
+export interface ExtractionJob {
+  extraction_job_id: string;
+  asset_id: string;
+  case_id: string;
+  status: ExtractionJobStatus;
+  error_code?: string | null;
+  result?: ExtractionPreview | null;
+  created_by: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ExtractionJobEnvelope {
+  asset: DocumentAsset;
+  job: ExtractionJob;
+}
+
+export interface ConfirmExtractedTextRequest {
+  extraction_job_id: string;
+  content_text: string;
+  filename: string;
+  replaces_document_id?: string | null;
 }
 
 export interface CreateCaseRequest {

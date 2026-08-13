@@ -1,9 +1,62 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { act } from "react";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { LightweightWorkbench } from "../src/workbench";
+
+beforeAll(() => {
+  (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+});
 
 afterEach(() => {
   window.location.hash = "#/cases";
 });
+
+/** Lets queued work settle: hashchange, promise continuations, and the render they cause. */
+async function flush(): Promise<void> {
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+}
+
+async function click(element: Element | null | undefined): Promise<void> {
+  if (!(element instanceof HTMLElement)) throw new Error("clickable element is unavailable");
+  await act(async () => {
+    element.click();
+  });
+  await flush();
+}
+
+/**
+ * Writes through React's value tracker so a controlled input actually updates.
+ * Assigning `.value` alone is swallowed by React's change de-duplication.
+ */
+function setValue(element: HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement, value: string): void {
+  const descriptor = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(element) as object, "value");
+  descriptor?.set?.call(element, value);
+  element.dispatchEvent(new Event(element instanceof HTMLSelectElement ? "change" : "input", { bubbles: true }));
+}
+
+async function submit(form: HTMLFormElement | null | undefined): Promise<void> {
+  if (!form) throw new Error("form is unavailable");
+  await act(async () => {
+    form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+  });
+  await flush();
+}
+
+const AUTH = { logout: async () => undefined, freshAccessToken: async () => "token", isAuthenticated: () => true };
+
+const DOCUMENT = {
+  document_id: "document-1", case_id: "case-1", document_type: "CI" as const, filename: "invoice.txt",
+  media_type: "text/plain" as const, content_sha256: "a".repeat(64), byte_size: 12, character_count: 12,
+  created_by: "local-reviewer", created_at: "2026-08-05T00:00:00Z",
+};
+
+const RUN_SUMMARY = {
+  review_run_id: "run-1", case_id: "case-1", job_id: "job-1", review_as_of: "2026-08-05", trade_type: "import" as const,
+  execution_status: "succeeded" as const, assessment: "issues_detected" as const,
+  review_disposition: "human_review_required" as const, result_digest: "b".repeat(64), finding_count: 1,
+  reviewer_decision_count: 0, created_at: "2026-08-05T00:00:00Z",
+};
 
 function reviewRun() {
   return {
@@ -51,24 +104,41 @@ function reviewRun() {
   };
 }
 
+async function mount(api: unknown, auth: unknown, mode: "local-development" | "functional-uat") {
+  const root = document.createElement("div");
+  document.body.append(root);
+  const app = new LightweightWorkbench(root, api as never, auth as never, mode);
+  await act(async () => {
+    await app.start();
+  });
+  await flush();
+  return {
+    root,
+    app,
+    dispose: () => {
+      app.destroy();
+      root.remove();
+    },
+  };
+}
+
 describe("commercial review workspace", () => {
   it("renders the no-secret local-development workspace", async () => {
     window.location.hash = "#/cases";
-    const root = document.createElement("div");
-    const api = { getSession: async () => ({ subject: "local-reviewer", org_id: "local-org", roles: ["reviewer"] }), listCases: async () => ({ items: [] }) };
-    const auth = { logout: async () => undefined, freshAccessToken: async () => "token", isAuthenticated: () => true };
-    const app = new LightweightWorkbench(root, api as never, auth, "local-development");
-    await app.start();
+    const api = {
+      getSession: async () => ({ subject: "local-reviewer", org_id: "local-org", roles: ["reviewer"] }),
+      listCases: async () => ({ items: [] }),
+    };
+    const { root, dispose } = await mount(api, AUTH, "local-development");
     expect(root.textContent).toContain("문서와 근거를 한 화면에서 검토합니다.");
-    expect(root.textContent).toContain("기본 개발");
+    expect(root.textContent).toContain("팀 개발 환경");
     expect(root.textContent).toContain("사람 검토");
     expect(root.textContent).not.toContain("릴리스");
-    app.destroy();
+    dispose();
   });
 
   it("opens a synchronous completed result and exposes workflow, comparison, and reviewer action", async () => {
     window.location.hash = "#/cases/case-1/documents";
-    const root = document.createElement("div");
     const caseDetail = { case_id: "case-1", org_id: "local-org", title: "입항 서류", status: "in_review" as const, revision: 1, updated_at: "2026-08-05T00:00:00Z" };
     const job = { job_id: "job-1", case_id: "case-1", review_run_id: "run-1", status: "succeeded" as const, created_by: "local-reviewer", created_at: "2026-08-05T00:00:00Z", updated_at: "2026-08-05T00:00:00Z" };
     const run = reviewRun();
@@ -76,15 +146,17 @@ describe("commercial review workspace", () => {
       getSession: vi.fn(async () => ({ subject: "local-reviewer", org_id: "local-org", roles: ["reviewer"] })),
       listCases: vi.fn(async () => ({ items: [caseDetail] })),
       getCase: vi.fn(async () => caseDetail),
-      listDocuments: vi.fn(async () => [{ document_id: "document-1", case_id: "case-1", document_type: "CI" as const, filename: "invoice.txt", media_type: "text/plain" as const, content_sha256: "a".repeat(64), byte_size: 12, character_count: 12, created_by: "local-reviewer", created_at: "2026-08-05T00:00:00Z" }]),
-      listReviewRuns: vi.fn(async () => [{ review_run_id: "run-1", case_id: "case-1", job_id: "job-1", review_as_of: "2026-08-05", trade_type: "import" as const, execution_status: "succeeded" as const, assessment: "issues_detected" as const, review_disposition: "human_review_required" as const, result_digest: "b".repeat(64), finding_count: 1, reviewer_decision_count: 0, created_at: "2026-08-05T00:00:00Z" }]),
-      enqueueReview: vi.fn(async () => job), getReviewRun: vi.fn(async () => run),
+      listDocuments: vi.fn(async () => [DOCUMENT]),
+      listDocumentAssets: vi.fn(async () => []),
+      listReviewRuns: vi.fn(async () => [RUN_SUMMARY]),
+      enqueueReview: vi.fn(async () => job),
+      getReviewRun: vi.fn(async () => run),
       getJob: vi.fn(async () => { throw new Error("a synchronously completed Job must not be polled"); }),
     };
-    const auth = { logout: async () => undefined, freshAccessToken: async () => "token", isAuthenticated: () => true };
-    const app = new LightweightWorkbench(root, api as never, auth, "functional-uat");
-    await app.start();
-    await (app as unknown as { startReview(): Promise<void> }).startReview();
+    const { root, dispose } = await mount(api, AUTH, "functional-uat");
+
+    await click(root.querySelector(".case-actions .btn.primary"));
+
     expect(api.getJob).not.toHaveBeenCalled();
     expect(api.getReviewRun).toHaveBeenCalledWith("run-1");
     expect(root.textContent).toContain("처리 과정과 실행 상태");
@@ -92,19 +164,18 @@ describe("commercial review workspace", () => {
     expect(root.textContent).toContain("담당자 판단 기록");
     expect(root.querySelectorAll("[data-report-section]")).toHaveLength(8);
     expect(root.querySelector("[data-planner-trace]")?.textContent).toContain("제한형 계획");
+    expect(root.textContent).toContain("심사가 완료되었습니다");
+
     const comparisonCitation = Array.from(root.querySelectorAll<HTMLButtonElement>('[data-report-claim-id="claim-3"] .citation-chip'))
       .find((item) => item.textContent?.includes("문서 비교"));
     expect(comparisonCitation).toBeDefined();
-    comparisonCitation?.click();
-    await (app as unknown as { followRoute(): Promise<void> }).followRoute();
+    await click(comparisonCitation);
     expect(root.querySelector('[data-comparison-id="comparison-1"]')?.classList.contains("is-focused")).toBe(true);
-    expect(root.textContent).toContain("심사가 완료되었습니다");
-    app.destroy();
+    dispose();
   });
 
   it("opens the assistant route, preserves conversation history, sends a question, and follows evidence citations", async () => {
     window.location.hash = "#/cases/case-1/assistant";
-    const root = document.createElement("div");
     const caseDetail = { case_id: "case-1", org_id: "local-org", title: "입항 서류", status: "in_review" as const, revision: 1, updated_at: "2026-08-05T00:00:00Z" };
     const conversation = { conversation_id: "conversation-1", review_run_id: "run-1", title: "수량 검토", created_by: "local-reviewer", created_at: "2026-08-05T00:00:00Z", updated_at: "2026-08-05T00:00:00Z" };
     const userMessage = { message_id: "message-user-1", conversation_id: "conversation-1", role: "user" as const, content: "수량을 확인해 줘", citations: [], suggested_questions: [], created_by: "local-reviewer", created_at: "2026-08-05T00:00:00Z" };
@@ -114,31 +185,41 @@ describe("commercial review workspace", () => {
       getSession: vi.fn(async () => ({ subject: "local-reviewer", org_id: "local-org", roles: ["reviewer"] })),
       listCases: vi.fn(async () => ({ items: [caseDetail] })),
       getCase: vi.fn(async () => caseDetail),
-      listDocuments: vi.fn(async () => [{ document_id: "document-1", case_id: "case-1", document_type: "CI" as const, filename: "invoice.txt", media_type: "text/plain" as const, content_sha256: "a".repeat(64), byte_size: 12, character_count: 12, created_by: "local-reviewer", created_at: "2026-08-05T00:00:00Z" }]),
-      listReviewRuns: vi.fn(async () => [{ review_run_id: "run-1", case_id: "case-1", job_id: "job-1", review_as_of: "2026-08-05", trade_type: "import" as const, execution_status: "succeeded" as const, assessment: "issues_detected" as const, review_disposition: "human_review_required" as const, result_digest: "b".repeat(64), finding_count: 1, reviewer_decision_count: 0, created_at: "2026-08-05T00:00:00Z" }]),
+      listDocuments: vi.fn(async () => [DOCUMENT]),
+      listDocumentAssets: vi.fn(async () => []),
+      listReviewRuns: vi.fn(async () => [RUN_SUMMARY]),
       getReviewRun: vi.fn(async () => run),
       listAssistantConversations: vi.fn(async () => [conversation]),
       listAssistantMessages: vi.fn(async () => [userMessage, assistantMessage]),
-      sendAssistantMessage: vi.fn(async () => ({ user_message: { ...userMessage, message_id: "message-user-2", content: "근거를 열어 줘", created_at: "2026-08-05T00:01:00Z" }, assistant_message: { ...assistantMessage, message_id: "message-assistant-2", content: "Evidence를 열었습니다.", created_at: "2026-08-05T00:01:01Z" } })),
+      sendAssistantMessage: vi.fn(async () => ({
+        user_message: { ...userMessage, message_id: "message-user-2", content: "근거를 열어 줘", created_at: "2026-08-05T00:01:00Z" },
+        assistant_message: { ...assistantMessage, message_id: "message-assistant-2", content: "Evidence를 열었습니다.", created_at: "2026-08-05T00:01:01Z" },
+      })),
       createAssistantConversation: vi.fn(async () => conversation),
     };
-    const auth = { logout: async () => undefined, freshAccessToken: async () => "token", isAuthenticated: () => true };
-    const app = new LightweightWorkbench(root, api as never, auth, "local-development");
-    await app.start();
+    const { root, dispose } = await mount(api, AUTH, "local-development");
+
     expect(root.textContent).toContain("AI 도우미");
     expect(root.textContent).toContain("문서 간 비교 결과를 확인하십시오.");
-    await (app as unknown as { sendAssistantMessage(value: string): Promise<void> }).sendAssistantMessage("근거를 열어 줘");
+
+    const composer = root.querySelector<HTMLTextAreaElement>('textarea[name="assistant_message"]');
+    if (!composer) throw new Error("assistant composer is unavailable");
+    setValue(composer, "근거를 열어 줘");
+    await submit(root.querySelector<HTMLFormElement>(".assistant-composer"));
+
     expect(api.sendAssistantMessage).toHaveBeenCalled();
     expect(root.textContent).toContain("Evidence를 열었습니다.");
-    await (app as unknown as { openAssistantCitation(value: { kind: "evidence"; reference_id: string }): Promise<void> }).openAssistantCitation({ kind: "evidence", reference_id: "evidence-1" });
+
+    const evidenceCitation = Array.from(root.querySelectorAll<HTMLButtonElement>(".assistant-citations .citation-chip"))
+      .find((item) => item.textContent?.includes("Evidence"));
+    await click(evidenceCitation);
     // Evidence lives inside the "통관 심사" stage now; the flow follows the mockup's stage bar.
     expect(window.location.hash).toBe("#/cases/case-1/review");
-    app.destroy();
+    dispose();
   });
 
   it("switches the local session to an independent approver and preserves correction child-run history", async () => {
     window.location.hash = "#/cases/case-1/history";
-    const root = document.createElement("div");
     const caseDetail = { case_id: "case-1", org_id: "local-org", title: "입항 서류", status: "in_review" as const, revision: 1, updated_at: "2026-08-05T00:00:00Z" };
     const parentRun = reviewRun();
     const parentAnalysis = parentRun.document_analyses[0];
@@ -158,8 +239,7 @@ describe("commercial review workspace", () => {
         }],
       }],
     };
-    const parentSummary = { review_run_id: "run-1", case_id: "case-1", job_id: "job-1", review_as_of: "2026-08-05", trade_type: "import" as const, execution_status: "succeeded" as const, assessment: "issues_detected" as const, review_disposition: "human_review_required" as const, result_digest: "b".repeat(64), finding_count: 1, reviewer_decision_count: 0, created_at: "2026-08-05T00:00:00Z" };
-    const childSummary = { ...parentSummary, review_run_id: "run-child-1", job_id: "job-child-1", parent_review_run_id: "run-1", applied_correction_proposal_ids: ["proposal-1"], created_at: "2026-08-05T00:03:00Z" };
+    const childSummary = { ...RUN_SUMMARY, review_run_id: "run-child-1", job_id: "job-child-1", parent_review_run_id: "run-1", applied_correction_proposal_ids: ["proposal-1"], created_at: "2026-08-05T00:03:00Z" };
     let actor: "reviewer" | "approver" = "reviewer";
     let approved = false;
     const proposal = {
@@ -167,67 +247,67 @@ describe("commercial review workspace", () => {
       field_name: "quantity", new_value: "12", unit: "EA", reason: "Packing List 원문 확인", status: "proposed" as const,
       created_by: "local-reviewer", created_at: "2026-08-05T00:02:00Z", history: [{ event: "proposed" as const, reason: "Packing List 원문 확인", actor: "local-reviewer", occurred_at: "2026-08-05T00:02:00Z" }],
     };
+    const approvedProposal = {
+      ...proposal, status: "approved" as const,
+      decision: { status: "approved" as const, reason: "독립 검토 완료", decided_by: "local-approver", decided_at: "2026-08-05T00:02:30Z" },
+      history: [...proposal.history, { event: "approved" as const, reason: "독립 검토 완료", actor: "local-approver", occurred_at: "2026-08-05T00:02:30Z" }],
+    };
     const api = {
       getSession: vi.fn(async () => ({ subject: actor === "approver" ? "local-approver" : "local-reviewer", org_id: "local-org", roles: [actor] })),
       listCases: vi.fn(async () => ({ items: [caseDetail] })),
       getCase: vi.fn(async () => caseDetail),
-      listDocuments: vi.fn(async () => [{ document_id: "document-1", case_id: "case-1", document_type: "CI" as const, filename: "invoice.txt", media_type: "text/plain" as const, content_sha256: "a".repeat(64), byte_size: 12, character_count: 12, created_by: "local-reviewer", created_at: "2026-08-05T00:00:00Z" }]),
-      listReviewRuns: vi.fn(async () => approved ? [childSummary, parentSummary] : [parentSummary]),
-      getReviewRun: vi.fn(async (runId: string) => runId === "run-child-1" ? childRun : parentRun),
-      listCorrectionProposals: vi.fn(async () => [approved ? {
-        ...proposal, status: "approved" as const, decision: { status: "approved" as const, reason: "독립 검토 완료", decided_by: "local-approver", decided_at: "2026-08-05T00:02:30Z" },
-        history: [...proposal.history, { event: "approved" as const, reason: "독립 검토 완료", actor: "local-approver", occurred_at: "2026-08-05T00:02:30Z" }],
-      } : proposal]),
+      listDocuments: vi.fn(async () => [DOCUMENT]),
+      listDocumentAssets: vi.fn(async () => []),
+      listReviewRuns: vi.fn(async () => (approved ? [childSummary, RUN_SUMMARY] : [RUN_SUMMARY])),
+      getReviewRun: vi.fn(async (runId: string) => (runId === "run-child-1" ? childRun : parentRun)),
+      listCorrectionProposals: vi.fn(async () => [approved ? approvedProposal : proposal]),
       decideCorrectionProposal: vi.fn(async () => {
         approved = true;
-        return {
-          ...proposal, status: "approved" as const, decision: { status: "approved" as const, reason: "독립 검토 완료", decided_by: "local-approver", decided_at: "2026-08-05T00:02:30Z" },
-          history: [...proposal.history, { event: "approved" as const, reason: "독립 검토 완료", actor: "local-approver", occurred_at: "2026-08-05T00:02:30Z" }],
-        };
+        return approvedProposal;
       }),
       enqueueRevision: vi.fn(async () => ({ job_id: "job-child-1", case_id: "case-1", review_run_id: "run-child-1", status: "succeeded" as const, created_by: "local-approver", created_at: "2026-08-05T00:03:00Z", updated_at: "2026-08-05T00:03:00Z" })),
     };
-    const auth = {
-      logout: async () => undefined,
-      freshAccessToken: async () => "token",
-      isAuthenticated: () => true,
-      switchActor: vi.fn(async (next: "reviewer" | "approver") => { actor = next; }),
-    };
-    const app = new LightweightWorkbench(root, api as never, auth, "local-development");
-    await app.start();
+    const auth = { ...AUTH, switchActor: vi.fn(async (next: "reviewer" | "approver") => { actor = next; }) };
+    const { root, dispose } = await mount(api, auth, "local-development");
+
     expect(root.textContent).toContain("제안자는 자신의 제안을 승인하거나 반려할 수 없습니다.");
     expect(root.querySelector(".correction-decision-form")).toBeNull();
 
-    await (app as unknown as { switchDevelopmentActor(value: "approver"): Promise<void> }).switchDevelopmentActor("approver");
-    await (app as unknown as { ensureCorrectionProposalsLoaded(): Promise<void> }).ensureCorrectionProposalsLoaded();
+    const approverChip = Array.from(root.querySelectorAll<HTMLButtonElement>(".local-role-switch .g-chip"))
+      .find((item) => item.textContent === "승인자");
+    await click(approverChip);
     expect(auth.switchActor).toHaveBeenCalledWith("approver");
     expect(root.textContent).toContain("local-approver");
-    expect(root.querySelector(".correction-decision-form")).not.toBeNull();
 
     const decisionForm = root.querySelector<HTMLFormElement>(".correction-decision-form");
     expect(decisionForm).not.toBeNull();
     const decisionSelect = decisionForm?.querySelector<HTMLSelectElement>('select[name="status"]');
     const decisionReason = decisionForm?.querySelector<HTMLTextAreaElement>('textarea[name="reason"]');
     if (!decisionForm || !decisionSelect || !decisionReason) throw new Error("approval form is unavailable");
-    decisionSelect.value = "approved";
-    decisionReason.value = "독립 검토 완료";
-    await (app as unknown as { decideCorrectionProposal(value: typeof proposal, form: HTMLFormElement): Promise<void> }).decideCorrectionProposal(proposal, decisionForm);
+    setValue(decisionSelect, "approved");
+    setValue(decisionReason, "독립 검토 완료");
+    await submit(decisionForm);
+    expect(api.decideCorrectionProposal).toHaveBeenCalled();
 
-    await expect((app as unknown as { startRevision(): Promise<void> }).startRevision()).rejects.toThrow("한 건 이상 선택");
+    // Revising without picking an approved proposal is refused, and says so on screen.
+    const reviseButton = Array.from(root.querySelectorAll<HTMLButtonElement>(".history-next .btn.primary"))
+      .find((item) => item.textContent?.includes("재심사"));
+    expect(reviseButton?.disabled).toBe(true);
     expect(api.enqueueRevision).not.toHaveBeenCalled();
-    const revisionCheckbox = root.querySelector<HTMLInputElement>('[data-correction-proposal-id="proposal-1"]');
-    if (!revisionCheckbox) throw new Error("approved correction selection is unavailable");
-    revisionCheckbox.checked = true;
-    revisionCheckbox.dispatchEvent(new Event("change", { bubbles: true }));
-    await (app as unknown as { startRevision(): Promise<void> }).startRevision();
+
+    await click(root.querySelector('[data-correction-proposal-id="proposal-1"]'));
+    await click(Array.from(root.querySelectorAll<HTMLButtonElement>(".history-next .btn.primary"))
+      .find((item) => item.textContent?.includes("재심사")));
 
     expect(api.enqueueRevision).toHaveBeenCalledWith("run-1", { proposal_ids: ["proposal-1"] }, expect.any(String));
+
     window.location.hash = "#/cases/case-1/history";
-    await (app as unknown as { followRoute(): Promise<void> }).followRoute();
+    await flush();
     expect(root.textContent).toContain("정정 반영 자식 실행");
+
     window.location.hash = "#/cases/case-1/analysis";
-    await (app as unknown as { followRoute(): Promise<void> }).followRoute();
+    await flush();
     expect(root.textContent).toContain("사람 제공 값");
-    app.destroy();
+    dispose();
   });
 });

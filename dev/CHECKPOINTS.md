@@ -165,12 +165,46 @@ Backend에 없는 기능은 `customs-backend/docs/FRONTEND_UX_BACKEND_GAP.ko.md`
 
 ---
 
+## CP7 — React + KRDS 전환 · functional-UAT 실연결
+
+**한 일**
+
+- **React 19 전환** — "React 금지" lint 계약을 사용자 승인 하에 교체하고
+  `src/workbench.ts`(vanilla)를 `src/workbench.tsx` + `src/ui/*` 컴포넌트로 재작성.
+  KRDS 시각언어는 `src/krds.css`, 모션은 `src/motion.css`로 분리.
+- **functional-UAT 실연결 완료** — dev-fixture가 아닌 실제 스택으로 전체 여정이 돕니다:
+  - 65법령 baseline 빌드 완주 (법령 65 · 조문 5,889 · CCCT 요건 14,726 · Qdrant 5,889 포인트),
+    `verify-store` 통과. 전환 스크립트는 `_local\start-functional-uat.ps1`.
+  - 전환 스크립트 결함 2건 수정: Agent 프로필명이 잘못돼(`functional-uat` →
+    `functional-uat-law-history`) Agent가 즉사하던 것, 숨김 창에서 `python -c` 인용부호가
+    깨져 Backend가 안 뜨던 것(`_local\run-backend.py` 런처로 대체).
+- **CSP 수정** — functional-uat 모드에서 Keycloak(127.0.0.1:18088) 토큰 교환이
+  `connect-src 'self'`에 막혀 로그인 후 부팅이 실패했습니다. `index.html`에
+  `__CUSTOMS_AUTH_CONNECT_SOURCE__` 자리를 만들고 vite가 모드별로 치환합니다.
+  local-development는 여전히 same-origin만 허용.
+- **AI 워크플로 타임아웃 수정** — Backend가 심사 시작·재심사·AI 도우미 응답을
+  요청 안에서 동기로 처리하는데(실 Claude 연결 시 수 분), 클라이언트 30초 타임아웃이
+  요청을 중단시켜 "서비스가 준비되지 않았습니다"로 오인 표시됐습니다.
+  이 세 호출만 10분 한도로 분리(`AI_WORKFLOW_TIMEOUT_MS`).
+
+**E2E 스모크 (실제 스택, 전부 통과)**
+
+Keycloak 로그인(`local-functional-reviewer`) → Case 생성 → `commercial-invoice.pdf`
+업로드 → pypdf 자동 추출 → 검수·확정 → **실 Claude 심사** → 판정 "검토 필요" +
+HSK 0303540000 실제 CCCT 요건("수입식품등 수입신고확인증" · 식약처) + 법령 Evidence
+11건(관세법 제226조 등, law.go.kr 실출처 링크).
+
+**검증** — lint · typecheck · 테스트 12건 · production build 통과.
+
+---
+
 ## 남은 것 (제가 손대지 않은 부분)
 
 - **Backend 공백 8건** — `customs-backend/docs/FRONTEND_UX_BACKEND_GAP.ko.md`.
   특히 목업 4단계(관세 진단)는 계약이 통째로 없어 화면을 비워 뒀습니다.
-- **두 저장소 API v1 세대 불일치** — 로컬 `customs-backend`(HEAD `6c71aa6`)에는
-  `POST /api/v1/dev/session`과 AI 도우미·정정 제안 계열이 없습니다. 그래서 실제 Backend를
-  띄워도 이 Frontend는 붙지 않습니다. 위 문서 부록에 재현 방법을 적어 뒀습니다.
+- ~~두 저장소 API v1 세대 불일치~~ — **CP7에서 해소.** Backend가 `bd0b893`으로 올라오고
+  계약(`contracts/backend-openapi-v1.json`)을 재동기화해 실제 Backend에 붙습니다.
+  단, customs-backend·customs-ai-agent에 **커밋 안 된 로컬 패치**가 있습니다
+  (`dev/demo-video-runbook.md` 상단 "이 PC에 적용된 우회·패치" 참조 — PR로 올릴 것).
 - **로그인 화면** — 목업 FRAME 00에 해당하지만 이 앱은 OIDC/개발 세션이 처리하므로
   만들지 않았습니다.

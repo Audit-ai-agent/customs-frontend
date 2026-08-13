@@ -8,11 +8,14 @@ const source = new URL("../src/", import.meta.url);
 const files = await walk(source);
 const violations = [];
 
-for (const file of files.filter((name) => [".ts", ".css"].includes(extname(name)))) {
+for (const file of files.filter((name) => [".ts", ".tsx", ".css"].includes(extname(name)))) {
   const content = await readFile(file, "utf8");
   const label = relative(rootPath, file).replaceAll("\\", "/");
   for (const [pattern, reason] of [
     [/\.innerHTML\s*=/u, "unsafe innerHTML assignment"],
+    // ADR-0002 bans rendering HTML strings. In JSX that hazard is spelled
+    // dangerouslySetInnerHTML, which the assignment pattern above cannot see.
+    [/dangerouslySetInnerHTML/u, "unsafe HTML string rendering"],
     [/\blocalStorage\b/u, "persistent browser storage"],
     [/["'\x60]\/(?:internal\/agent|internal\/rag|evidence)(?:\/|["'\x60])/iu, "direct Agent/Data API reference"],
     [/(?:qdrant|neo4j|postgres(?:ql)?):\/\//iu, "direct data-store connection"],
@@ -35,7 +38,11 @@ if (apiClient.includes("/api/v2") || !apiClient.includes('const API_BASE = "/api
 }
 
 const packageJson = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
-for (const forbidden of ["react", "react-dom", "react-router", "@playwright/test", "@vitejs/plugin-react"]) {
+// react and react-dom are the view layer as of ADR-0007. react-router stays out: its
+// 7.18.1 RSC action CSRF advisory is what ADR-0006 tripped over, and the hash routing in
+// workbench covers what this workbench needs. @vitejs/plugin-react stays out too, since
+// esbuild's automatic JSX runtime builds the same output without the extra dependency.
+for (const forbidden of ["react-router", "@playwright/test", "@vitejs/plugin-react"]) {
   if (packageJson.dependencies?.[forbidden] || packageJson.devDependencies?.[forbidden]) {
     violations.push("unused dependency remains: " + forbidden);
   }
