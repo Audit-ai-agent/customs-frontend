@@ -289,6 +289,21 @@ FTA 힌트) → 관세 진단(기본세율 10% 현재 적용, FTA 0% 요건 미�
 
 ---
 
+## CP10 — 법령 검색 확장 · AI 관련성 필터 · 실시간 트레이스 (Agent 승인 하 수정)
+
+- **top_k 10 → 30** (`customs-ai-agent/profiles.py`) — 검색 재현율 확대.
+- **AI 관련성 필터** — functional-uat에서 Claude 1회 호출로 검색 결과 중 이 사건 판단에
+  필요한 법령만 선별. 요건 evidence(eligibility=finding)는 절대 제외하지 않고,
+  필터 실패는 전체 유지(fail-open). 실측: 동일 Case에서 evidence 11건 → **7건**.
+- **실시간 트레이스** — Agent가 동기 심사 중 스레드 안전 진행 레지스트리에 단계 전이를
+  기록하고 `GET /internal/agent/v3/reviews/{id}/progress`로 노출. Backend가
+  `GET /api/v1/cases/{id}/review-progress`로 프록시(3초 타임아웃·실패 시 무해 강등),
+  프런트가 실행 중 2초 간격 폴링으로 우측 레일에 단계별 대기/진행 중(펄스)/완료를 표시.
+  실측: 실행 37초 시점에 단계 완료가 실시간 반영. 진행 상태는 심사 결과에 절대 개입하지 않음.
+- Agent 커밋 2건(기존 pypdf adapter 분리 + 본 기능), Agent 291 · Backend 289 · Frontend 13 테스트 통과.
+
+---
+
 ## 남은 것 (제가 손대지 않은 부분)
 
 - **Backend 공백 8건** — `customs-backend/docs/FRONTEND_UX_BACKEND_GAP.ko.md`.
