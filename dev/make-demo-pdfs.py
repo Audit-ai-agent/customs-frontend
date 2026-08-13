@@ -84,6 +84,8 @@ DOCUMENTS: dict[str, list[str]] = {
         "Description: Frozen mackerel | HS Code: 0303540000 | Quantity: 2 PCS | "
         "Unit: PCS | Gross Weight: 100 KG",
     ],
+    # The planted contamination: origin CN against the invoice's KR, so the
+    # origin verification card reports a field-level mismatch.
     "certificate-of-origin.pdf": [
         "CERTIFICATE OF ORIGIN",
         "Certificate No: COO-001",
@@ -95,6 +97,39 @@ DOCUMENTS: dict[str, list[str]] = {
         "B/L No: BL-002",
         "Container No: EFGH7654321",
         "Gross Weight: 120 KG",
+    ],
+    # ── CO variants for the origin-verification / duty features ─────
+    # Matches the default invoice (KR): verification says 일치, but KR is in
+    # no FTA agreement, so the duty ladder keeps the basic rate.
+    "co-kr-match.pdf": [
+        "CERTIFICATE OF ORIGIN",
+        "Certificate No: COO-002",
+        "Origin Country: KR",
+        "HS Code: 0303540000",
+    ],
+    # Missing certificate number and HS code: extraction succeeds but the
+    # verification card reports 값 없음 rows and needs_review overall.
+    "co-incomplete.pdf": [
+        "CERTIFICATE OF ORIGIN",
+        "Origin Country: KR",
+        "Issued by: Chamber of Commerce",
+    ],
+    # FTA pair: upload this CO together with commercial-invoice-vn.pdf
+    # (instead of the KR invoice) and the KR-VN FTA rate applies — the duty
+    # screen shows the 0% ladder rung satisfied and the savings amount.
+    "co-vn-match.pdf": [
+        "CERTIFICATE OF ORIGIN",
+        "Certificate No: KV-2026-0001",
+        "Origin Country: VN",
+        "HS Code: 0303540000",
+    ],
+    "commercial-invoice-vn.pdf": [
+        "COMMERCIAL INVOICE",
+        "Invoice No: INV-002",
+        "Total Amount: USD 30",
+        "Country of Origin: VN",
+        "Description: Frozen mackerel | HS Code: 0303540000 | Quantity: 3 PCS | "
+        "Unit: PCS | Unit Price: USD 10 | Amount: USD 30",
     ],
 }
 

@@ -91,9 +91,19 @@ uv run --locked --no-sync --group dev python tools/run_dev_fixture_scenarios.py 
 
 ### 3-B. 대표 여정 — 파일 업로드부터 심사까지 (핵심 데모)
 
-시연용 PDF 4종이 `dev/demo-files/`에 있다 (없으면 `python dev/make-demo-pdfs.py`):
+시연용 PDF 8종이 `dev/demo-files/`에 있다 (없으면 `python dev/make-demo-pdfs.py`).
+
+기본 4종 — 총중량·수량·원산지·컨테이너 불일치가 심어져 있어 심사에서 진짜 finding이 나온다:
 `commercial-invoice.pdf` `packing-list.pdf` `certificate-of-origin.pdf` `bill-of-lading.pdf`
-— 총중량·수량·원산지·컨테이너 불일치가 심어져 있어 심사에서 진짜 finding이 나온다.
+
+CO 변형 4종 — 원산지 검증·관세 진단 기능을 각각 자극한다:
+
+| 파일 | 조합 | 화면에서 보이는 것 |
+| --- | --- | --- |
+| `certificate-of-origin.pdf` | 기본 CI(KR)와 함께 | 원산지 **불일치**(CO는 CN) — 오염 데이터 검출 |
+| `co-kr-match.pdf` | 기본 CI(KR)와 함께 | 원산지 **일치**, FTA 대상국 아님 → 기본세율 유지 |
+| `co-incomplete.pdf` | 아무 CI와 함께 | 증명서 번호·HS 코드 없음 → **검수 필요** 행 |
+| `co-vn-match.pdf` + `commercial-invoice-vn.pdf` | 둘을 같이 (KR 송장 대신) | 원산지 일치 + **한-베트남 FTA 0% 적용** → 관세 진단에 절감액 표시 |
 
 1. "＋ 새 Case 등록" → 제목 `8월 냉동새우 수입 신고 검토`, 참조번호 자유.
 2. 1단계 **원본 파일 업로드 · 자동 추출** 패널에서:
