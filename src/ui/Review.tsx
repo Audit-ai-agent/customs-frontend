@@ -497,37 +497,70 @@ function EvidenceList({ run }: { run: ReviewRun }) {
   const state = useWorkbenchState();
   const containerRef = useRef<HTMLDivElement>(null);
   const focusId = state.evidenceFocusId;
+  const [referenceOpen, setReferenceOpen] = useState(false);
+
+  // Judgement-relevant first: anything a finding cites, plus the per-HSK
+  // requirement rows. The rest are retrieval context, folded by default so
+  // the reviewer is not asked to read every search hit.
+  const primary = run.evidence.filter(
+    (item) =>
+      item.source_type === "customs_requirement" ||
+      run.findings.some((finding) => finding.evidence_ids.includes(item.evidence_id)),
+  );
+  const reference = run.evidence.filter((item) => !primary.includes(item));
+  const referenceHasFocus = focusId !== null && reference.some((item) => item.evidence_id === focusId);
+
+  useEffect(() => {
+    if (referenceHasFocus) setReferenceOpen(true);
+  }, [referenceHasFocus]);
 
   useEffect(() => {
     if (focusId) focusDataTarget(containerRef.current, "data-evidence-id", focusId);
-  }, [focusId]);
+  }, [focusId, referenceOpen]);
 
   if (!run.evidence.length) {
     return <EmptyCopy>현재 문서와 품목 기준으로 반환된 법령 근거가 없습니다.</EmptyCopy>;
   }
+
+  const card = (item: (typeof run.evidence)[number]) => {
+    const linked = run.findings.filter((finding) => finding.evidence_ids.includes(item.evidence_id));
+    return (
+      <article
+        key={item.evidence_id}
+        data-evidence-id={item.evidence_id}
+        className={`evidence-card${focusId === item.evidence_id ? " is-focused" : ""}`}
+      >
+        <header>
+          <span className="evidence-type">{item.source_type}</span>
+          <h3>{item.title}</h3>
+        </header>
+        {item.law_name ? <p className="evidence-law">{item.law_name}</p> : null}
+        <p>{item.text}</p>
+        <div className="evidence-footer">
+          <span>연결된 확인 사항 {linked.length}건</span>
+          <ExternalSourceLink uri={item.source_uri} />
+        </div>
+      </article>
+    );
+  };
+
+  // Never fold everything: with no finding-linked rows the full list stays out.
+  if (!primary.length || !reference.length) {
+    return <div className="evidence-list" ref={containerRef}>{run.evidence.map(card)}</div>;
+  }
   return (
     <div className="evidence-list" ref={containerRef}>
-      {run.evidence.map((item) => {
-        const linked = run.findings.filter((finding) => finding.evidence_ids.includes(item.evidence_id));
-        return (
-          <article
-            key={item.evidence_id}
-            data-evidence-id={item.evidence_id}
-            className={`evidence-card${focusId === item.evidence_id ? " is-focused" : ""}`}
-          >
-            <header>
-              <span className="evidence-type">{item.source_type}</span>
-              <h3>{item.title}</h3>
-            </header>
-            {item.law_name ? <p className="evidence-law">{item.law_name}</p> : null}
-            <p>{item.text}</p>
-            <div className="evidence-footer">
-              <span>연결된 확인 사항 {linked.length}건</span>
-              <ExternalSourceLink uri={item.source_uri} />
-            </div>
-          </article>
-        );
-      })}
+      {primary.map(card)}
+      <details
+        className="evidence-reference"
+        open={referenceOpen}
+        onToggle={(event) => setReferenceOpen(event.currentTarget.open)}
+      >
+        <summary>
+          {`참고 법령 근거 ${reference.length}건 — 확인 사항과 직접 연결되지 않은 검색 결과`}
+        </summary>
+        <div className="evidence-list evidence-list--reference">{reference.map(card)}</div>
+      </details>
     </div>
   );
 }

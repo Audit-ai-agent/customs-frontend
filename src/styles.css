@@ -122,6 +122,12 @@ select:focus{
 }
 select::-ms-expand{display:none}
 
+/* ── 법령 Evidence: 참고 근거 접기 ────────────────────────────── */
+.evidence-reference{border:1px dashed var(--krds-line-2);border-radius:var(--r-sm);padding:10px 14px;background:var(--krds-surface-2)}
+.evidence-reference summary{font-size:12.5px;font-weight:700;color:var(--krds-muted);cursor:pointer}
+.evidence-reference[open] summary{margin-bottom:10px;color:var(--krds-text)}
+.evidence-list--reference{display:flex;flex-direction:column;gap:10px}
+
 /* ── 트레이스 실행 중 표시 ────────────────────────────────────── */
 .trace-inflight{display:flex;flex-direction:column;gap:8px}
 .trace-inflight__pulse{display:flex;align-items:center;gap:8px;font-size:13px;font-weight:700;color:var(--krds-primary-strong)}
