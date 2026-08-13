@@ -177,24 +177,41 @@ function CaseTable() {
         <span aria-hidden="true" />
       </div>
       {rows.map((item) => (
-        <button
-          key={item.case_id}
-          className="case-row"
-          type="button"
-          role="row"
-          disabled={state.busy}
-          onClick={() => void store.openCase(item.case_id)}
-        >
-          <span className="case-row__ref mono">{item.external_reference ?? item.case_id}</span>
-          <span className="case-row__title">{item.title}</span>
-          <span>
-            <span className={`status-badge status-badge--${item.status}`}>{display(item.status)}</span>
-          </span>
-          <span className="case-row__date">{formatDate(item.updated_at)}</span>
-          <span className="case-row__go" aria-hidden="true">
-            ›
-          </span>
-        </button>
+        <div className="case-row-wrap" key={item.case_id}>
+          <button
+            className="case-row"
+            type="button"
+            role="row"
+            disabled={state.busy}
+            onClick={() => void store.openCase(item.case_id)}
+          >
+            <span className="case-row__ref mono">{item.external_reference ?? item.case_id}</span>
+            <span className="case-row__title">{item.title}</span>
+            <span>
+              <span className={`status-badge status-badge--${item.status}`}>{display(item.status)}</span>
+            </span>
+            <span className="case-row__date">{formatDate(item.updated_at)}</span>
+            <span className="case-row__go" aria-hidden="true">
+              ›
+            </span>
+          </button>
+          {store.hasRole("reviewer") ? (
+            <button
+              className="case-row__delete"
+              type="button"
+              title="Case 삭제"
+              aria-label={`${item.title} 삭제`}
+              disabled={state.busy}
+              onClick={() => {
+                if (window.confirm(`"${item.title}" Case를 삭제할까요?\n문서·업로드 파일·심사 기록이 함께 삭제되며 되돌릴 수 없습니다.`)) {
+                  void store.deleteCase(item.case_id);
+                }
+              }}
+            >
+              🗑
+            </button>
+          ) : null}
+        </div>
       ))}
       {rows.length === 0 ? (
         <EmptyCopy>

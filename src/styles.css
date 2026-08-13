@@ -128,6 +128,15 @@ select::-ms-expand{display:none}
 .evidence-reference[open] summary{margin-bottom:10px;color:var(--krds-text)}
 .evidence-list--reference{display:flex;flex-direction:column;gap:10px}
 
+/* ── Case 행 삭제 버튼 ────────────────────────────────────────── */
+.case-row-wrap{position:relative}
+.case-row-wrap .case-row{width:100%}
+.case-row__delete{position:absolute;right:44px;top:50%;transform:translateY(-50%);
+  border:1px solid transparent;background:transparent;border-radius:var(--r-sm);
+  padding:6px 8px;cursor:pointer;font-size:14px;opacity:0;transition:opacity .15s,border-color .15s}
+.case-row-wrap:hover .case-row__delete,.case-row__delete:focus-visible{opacity:1}
+.case-row__delete:hover{border-color:var(--krds-danger);background:var(--krds-danger-bg)}
+
 /* ── 트레이스 실행 중 표시 ────────────────────────────────────── */
 .trace-inflight{display:flex;flex-direction:column;gap:8px}
 .trace-inflight__pulse{display:flex;align-items:center;gap:8px;font-size:13px;font-weight:700;color:var(--krds-primary-strong)}

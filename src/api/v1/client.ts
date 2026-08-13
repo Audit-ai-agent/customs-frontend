@@ -148,6 +148,10 @@ export class ApiClient {
     );
   }
 
+  async deleteCase(caseId: string): Promise<void> {
+    await this.request(`/cases/${segment(caseId)}`, { method: "DELETE" }, () => undefined);
+  }
+
   closeCase(caseId: string, payload: CaseClosureRequest): Promise<CaseDetail> {
     const reason = payload.reason.trim();
     if (!reason || reason.length > 4_000) throw new ContractError("closure reason is invalid");

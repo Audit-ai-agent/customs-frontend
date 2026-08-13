@@ -1058,6 +1058,21 @@ export class WorkbenchStore {
     );
   }
 
+  async deleteCase(caseId: string): Promise<void> {
+    if (!this.hasRole("reviewer")) {
+      this.showError(new Error("Case 삭제는 심사자 역할에서만 할 수 있습니다."));
+      return;
+    }
+    await this.withBusy(async () => {
+      await this.api.deleteCase(caseId);
+      this.patch({
+        cases: this.state.cases.filter((item) => item.case_id !== caseId),
+        ...(this.state.selectedCase?.case_id === caseId ? { selectedCase: null } : {}),
+        notice: "Case를 삭제했습니다. 문서·심사 기록이 함께 제거되었습니다.",
+      });
+    });
+  }
+
   async closeCase(disposition: "cleared" | "returned", reason: string): Promise<void> {
     if (!this.hasRole("reviewer")) {
       this.showError(new Error("심사 종료는 심사자 역할에서만 할 수 있습니다."));
