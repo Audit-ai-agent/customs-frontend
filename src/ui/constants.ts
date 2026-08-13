@@ -30,15 +30,12 @@ export const DOCUMENT_TYPES: readonly DocumentType[] = [
 ];
 export const ACTIVE_JOB_STATES: ReadonlySet<string> = new Set(["queued", "running"]);
 
-/**
- * The mockup's stage bar. Stage 4 keeps its place in the flow but has no Backend
- * v1 counterpart; see customs-backend/docs/FRONTEND_UX_BACKEND_GAP.ko.md.
- */
+/** The mockup's stage bar. */
 export const STAGES: readonly { id: StageView; step: number; label: string; hint: string; supported: boolean }[] = [
-  { id: "documents", step: 1, label: "서류 등록", hint: "텍스트 문서 구조화", supported: true },
-  { id: "crosscheck", step: 2, label: "교차 검증", hint: "이기종 문서 불일치 탐지", supported: true },
+  { id: "documents", step: 1, label: "서류 등록", hint: "텍스트 문서 구조화 · HSK 분류", supported: true },
+  { id: "crosscheck", step: 2, label: "교차 검증", hint: "이기종 문서 불일치 · 원산지 검증", supported: true },
   { id: "review", step: 3, label: "통관 심사", hint: "요건 · 법령 근거 판정", supported: true },
-  { id: "duty", step: 4, label: "관세 진단", hint: "세율 · 절감 (Backend 미지원)", supported: false },
+  { id: "duty", step: 4, label: "관세 진단", hint: "세율 사다리 · 절감 진단", supported: true },
 ];
 export const STAGE_IDS: readonly StageView[] = STAGES.map((stage) => stage.id);
 

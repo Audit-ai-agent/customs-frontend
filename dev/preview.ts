@@ -184,6 +184,95 @@ const api = {
   enqueueReview: async () => ({ job_id: "job-001", case_id: "case-1", review_run_id: "run-001", status: "succeeded", created_by: "local-reviewer", created_at: NOW, updated_at: NOW }),
   getJob: async () => ({ job_id: "job-001", case_id: "case-1", review_run_id: "run-001", status: "succeeded", created_by: "local-reviewer", created_at: NOW, updated_at: NOW }),
   setFindingDecision: async () => run,
+  getHsClassification: async () => ({
+    review_run_id: "run-001",
+    case_id: "case-1",
+    reference: { as_of: "2026-01-01", source: "관세청 HS부호 단위별 품목명 (미리보기 고정값)" },
+    candidates: [
+      {
+        code: "8517621000",
+        name_ko: "유선 송신용 기기",
+        name_en: "Wired transmission apparatus",
+        ancestors: [
+          { level: 2, code: "85", name_ko: "전기기기와 그 부분품" },
+          { level: 4, code: "8517", name_ko: "전화기와 기타 음성·영상 송수신 기기" },
+        ],
+        confidence: 1,
+        in_reference: true,
+        recommended: true,
+        basis: [{ document_id: "doc-1", fact_id: "fact-hs", fact_name: "hs_code", raw_value: "8517.62-1000" }],
+      },
+    ],
+  }),
+  recordHsSelection: async (_runId: string, payload: { code: string; reason: string }) => ({
+    code: payload.code,
+    reason: payload.reason,
+    selected_by: "local-reviewer",
+    selected_at: NOW,
+    history: [{ code: payload.code, reason: payload.reason, selected_by: "local-reviewer", selected_at: NOW }],
+  }),
+  getOriginVerification: async () => ({
+    review_run_id: "run-001",
+    case_id: "case-1",
+    status: "missing_certificate",
+    origin_country: "CN",
+    checks: [],
+    fta_hints: [
+      {
+        agreement_code: "KR-CN",
+        agreement_name: "한-중 FTA",
+        origin_covered: true,
+        certificate_form: "원산지증명서 (한-중 FTA 서식)",
+        source_uri: "https://www.customs.go.kr/ftaportalkor/main.do",
+      },
+    ],
+  }),
+  getDutyAssessment: async () => ({
+    review_run_id: "run-001",
+    case_id: "case-1",
+    status: "estimated",
+    reference: {
+      as_of: "2026-01-01",
+      source: "관세율 스냅샷 (미리보기 고정값)",
+      disclaimer: "참조용 스냅샷 세율입니다. 실제 적용 세율은 UNI-PASS에서 확인해야 합니다.",
+    },
+    hs_code: { code: "8517621000", source: "document_fact", name_ko: "유선 송신용 기기" },
+    origin_country: "CN",
+    dutiable_value: { amount: 12400, currency: "USD", basis: "invoice_total_amount", document_id: "doc-1" },
+    rates: [
+      {
+        rate_kind: "basic",
+        label: "기본세율",
+        rate_pct: 8,
+        source_uri: "https://unipass.customs.go.kr/clip/index.do",
+        requirements: [],
+        applicable: true,
+      },
+      {
+        rate_kind: "fta",
+        agreement_code: "KR-CN",
+        label: "한-중 FTA 협정세율",
+        rate_pct: 0,
+        source_uri: "https://unipass.customs.go.kr/clip/index.do",
+        requirements: [
+          { code: "origin_in_agreement", satisfied: true },
+          { code: "certificate_present", satisfied: false },
+          { code: "certificate_origin_match", satisfied: false },
+        ],
+        applicable: false,
+      },
+    ],
+    applied: {
+      rate_kind: "basic",
+      rate_pct: 8,
+      duty_amount: 992,
+      vat_rate_pct: 10,
+      vat_amount: 1339.2,
+      total_estimated: 2331.2,
+      currency: "USD",
+    },
+    savings: { vs_basic_duty: 0, currency: "USD", blocked_requirements: ["certificate_present", "certificate_origin_match"] },
+  }),
 };
 
 const auth = {

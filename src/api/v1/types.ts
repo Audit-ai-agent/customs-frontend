@@ -556,3 +556,160 @@ export interface CorrectionDecisionRequest {
 export interface CreateRevisionRequest {
   proposal_ids: string[];
 }
+
+// ── Backend-derived trade views (HSK / CO / duty) ──────────────
+
+export interface HsAncestor {
+  level: number;
+  code: string;
+  name_ko: string;
+}
+
+export interface HsCandidateBasis {
+  document_id: string;
+  fact_id: string;
+  fact_name: string;
+  raw_value: string;
+}
+
+export interface HsCandidate {
+  code: string;
+  name_ko?: string | null;
+  name_en?: string | null;
+  ancestors: HsAncestor[];
+  confidence: number;
+  in_reference: boolean;
+  recommended: boolean;
+  basis: HsCandidateBasis[];
+}
+
+export interface HsSelectionHistoryEntry {
+  code: string;
+  reason: string;
+  selected_by: string;
+  selected_at: string;
+}
+
+export interface HsSelection {
+  code: string;
+  reason: string;
+  selected_by: string;
+  selected_at: string;
+  history: HsSelectionHistoryEntry[];
+}
+
+export interface HsClassification {
+  review_run_id: string;
+  case_id: string;
+  reference: { as_of: string; source: string };
+  candidates: HsCandidate[];
+  selection?: HsSelection | null;
+}
+
+export interface HsSelectionRequest {
+  code: string;
+  reason: string;
+}
+
+export type OriginCheckField = "certificate_no" | "origin_country" | "hs_code";
+export type OriginCheckStatus = "match" | "mismatch" | "missing";
+
+export interface OriginCheck {
+  field: OriginCheckField;
+  certificate_value?: string | null;
+  reference_value?: string | null;
+  reference_document_id?: string | null;
+  status: OriginCheckStatus;
+}
+
+export interface OriginFtaHint {
+  agreement_code: string;
+  agreement_name: string;
+  origin_covered: boolean;
+  certificate_form: string;
+  source_uri: string;
+}
+
+export type OriginVerificationStatus =
+  | "verified"
+  | "mismatch"
+  | "missing_certificate"
+  | "needs_review";
+
+export interface OriginVerification {
+  review_run_id: string;
+  case_id: string;
+  status: OriginVerificationStatus;
+  certificate?: {
+    document_id: string;
+    filename: string;
+    extraction_status: string;
+  } | null;
+  origin_country?: string | null;
+  checks: OriginCheck[];
+  fta_hints: OriginFtaHint[];
+}
+
+export type DutyRateKind = "basic" | "fta";
+export type DutyRequirementCode =
+  | "origin_in_agreement"
+  | "certificate_present"
+  | "certificate_origin_match";
+
+export interface DutyRateRequirement {
+  code: DutyRequirementCode;
+  satisfied: boolean;
+}
+
+export interface DutyRate {
+  rate_kind: DutyRateKind;
+  agreement_code?: string | null;
+  label: string;
+  rate_pct: number;
+  source_uri: string;
+  requirements: DutyRateRequirement[];
+  applicable: boolean;
+}
+
+export interface DutyEstimate {
+  rate_kind: DutyRateKind;
+  agreement_code?: string | null;
+  rate_pct: number;
+  duty_amount: number;
+  vat_rate_pct: number;
+  vat_amount: number;
+  total_estimated: number;
+  currency: string;
+}
+
+export type DutyAssessmentStatus =
+  | "estimated"
+  | "hs_code_unavailable"
+  | "rates_unavailable"
+  | "value_unavailable";
+
+export interface DutyAssessment {
+  review_run_id: string;
+  case_id: string;
+  status: DutyAssessmentStatus;
+  reference: { as_of: string; source: string; disclaimer: string };
+  hs_code?: {
+    code: string;
+    source: "reviewer_selection" | "document_fact";
+    name_ko?: string | null;
+  } | null;
+  origin_country?: string | null;
+  dutiable_value?: {
+    amount: number;
+    currency: string;
+    basis: string;
+    document_id?: string | null;
+  } | null;
+  rates: DutyRate[];
+  applied?: DutyEstimate | null;
+  savings?: {
+    vs_basic_duty: number;
+    currency: string;
+    blocked_requirements: string[];
+  } | null;
+}

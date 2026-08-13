@@ -198,6 +198,53 @@ HSK 0303540000 실제 CCCT 요건("수입식품등 수입신고확인증" · 식
 
 ---
 
+## CP8 — HSK 분류 · 원산지(CO) 검증 · 관세 진단
+
+Backend와 Frontend만 수정 (Agent 레포는 계약·코드 모두 그대로).
+
+**Backend (customs-backend, 로컬 커밋 2건)**
+
+- **파생 뷰 모듈 `trade_features.py`** — 저장된 실행의 불변 Agent 결과(문서 사실)와
+  패키징 참조 데이터에서 세 화면 데이터를 계산. Agent 결과 해시는 절대 건드리지 않음.
+- **HSK 분류** — `GET/POST /api/v1/review-runs/{id}/hs-classification`.
+  후보는 `hs_code` 사실의 10자리 코드(신뢰도 = 문서 합치 비율), 품목명·분류 경로는
+  관세청 HS부호 참조표(leaf 11,327개, `reference/hsk_names_20260101.json`).
+  심사자 확정은 finding decision과 같은 즉시 확정 + 이력 보존.
+- **원산지 검증** — `GET .../origin-verification`. CO 분석과 타 서류의
+  증명서 번호·원산지·HS 코드 대조 + FTA 협정 대상국 힌트.
+- **관세 진단** — `GET .../duty-assessment`. 출처·기준일 명기 세율 스냅샷
+  (`reference/duty_rates_20260101.json`)으로 세율 사다리(기본/FTA)·요건 충족·
+  서버 계산 세액(관세+부가세, 송장 통화)·절감액. 스냅샷에 없는 코드/총액 없음은
+  **fail-closed** (`rates_unavailable`/`value_unavailable`).
+- 검증: ruff·mypy·298 tests(신규 12)·contract 게이트 통과, OpenAPI 재생성.
+
+**Frontend**
+
+- 계약 재동기화(35 operations), client/decoders/types에 4개 메서드 추가.
+- store: 실행별 lazy 로더 3개(`hs`/`origin`/`duty` 슬라이스, RUN_ATTACHMENT_RESET 포함),
+  `recordHsSelection` 액션(확정 시 관세 진단 캐시 무효화), duty 단계 완료 판정.
+- **1단계 HSK 카드** — 목업의 `.hsk/.cand/.conf-bar` 문법 그대로: 후보 행(코드·품목명·
+  분류 경로·신뢰도 바·추천 핀) → 클릭 → 사유 입력 → 확정. 추천과 다른 코드로 확정하면
+  경고 배너.
+- **2단계 원산지 검증 카드** — 상태 배지 + 필드별 대조 행 + FTA 힌트(출처 링크).
+- **4단계 관세 진단** — 미지원 안내를 실화면으로 교체: 세율 사다리(`best`/`applied`),
+  서버 계산 세액 표, 절감 카드, FTA 요건 체크리스트(`req have/need`), 세율 출처.
+  fail-closed 상태는 이유를 설명하는 빈 상태로.
+- `constants.ts` stage 4 `supported: true`. 검증: lint(29 files)·typecheck·테스트 13건·build 통과.
+
+**E2E (functional-UAT 실스택)** — 기존 스모크 Case에서 HSK 후보 표시(고등어 0303540000,
+신뢰도 1.00, 추천) → 확정(사유 기록, 핀 "확정" 전환) → 원산지 검증(CO 없음 상태 +
+FTA 힌트) → 관세 진단(기본세율 10% 현재 적용, FTA 0% 요건 미충족, USD 30 기준
+관세 3 + 부가세 3.3, 절감 가능 USD 3 + 미충족 요건 표시)까지 전부 실 API로 동작.
+
+**스크린샷** — `cp8-01-duty.png`, `cp8-02-hsk.png`
+
+**한계(다음 단계)** — 세율 스냅샷은 데모 코드 2종(0303540000·7318151000)만 수록.
+환율·인코텀즈·TRQ 미반영(송장 통화 기준). CO 문서까지 올린 4문서 여정은 재심사 후
+확인 가능.
+
+---
+
 ## 남은 것 (제가 손대지 않은 부분)
 
 - **Backend 공백 8건** — `customs-backend/docs/FRONTEND_UX_BACKEND_GAP.ko.md`.

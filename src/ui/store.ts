@@ -12,9 +12,12 @@ import type {
   DocumentAsset,
   DocumentAssetMediaType,
   DocumentType,
+  DutyAssessment,
   ExtractionJob,
   FindingDecisionRequest,
+  HsClassification,
   JobRecord,
+  OriginVerification,
   ReviewComparison,
   ReviewerDecision,
   ReviewFinding,
@@ -93,6 +96,18 @@ export interface WorkbenchState {
   correctionError: string | null;
   correctionDraft: AssistantCorrectionDraft | null;
   selectedCorrectionProposalIds: ReadonlySet<string>;
+  hsClassification: HsClassification | null;
+  hsLoadedRunId: string | null;
+  hsLoading: boolean;
+  hsError: string | null;
+  originVerification: OriginVerification | null;
+  originLoadedRunId: string | null;
+  originLoading: boolean;
+  originError: string | null;
+  dutyAssessment: DutyAssessment | null;
+  dutyLoadedRunId: string | null;
+  dutyLoading: boolean;
+  dutyError: string | null;
   caseFilter: CaseFilter;
   query: string;
   fontScale: FontScale;
@@ -146,6 +161,18 @@ const INITIAL_STATE: WorkbenchState = {
   correctionError: null,
   correctionDraft: null,
   selectedCorrectionProposalIds: new Set<string>(),
+  hsClassification: null,
+  hsLoadedRunId: null,
+  hsLoading: false,
+  hsError: null,
+  originVerification: null,
+  originLoadedRunId: null,
+  originLoading: false,
+  originError: null,
+  dutyAssessment: null,
+  dutyLoadedRunId: null,
+  dutyLoading: false,
+  dutyError: null,
   caseFilter: "all",
   query: "",
   fontScale: 1,
@@ -176,6 +203,18 @@ const RUN_ATTACHMENT_RESET = {
   correctionError: null,
   correctionDraft: null,
   selectedCorrectionProposalIds: new Set<string>(),
+  hsClassification: null,
+  hsLoadedRunId: null,
+  hsLoading: false,
+  hsError: null,
+  originVerification: null,
+  originLoadedRunId: null,
+  originLoading: false,
+  originError: null,
+  dutyAssessment: null,
+  dutyLoadedRunId: null,
+  dutyLoading: false,
+  dutyError: null,
 } satisfies Partial<WorkbenchState>;
 
 /**
@@ -266,6 +305,7 @@ export class WorkbenchStore {
       case "documents": return this.activeDocuments().length > 0;
       case "crosscheck": return run !== null;
       case "review": return run !== null && this.openFindings().length === 0;
+      case "duty": return run !== null && this.state.dutyAssessment?.status === "estimated";
       default: return false;
     }
   }
@@ -401,6 +441,9 @@ export class WorkbenchStore {
     if (this.state.selectedCase?.case_id !== route.caseId) await this.loadCase(route.caseId);
     if (route.view === "assistant") await this.ensureAssistantLoaded();
     if (route.view === "history") await this.ensureCorrectionProposalsLoaded();
+    if (route.view === "documents") await this.ensureHsClassificationLoaded();
+    if (route.view === "crosscheck") await this.ensureOriginVerificationLoaded();
+    if (route.view === "duty") await this.ensureDutyAssessmentLoaded();
   }
 
   /* ── session ─────────────────────────────────────────────────── */
@@ -905,6 +948,71 @@ export class WorkbenchStore {
       throw new Error("이 답변의 Evidence를 찾지 못했습니다.");
     }
     this.focusEvidence(citation.reference_id);
+  }
+
+  /* ── Backend-derived trade views (HSK / CO / duty) ───────────── */
+
+  private async ensureHsClassificationLoaded(): Promise<void> {
+    const run = this.state.selectedRun;
+    if (!run || this.state.hsLoadedRunId === run.review_run_id || this.state.hsLoading) return;
+    this.patch({ hsLoading: true, hsError: null });
+    try {
+      const view = await this.api.getHsClassification(run.review_run_id);
+      this.patch({ hsClassification: view, hsLoadedRunId: run.review_run_id });
+    } catch (error) {
+      this.patch({ hsError: userMessage(error, "HSK 분류 후보를 불러오지 못했습니다.") });
+    } finally {
+      this.patch({ hsLoading: false });
+    }
+  }
+
+  private async ensureOriginVerificationLoaded(): Promise<void> {
+    const run = this.state.selectedRun;
+    if (!run || this.state.originLoadedRunId === run.review_run_id || this.state.originLoading) return;
+    this.patch({ originLoading: true, originError: null });
+    try {
+      const view = await this.api.getOriginVerification(run.review_run_id);
+      this.patch({ originVerification: view, originLoadedRunId: run.review_run_id });
+    } catch (error) {
+      this.patch({ originError: userMessage(error, "원산지 검증 결과를 불러오지 못했습니다.") });
+    } finally {
+      this.patch({ originLoading: false });
+    }
+  }
+
+  private async ensureDutyAssessmentLoaded(): Promise<void> {
+    const run = this.state.selectedRun;
+    if (!run || this.state.dutyLoadedRunId === run.review_run_id || this.state.dutyLoading) return;
+    this.patch({ dutyLoading: true, dutyError: null });
+    try {
+      const view = await this.api.getDutyAssessment(run.review_run_id);
+      this.patch({ dutyAssessment: view, dutyLoadedRunId: run.review_run_id });
+    } catch (error) {
+      this.patch({ dutyError: userMessage(error, "관세 진단을 불러오지 못했습니다.") });
+    } finally {
+      this.patch({ dutyLoading: false });
+    }
+  }
+
+  async recordHsSelection(code: string, reason: string): Promise<void> {
+    if (!this.hasRole("reviewer")) {
+      this.showError(new Error("HSK 분류 확정은 심사자 역할에서만 할 수 있습니다."));
+      return;
+    }
+    const run = this.state.selectedRun;
+    if (!run) return;
+    await this.withBusy(async () => {
+      const selection = await this.api.recordHsSelection(run.review_run_id, { code, reason });
+      this.patch({
+        ...(this.state.hsClassification === null
+          ? {}
+          : { hsClassification: { ...this.state.hsClassification, selection } }),
+        // The duty ladder depends on the confirmed code; refetch on next visit.
+        dutyAssessment: null,
+        dutyLoadedRunId: null,
+        notice: "HSK 분류를 확정했습니다. 관세 진단에 확정 코드가 반영됩니다.",
+      });
+    });
   }
 
   /* ── correction proposals ────────────────────────────────────── */

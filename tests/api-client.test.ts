@@ -174,4 +174,69 @@ describe("Backend API client", () => {
     expect(JSON.parse(String(calls[5]?.init?.body))).toEqual({ document_id: "document-1", fact_id: "fact-1", field_name: "quantity", new_value: "12", unit: "EA", reason: "Packing List 원문 기준", finding_id: "finding-1" });
     expect(new Headers(calls[7]?.init?.headers).get("Idempotency-Key")).toBe("revision-key-1");
   });
+
+  it("keeps the HSK, origin, and duty views on planned Backend v1 routes and validates their wire shapes", async () => {
+    const calls: Array<{ url: string; init: RequestInit | undefined }> = [];
+    const classification = {
+      review_run_id: "run-1",
+      case_id: "case-1",
+      reference: { as_of: "2026-01-01", source: "관세청 HS부호 단위별 품목명" },
+      candidates: [{
+        code: "0303540000", name_ko: "고등어", name_en: "Mackerel",
+        ancestors: [{ level: 2, code: "03", name_ko: "어류" }],
+        confidence: 1, in_reference: true, recommended: true,
+        basis: [{ document_id: "document-1", fact_id: "fact-1", fact_name: "hs_code", raw_value: "0303540000" }],
+      }],
+    };
+    const selection = {
+      code: "0303540000", reason: "문서 근거 일치", selected_by: "reviewer", selected_at: "2026-08-05T00:00:00Z",
+      history: [{ code: "0303540000", reason: "문서 근거 일치", selected_by: "reviewer", selected_at: "2026-08-05T00:00:00Z" }],
+    };
+    const origin = {
+      review_run_id: "run-1", case_id: "case-1", status: "verified",
+      certificate: { document_id: "document-2", filename: "co.txt", extraction_status: "complete" },
+      origin_country: "VN",
+      checks: [{ field: "origin_country", certificate_value: "VN", reference_value: "VN", reference_document_id: "document-1", status: "match" }],
+      fta_hints: [{ agreement_code: "KR-VN", agreement_name: "한-베트남 FTA", origin_covered: true, certificate_form: "KV Form", source_uri: "https://www.customs.go.kr/ftaportalkor/main.do" }],
+    };
+    const duty = {
+      review_run_id: "run-1", case_id: "case-1", status: "estimated",
+      reference: { as_of: "2026-01-01", source: "관세율 스냅샷", disclaimer: "참조용" },
+      hs_code: { code: "0303540000", source: "reviewer_selection", name_ko: "고등어" },
+      origin_country: "VN",
+      dutiable_value: { amount: 30000, currency: "USD", basis: "invoice_total_amount", document_id: "document-1" },
+      rates: [
+        { rate_kind: "basic", label: "기본세율", rate_pct: 10, source_uri: "https://unipass.customs.go.kr/clip/index.do", requirements: [], applicable: true },
+        { rate_kind: "fta", agreement_code: "KR-VN", label: "한-베트남 FTA", rate_pct: 0, source_uri: "https://unipass.customs.go.kr/clip/index.do", requirements: [{ code: "certificate_present", satisfied: true }], applicable: true },
+      ],
+      applied: { rate_kind: "fta", agreement_code: "KR-VN", rate_pct: 0, duty_amount: 0, vat_rate_pct: 10, vat_amount: 3000, total_estimated: 3000, currency: "USD" },
+      savings: { vs_basic_duty: 3000, currency: "USD", blocked_requirements: [] },
+    };
+    const fetcher: typeof fetch = async (input, init) => {
+      const url = String(input);
+      calls.push({ url, init });
+      if (url.endsWith("/hs-classification") && init?.method === "GET") return json(classification);
+      if (url.endsWith("/hs-classification") && init?.method === "POST") return json(selection);
+      if (url.endsWith("/origin-verification")) return json(origin);
+      if (url.endsWith("/duty-assessment")) return json(duty);
+      return json({ detail: "unexpected request" }, 500);
+    };
+    const api = new ApiClient(fetcher, async () => "local-token");
+    const classificationResult = await api.getHsClassification("run-1");
+    expect(classificationResult.candidates[0]?.code).toBe("0303540000");
+    const selectionResult = await api.recordHsSelection("run-1", { code: "0303540000", reason: "문서 근거 일치" });
+    expect(selectionResult.history).toHaveLength(1);
+    const originResult = await api.getOriginVerification("run-1");
+    expect(originResult.status).toBe("verified");
+    const dutyResult = await api.getDutyAssessment("run-1");
+    expect(dutyResult.applied?.rate_kind).toBe("fta");
+    expect(dutyResult.savings?.vs_basic_duty).toBe(3000);
+    expect(calls.map((item) => item.url)).toEqual([
+      "/api/v1/review-runs/run-1/hs-classification",
+      "/api/v1/review-runs/run-1/hs-classification",
+      "/api/v1/review-runs/run-1/origin-verification",
+      "/api/v1/review-runs/run-1/duty-assessment",
+    ]);
+    expect(JSON.parse(String(calls[1]?.init?.body))).toEqual({ code: "0303540000", reason: "문서 근거 일치" });
+  });
 });

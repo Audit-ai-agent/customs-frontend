@@ -9,8 +9,12 @@ import {
   decodeDocumentAsset,
   decodeDocumentListItem,
   decodeDocumentView,
+  decodeDutyAssessment,
   decodeExtractionJobEnvelope,
+  decodeHsClassification,
+  decodeHsSelection,
   decodeJob,
+  decodeOriginVerification,
   decodeProblem,
   decodeReviewerDecision,
   decodeReviewRun,
@@ -36,10 +40,15 @@ import type {
   DocumentAsset,
   DocumentAssetMediaType,
   DocumentType,
+  DutyAssessment,
   EnqueueReviewRequest,
   ExtractionJobEnvelope,
   FindingDecisionRequest,
+  HsClassification,
+  HsSelection,
+  HsSelectionRequest,
   JobRecord,
+  OriginVerification,
   ReviewerDecision,
   ReviewRun,
   ReviewRunSummary,
@@ -287,6 +296,53 @@ export class ApiClient {
     const job = await this.request(`/jobs/${segment(jobId)}`, { method: "GET" }, decodeJobEnvelope);
     this.assertIdentity(job.job_id, jobId, "Job");
     return job;
+  }
+
+  getHsClassification(reviewRunId: string): Promise<HsClassification> {
+    return this.request(
+      `/review-runs/${segment(reviewRunId)}/hs-classification`,
+      { method: "GET" },
+      (value) => {
+        const view = decodeHsClassification(value);
+        this.assertIdentity(view.review_run_id, reviewRunId, "HS classification review run");
+        return view;
+      },
+    );
+  }
+
+  recordHsSelection(reviewRunId: string, payload: HsSelectionRequest): Promise<HsSelection> {
+    const reason = payload.reason.trim();
+    if (!reason || reason.length > 4_000) throw new ContractError("HS selection reason is invalid");
+    if (!/^[0-9]{10}$/u.test(payload.code)) throw new ContractError("HS selection code is invalid");
+    return this.request(
+      `/review-runs/${segment(reviewRunId)}/hs-classification`,
+      this.json("POST", { code: payload.code, reason }),
+      (value) => decodeHsSelection(value),
+    );
+  }
+
+  getOriginVerification(reviewRunId: string): Promise<OriginVerification> {
+    return this.request(
+      `/review-runs/${segment(reviewRunId)}/origin-verification`,
+      { method: "GET" },
+      (value) => {
+        const view = decodeOriginVerification(value);
+        this.assertIdentity(view.review_run_id, reviewRunId, "Origin verification review run");
+        return view;
+      },
+    );
+  }
+
+  getDutyAssessment(reviewRunId: string): Promise<DutyAssessment> {
+    return this.request(
+      `/review-runs/${segment(reviewRunId)}/duty-assessment`,
+      { method: "GET" },
+      (value) => {
+        const view = decodeDutyAssessment(value);
+        this.assertIdentity(view.review_run_id, reviewRunId, "Duty assessment review run");
+        return view;
+      },
+    );
   }
 
   setFindingDecision(

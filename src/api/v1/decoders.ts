@@ -27,7 +27,15 @@ import type {
   EvidenceItem,
   FactSourceReference,
   HumanProvidedSourceReference,
+  DutyAssessment,
+  DutyEstimate,
+  DutyRate,
+  HsCandidate,
+  HsClassification,
+  HsSelection,
   JobRecord,
+  OriginCheck,
+  OriginVerification,
   PlannerAction,
   PlannerTrace,
   ReportClaim,
@@ -833,6 +841,274 @@ export function decodeExtractionJobEnvelope(value: unknown): ExtractionJobEnvelo
   };
 }
 
+export function decodeHsSelection(value: unknown, context = "HS selection"): HsSelection {
+  const raw = record(value, context);
+  return {
+    code: hsCode(raw.code, `${context}.code`),
+    reason: displayText(raw.reason, `${context}.reason`),
+    selected_by: requiredString(raw.selected_by, `${context}.selected_by`),
+    selected_at: requiredString(raw.selected_at, `${context}.selected_at`),
+    history: array(raw.history, `${context}.history`).map((item, index) => {
+      const entry = record(item, `${context}.history[${index}]`);
+      return {
+        code: hsCode(entry.code, `${context}.history[${index}].code`),
+        reason: displayText(entry.reason, `${context}.history[${index}].reason`),
+        selected_by: requiredString(entry.selected_by, `${context}.history[${index}].selected_by`),
+        selected_at: requiredString(entry.selected_at, `${context}.history[${index}].selected_at`),
+      };
+    }),
+  };
+}
+
+function decodeHsCandidate(value: unknown, context: string): HsCandidate {
+  const raw = record(value, context);
+  return {
+    code: hsCode(raw.code, `${context}.code`),
+    ...(raw.name_ko === undefined || raw.name_ko === null
+      ? {}
+      : { name_ko: displayText(raw.name_ko, `${context}.name_ko`) }),
+    ...(raw.name_en === undefined || raw.name_en === null
+      ? {}
+      : { name_en: displayText(raw.name_en, `${context}.name_en`) }),
+    ancestors: array(raw.ancestors ?? [], `${context}.ancestors`).map((item, index) => {
+      const entry = record(item, `${context}.ancestors[${index}]`);
+      return {
+        level: nonNegativeInteger(entry.level, `${context}.ancestors[${index}].level`),
+        code: requiredString(entry.code, `${context}.ancestors[${index}].code`),
+        name_ko: displayText(entry.name_ko, `${context}.ancestors[${index}].name_ko`),
+      };
+    }),
+    confidence: boundedRatio(raw.confidence, `${context}.confidence`),
+    in_reference: booleanValue(raw.in_reference, `${context}.in_reference`),
+    recommended: booleanValue(raw.recommended, `${context}.recommended`),
+    basis: array(raw.basis ?? [], `${context}.basis`).map((item, index) => {
+      const entry = record(item, `${context}.basis[${index}]`);
+      return {
+        document_id: requiredString(entry.document_id, `${context}.basis[${index}].document_id`),
+        fact_id: requiredString(entry.fact_id, `${context}.basis[${index}].fact_id`),
+        fact_name: requiredString(entry.fact_name, `${context}.basis[${index}].fact_name`),
+        raw_value: displayText(entry.raw_value, `${context}.basis[${index}].raw_value`),
+      };
+    }),
+  };
+}
+
+export function decodeHsClassification(value: unknown): HsClassification {
+  const context = "HS classification";
+  const raw = record(value, context);
+  const reference = record(raw.reference, `${context}.reference`);
+  return {
+    review_run_id: requiredString(raw.review_run_id, `${context}.review_run_id`),
+    case_id: requiredString(raw.case_id, `${context}.case_id`),
+    reference: {
+      as_of: requiredString(reference.as_of, `${context}.reference.as_of`),
+      source: displayText(reference.source, `${context}.reference.source`),
+    },
+    candidates: array(raw.candidates, `${context}.candidates`).map((item, index) =>
+      decodeHsCandidate(item, `${context}.candidates[${index}]`),
+    ),
+    ...(raw.selection === undefined || raw.selection === null
+      ? {}
+      : { selection: decodeHsSelection(raw.selection, `${context}.selection`) }),
+  };
+}
+
+function decodeOriginCheck(value: unknown, context: string): OriginCheck {
+  const raw = record(value, context);
+  return {
+    field: oneOf(raw.field, ["certificate_no", "origin_country", "hs_code"] as const, `${context}.field`),
+    ...(raw.certificate_value === undefined || raw.certificate_value === null
+      ? {}
+      : { certificate_value: displayText(raw.certificate_value, `${context}.certificate_value`) }),
+    ...(raw.reference_value === undefined || raw.reference_value === null
+      ? {}
+      : { reference_value: displayText(raw.reference_value, `${context}.reference_value`) }),
+    ...(raw.reference_document_id === undefined || raw.reference_document_id === null
+      ? {}
+      : {
+          reference_document_id: requiredString(
+            raw.reference_document_id,
+            `${context}.reference_document_id`,
+          ),
+        }),
+    status: oneOf(raw.status, ["match", "mismatch", "missing"] as const, `${context}.status`),
+  };
+}
+
+export function decodeOriginVerification(value: unknown): OriginVerification {
+  const context = "origin verification";
+  const raw = record(value, context);
+  const certificate =
+    raw.certificate === undefined || raw.certificate === null
+      ? undefined
+      : record(raw.certificate, `${context}.certificate`);
+  return {
+    review_run_id: requiredString(raw.review_run_id, `${context}.review_run_id`),
+    case_id: requiredString(raw.case_id, `${context}.case_id`),
+    status: oneOf(
+      raw.status,
+      ["verified", "mismatch", "missing_certificate", "needs_review"] as const,
+      `${context}.status`,
+    ),
+    ...(certificate === undefined
+      ? {}
+      : {
+          certificate: {
+            document_id: requiredString(certificate.document_id, `${context}.certificate.document_id`),
+            filename: requiredString(certificate.filename, `${context}.certificate.filename`),
+            extraction_status: requiredString(
+              certificate.extraction_status,
+              `${context}.certificate.extraction_status`,
+            ),
+          },
+        }),
+    ...(raw.origin_country === undefined || raw.origin_country === null
+      ? {}
+      : { origin_country: requiredString(raw.origin_country, `${context}.origin_country`) }),
+    checks: array(raw.checks ?? [], `${context}.checks`).map((item, index) =>
+      decodeOriginCheck(item, `${context}.checks[${index}]`),
+    ),
+    fta_hints: array(raw.fta_hints ?? [], `${context}.fta_hints`).map((item, index) => {
+      const entry = record(item, `${context}.fta_hints[${index}]`);
+      return {
+        agreement_code: requiredString(entry.agreement_code, `${context}.fta_hints[${index}].agreement_code`),
+        agreement_name: displayText(entry.agreement_name, `${context}.fta_hints[${index}].agreement_name`),
+        origin_covered: booleanValue(entry.origin_covered, `${context}.fta_hints[${index}].origin_covered`),
+        certificate_form: displayText(
+          entry.certificate_form,
+          `${context}.fta_hints[${index}].certificate_form`,
+        ),
+        source_uri: displayText(entry.source_uri, `${context}.fta_hints[${index}].source_uri`),
+      };
+    }),
+  };
+}
+
+function decodeDutyRate(value: unknown, context: string): DutyRate {
+  const raw = record(value, context);
+  return {
+    rate_kind: oneOf(raw.rate_kind, ["basic", "fta"] as const, `${context}.rate_kind`),
+    ...(raw.agreement_code === undefined || raw.agreement_code === null
+      ? {}
+      : { agreement_code: requiredString(raw.agreement_code, `${context}.agreement_code`) }),
+    label: displayText(raw.label, `${context}.label`),
+    rate_pct: nonNegativeNumber(raw.rate_pct, `${context}.rate_pct`),
+    source_uri: displayText(raw.source_uri, `${context}.source_uri`),
+    requirements: array(raw.requirements ?? [], `${context}.requirements`).map((item, index) => {
+      const entry = record(item, `${context}.requirements[${index}]`);
+      return {
+        code: oneOf(
+          entry.code,
+          ["origin_in_agreement", "certificate_present", "certificate_origin_match"] as const,
+          `${context}.requirements[${index}].code`,
+        ),
+        satisfied: booleanValue(entry.satisfied, `${context}.requirements[${index}].satisfied`),
+      };
+    }),
+    applicable: booleanValue(raw.applicable, `${context}.applicable`),
+  };
+}
+
+function decodeDutyEstimate(value: unknown, context: string): DutyEstimate {
+  const raw = record(value, context);
+  return {
+    rate_kind: oneOf(raw.rate_kind, ["basic", "fta"] as const, `${context}.rate_kind`),
+    ...(raw.agreement_code === undefined || raw.agreement_code === null
+      ? {}
+      : { agreement_code: requiredString(raw.agreement_code, `${context}.agreement_code`) }),
+    rate_pct: nonNegativeNumber(raw.rate_pct, `${context}.rate_pct`),
+    duty_amount: nonNegativeNumber(raw.duty_amount, `${context}.duty_amount`),
+    vat_rate_pct: nonNegativeNumber(raw.vat_rate_pct, `${context}.vat_rate_pct`),
+    vat_amount: nonNegativeNumber(raw.vat_amount, `${context}.vat_amount`),
+    total_estimated: nonNegativeNumber(raw.total_estimated, `${context}.total_estimated`),
+    currency: currencyCode(raw.currency, `${context}.currency`),
+  };
+}
+
+export function decodeDutyAssessment(value: unknown): DutyAssessment {
+  const context = "duty assessment";
+  const raw = record(value, context);
+  const reference = record(raw.reference, `${context}.reference`);
+  const hs = raw.hs_code === undefined || raw.hs_code === null ? undefined : record(raw.hs_code, `${context}.hs_code`);
+  const dutiable =
+    raw.dutiable_value === undefined || raw.dutiable_value === null
+      ? undefined
+      : record(raw.dutiable_value, `${context}.dutiable_value`);
+  const savings =
+    raw.savings === undefined || raw.savings === null
+      ? undefined
+      : record(raw.savings, `${context}.savings`);
+  return {
+    review_run_id: requiredString(raw.review_run_id, `${context}.review_run_id`),
+    case_id: requiredString(raw.case_id, `${context}.case_id`),
+    status: oneOf(
+      raw.status,
+      ["estimated", "hs_code_unavailable", "rates_unavailable", "value_unavailable"] as const,
+      `${context}.status`,
+    ),
+    reference: {
+      as_of: requiredString(reference.as_of, `${context}.reference.as_of`),
+      source: displayText(reference.source, `${context}.reference.source`),
+      disclaimer: displayText(reference.disclaimer, `${context}.reference.disclaimer`),
+    },
+    ...(hs === undefined
+      ? {}
+      : {
+          hs_code: {
+            code: hsCode(hs.code, `${context}.hs_code.code`),
+            source: oneOf(
+              hs.source,
+              ["reviewer_selection", "document_fact"] as const,
+              `${context}.hs_code.source`,
+            ),
+            ...(hs.name_ko === undefined || hs.name_ko === null
+              ? {}
+              : { name_ko: displayText(hs.name_ko, `${context}.hs_code.name_ko`) }),
+          },
+        }),
+    ...(raw.origin_country === undefined || raw.origin_country === null
+      ? {}
+      : { origin_country: requiredString(raw.origin_country, `${context}.origin_country`) }),
+    ...(dutiable === undefined
+      ? {}
+      : {
+          dutiable_value: {
+            amount: nonNegativeNumber(dutiable.amount, `${context}.dutiable_value.amount`),
+            currency: currencyCode(dutiable.currency, `${context}.dutiable_value.currency`),
+            basis: requiredString(dutiable.basis, `${context}.dutiable_value.basis`),
+            ...(dutiable.document_id === undefined || dutiable.document_id === null
+              ? {}
+              : {
+                  document_id: requiredString(
+                    dutiable.document_id,
+                    `${context}.dutiable_value.document_id`,
+                  ),
+                }),
+          },
+        }),
+    rates: array(raw.rates ?? [], `${context}.rates`).map((item, index) =>
+      decodeDutyRate(item, `${context}.rates[${index}]`),
+    ),
+    ...(raw.applied === undefined || raw.applied === null
+      ? {}
+      : { applied: decodeDutyEstimate(raw.applied, `${context}.applied`) }),
+    ...(savings === undefined
+      ? {}
+      : {
+          savings: {
+            vs_basic_duty: nonNegativeNumber(savings.vs_basic_duty, `${context}.savings.vs_basic_duty`),
+            currency: currencyCode(savings.currency, `${context}.savings.currency`),
+            blocked_requirements: array(
+              savings.blocked_requirements ?? [],
+              `${context}.savings.blocked_requirements`,
+            ).map((item, index) =>
+              requiredString(item, `${context}.savings.blocked_requirements[${index}]`),
+            ),
+          },
+        }),
+  };
+}
+
 function record(value: unknown, context: string): Record<string, unknown> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) throw new ContractError(`${context}: object expected`);
   return value as Record<string, unknown>;
@@ -865,6 +1141,37 @@ function nonNegativeInteger(value: unknown, context: string): number {
 function positiveInteger(value: unknown, context: string): number {
   if (typeof value !== "number" || !Number.isInteger(value) || value < 1 || value > 1_000_000_000) throw new ContractError(`${context}: positive integer expected`);
   return value;
+}
+
+function booleanValue(value: unknown, context: string): boolean {
+  if (typeof value !== "boolean") throw new ContractError(`${context}: boolean expected`);
+  return value;
+}
+
+function nonNegativeNumber(value: unknown, context: string): number {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0 || value > 1_000_000_000_000) {
+    throw new ContractError(`${context}: non-negative number expected`);
+  }
+  return value;
+}
+
+function boundedRatio(value: unknown, context: string): number {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0 || value > 1) {
+    throw new ContractError(`${context}: ratio between zero and one expected`);
+  }
+  return value;
+}
+
+function hsCode(value: unknown, context: string): string {
+  const result = requiredString(value, context);
+  if (!/^[0-9]{10}$/u.test(result)) throw new ContractError(`${context}: ten-digit HS code expected`);
+  return result;
+}
+
+function currencyCode(value: unknown, context: string): string {
+  const result = requiredString(value, context);
+  if (!/^[A-Z]{3}$/u.test(result)) throw new ContractError(`${context}: ISO currency code expected`);
+  return result;
 }
 
 function plannerCycle(value: unknown, context: string): 1 | 2 {

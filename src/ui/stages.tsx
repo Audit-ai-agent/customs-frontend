@@ -12,6 +12,7 @@ import {
   focusDataTarget,
 } from "./labels";
 import { EmptyCopy, EmptyState, Field, Metric, RoleBoundaryNote, SectionHeading, Submit } from "./primitives";
+import { DutyDiagnosisStage, HsClassificationCard, OriginVerificationCard } from "./trade";
 import { useStore, useWorkbenchState } from "./useStore";
 
 /** Shared call to action for the stages that need a run before they can show anything. */
@@ -96,13 +97,7 @@ export function DocumentsStage() {
         )}
       </section>
 
-      <section className="surface">
-        <SectionHeading title="HSK 분류" description="목업 1단계의 HSK 자동분류·후보 선택 영역입니다." />
-        <p className="unsupported-inline">
-          Backend API v1에 HSK 후보·신뢰도·확정 계약이 없어 표시할 수 없습니다. 필요한 계약은
-          customs-backend/docs/FRONTEND_UX_BACKEND_GAP.ko.md 1항에 기록했습니다.
-        </p>
-      </section>
+      <HsClassificationCard />
     </section>
   );
 }
@@ -381,6 +376,7 @@ export function CrosscheckStage() {
         </div>
         <ComparisonTable comparisons={run.comparisons} />
       </section>
+      <OriginVerificationCard />
       <section className="surface">
         <SectionHeading title="추출된 문서 사실" description="비교의 근거가 된 값입니다." />
         <ReportFacts run={run} />
@@ -480,22 +476,8 @@ export function ReportFacts({ run }: { run: ReviewRun }) {
   );
 }
 
-/* ── 단계 4 · 관세 진단 (Backend 미지원) ─────────────────────── */
+/* ── 단계 4 · 관세 진단 ──────────────────────────────────────── */
 
 export function DutyStage() {
-  return (
-    <section className="surface unsupported-stage">
-      <SectionHeading title="관세 메리트 진단" description="목업 4단계에 해당하는 화면입니다." />
-      <p className="unsupported-stage__lead">이 단계는 Backend API v1에 대응하는 계약이 없어 아직 만들 수 없습니다.</p>
-      <ul className="unsupported-stage__list">
-        <li>적용 세율 사다리(기본·협정·할당)와 각 세율의 적용 요건</li>
-        <li>과세가격 산정과 수량·단가·환율·인코텀즈 기반 재계산</li>
-        <li>절감액 산출 근거와 협정관세 적용신청서 생성</li>
-      </ul>
-      <p className="unsupported-stage__note">
-        필요한 계약은 customs-backend/docs/FRONTEND_UX_BACKEND_GAP.ko.md 2항에 기록했습니다. 근거 없는 금액을 화면에
-        표시하지 않기 위해 값을 비워 둡니다.
-      </p>
-    </section>
-  );
+  return <DutyDiagnosisStage />;
 }

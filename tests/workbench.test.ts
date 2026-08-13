@@ -152,8 +152,26 @@ describe("commercial review workspace", () => {
       enqueueReview: vi.fn(async () => job),
       getReviewRun: vi.fn(async () => run),
       getJob: vi.fn(async () => { throw new Error("a synchronously completed Job must not be polled"); }),
+      getHsClassification: vi.fn(async () => ({
+        review_run_id: "run-1",
+        case_id: "case-1",
+        reference: { as_of: "2026-01-01", source: "관세청 HS부호 단위별 품목명" },
+        candidates: [{
+          code: "0303540000", name_ko: "고등어", name_en: "Mackerel",
+          ancestors: [{ level: 2, code: "03", name_ko: "어류" }],
+          confidence: 1, in_reference: true, recommended: true,
+          basis: [{ document_id: "document-1", fact_id: "fact-1", fact_name: "hs_code", raw_value: "0303540000" }],
+        }],
+      })),
     };
     const { root, dispose } = await mount(api, AUTH, "functional-uat");
+
+    // The stage-1 HSK card is fed by the Backend-derived classification view.
+    expect(api.getHsClassification).toHaveBeenCalledWith("run-1");
+    expect(root.textContent).toContain("HSK 분류");
+    const candidateRow = root.querySelector('[data-hsk-candidate-code="0303540000"]');
+    expect(candidateRow?.textContent).toContain("고등어");
+    expect(candidateRow?.textContent).toContain("추천");
 
     await click(root.querySelector(".case-actions .btn.primary"));
 
