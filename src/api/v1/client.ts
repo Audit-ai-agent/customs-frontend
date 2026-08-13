@@ -16,6 +16,7 @@ import {
   decodeJob,
   decodeOriginVerification,
   decodeProblem,
+  decodeReviewProgress,
   decodeReviewerDecision,
   decodeReviewRun,
   decodeReviewRunSummary,
@@ -50,6 +51,7 @@ import type {
   HsSelectionRequest,
   JobRecord,
   OriginVerification,
+  ReviewProgress,
   ReviewerDecision,
   ReviewRun,
   ReviewRunSummary,
@@ -136,6 +138,14 @@ export class ApiClient {
       this.assertOrg(item.org_id, "Case");
       return item;
     });
+  }
+
+  getReviewProgress(caseId: string): Promise<ReviewProgress> {
+    return this.request(
+      `/cases/${segment(caseId)}/review-progress`,
+      { method: "GET" },
+      (value) => decodeReviewProgress(value),
+    );
   }
 
   closeCase(caseId: string, payload: CaseClosureRequest): Promise<CaseDetail> {

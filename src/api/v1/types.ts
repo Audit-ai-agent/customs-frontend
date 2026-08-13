@@ -53,6 +53,12 @@ export interface CaseSummary {
 
 export type CaseDetail = CaseSummary;
 
+export interface ReviewProgress {
+  status: "idle" | "running";
+  review_run_id?: string | null;
+  stages: { stage: string; status: string }[];
+}
+
 export interface CaseClosureRequest {
   disposition: "cleared" | "returned";
   reason: string;

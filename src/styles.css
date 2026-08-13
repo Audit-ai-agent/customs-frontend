@@ -137,6 +137,10 @@ select::-ms-expand{display:none}
 .trace-inflight__hint{font-size:12px;color:var(--krds-muted);line-height:1.6}
 .workflow-step--pending{opacity:.55}
 .workflow-step--pending .workflow-dot{background:var(--krds-line-3)}
+.workflow-step--live .workflow-dot{background:var(--krds-primary);box-shadow:0 0 0 1px var(--krds-primary);position:relative}
+.workflow-step--live .workflow-dot::after{content:"";position:absolute;inset:-4px;border-radius:50%;
+  border:2px solid var(--krds-primary);animation:pulse-ring 1.4s ease-out infinite}
+.workflow-step--live strong{color:var(--krds-primary-strong)}
 
 @keyframes card-rise{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
 @keyframes notice-in{from{opacity:0;transform:translateY(-8px)}to{opacity:1;transform:none}}

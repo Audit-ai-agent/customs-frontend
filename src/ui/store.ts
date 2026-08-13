@@ -19,6 +19,7 @@ import type {
   JobRecord,
   OriginVerification,
   ReviewComparison,
+  ReviewProgress,
   ReviewerDecision,
   ReviewFinding,
   ReviewRun,
@@ -116,6 +117,8 @@ export interface WorkbenchState {
   createCaseOpen: boolean;
   /** True while a review or revision request is running on the Backend. */
   reviewInFlight: boolean;
+  /** Display-only live stage progress polled while a review runs. */
+  reviewProgress: ReviewProgress | null;
   busy: boolean;
   notice: string | null;
   error: string | null;
@@ -182,6 +185,7 @@ const INITIAL_STATE: WorkbenchState = {
   fontScale: 1,
   createCaseOpen: false,
   reviewInFlight: false,
+  reviewProgress: null,
   busy: false,
   notice: null,
   error: null,
@@ -759,6 +763,7 @@ export class WorkbenchStore {
     }
     await this.withBusy(async () => {
       this.patch({ reviewInFlight: true });
+      this.startProgressPolling(current.case_id);
       try {
         const job = await this.api.enqueueReview(current.case_id, { trade_type: "import" }, crypto.randomUUID());
         this.patch({ activeJob: job });
@@ -769,9 +774,39 @@ export class WorkbenchStore {
           this.scheduleJobPoll(job);
         }
       } finally {
-        this.patch({ reviewInFlight: false });
+        this.stopProgressPolling();
+        this.patch({ reviewInFlight: false, reviewProgress: null });
       }
     });
+  }
+
+  /** Poll the Backend's display-only progress proxy while a review runs. */
+  private progressTimer: number | null = null;
+
+  private startProgressPolling(caseId: string): void {
+    this.stopProgressPolling();
+    const poll = async () => {
+      if (this.destroyed || !this.state.reviewInFlight) return;
+      try {
+        const progress = await this.api.getReviewProgress(caseId);
+        if (this.state.reviewInFlight && progress.status === "running") {
+          this.patch({ reviewProgress: progress });
+        }
+      } catch {
+        // Progress is cosmetic; polling failures stay silent.
+      }
+      if (!this.destroyed && this.state.reviewInFlight) {
+        this.progressTimer = window.setTimeout(() => void poll(), 2_000);
+      }
+    };
+    this.progressTimer = window.setTimeout(() => void poll(), 1_200);
+  }
+
+  private stopProgressPolling(): void {
+    if (this.progressTimer !== null) {
+      window.clearTimeout(this.progressTimer);
+      this.progressTimer = null;
+    }
   }
 
   private scheduleJobPoll(job: JobRecord): void {
@@ -1172,6 +1207,7 @@ export class WorkbenchStore {
     }
     await this.withBusy(async () => {
       this.patch({ reviewInFlight: true });
+      if (this.state.selectedCase) this.startProgressPolling(this.state.selectedCase.case_id);
       try {
         const job = await this.api.enqueueRevision(run.review_run_id, { proposal_ids: proposalIds }, crypto.randomUUID());
         this.patch({ selectedCorrectionProposalIds: new Set<string>(), activeJob: job });

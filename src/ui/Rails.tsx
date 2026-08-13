@@ -135,6 +135,7 @@ export function TraceRail() {
  * time and the fixed stage names as pending — never a completion it hasn't seen.
  */
 function ReviewInFlight() {
+  const state = useWorkbenchState();
   const [seconds, setSeconds] = useState(0);
   useEffect(() => {
     const timer = window.setInterval(() => setSeconds((value) => value + 1), 1_000);
@@ -142,15 +143,21 @@ function ReviewInFlight() {
   }, []);
   const minutes = Math.floor(seconds / 60);
   const elapsed = minutes > 0 ? `${minutes}분 ${seconds % 60}초` : `${seconds}초`;
-  const plannedStages = [
-    "classify_documents",
-    "extract_facts",
-    "normalize_facts",
-    "match_documents",
-    "validate_documents",
-    "retrieve_evidence",
-    "generate_result",
-  ];
+  const live = state.reviewProgress?.stages ?? [];
+  const stages = live.length
+    ? live
+    : [
+        "classify_documents",
+        "extract_facts",
+        "normalize_facts",
+        "match_documents",
+        "validate_documents",
+        "reextract_documents",
+        "retrieve_evidence",
+        "generate_result",
+      ].map((stage) => ({ stage, status: "pending" }));
+  const stepLabel = (status: string) =>
+    status === "completed" ? "완료" : status === "running" ? "진행 중" : "대기";
   return (
     <div className="trace-inflight" role="status">
       <p className="trace-inflight__pulse">
@@ -158,15 +165,20 @@ function ReviewInFlight() {
         {`실행 중 · ${elapsed} 경과`}
       </p>
       <p className="trace-inflight__hint">
-        실제 모델 심사는 수 분이 걸릴 수 있습니다. 단계별 실측 기록은 완료 즉시 이 자리에 표시됩니다.
+        {live.length
+          ? "Agent가 보고한 단계별 실시간 진행입니다. 완료되면 실측 기록으로 바뀝니다."
+          : "실제 모델 심사는 수 분이 걸릴 수 있습니다. 단계별 진행이 확인되면 표시됩니다."}
       </p>
       <ol className="workflow-list">
-        {plannedStages.map((stage) => (
-          <li key={stage} className="workflow-step workflow-step--pending">
+        {stages.map((entry) => (
+          <li
+            key={entry.stage}
+            className={`workflow-step workflow-step--${entry.status === "completed" ? "completed" : entry.status === "running" ? "live" : "pending"}`}
+          >
             <span className="workflow-dot" aria-hidden="true" />
             <div>
-              <strong>{workflowLabel(stage)}</strong>
-              <small>예정된 제한형 단계</small>
+              <strong>{workflowLabel(entry.stage)}</strong>
+              <small>{stepLabel(entry.status)}</small>
             </div>
           </li>
         ))}

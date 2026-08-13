@@ -10,6 +10,7 @@ import type {
   AuthConfig,
   CaseClosure,
   CaseDocument,
+  ReviewProgress,
   CaseSummary,
   ComparisonOperand,
   CorrectionDecision,
@@ -129,6 +130,24 @@ export function decodeCaseSummary(value: unknown): CaseSummary {
     ...(raw.closure === undefined || raw.closure === null
       ? {}
       : { closure: decodeCaseClosure(raw.closure) }),
+  };
+}
+
+export function decodeReviewProgress(value: unknown): ReviewProgress {
+  const context = "review progress";
+  const raw = record(value, context);
+  return {
+    status: oneOf(raw.status, ["idle", "running"] as const, `${context}.status`),
+    ...(raw.review_run_id === undefined || raw.review_run_id === null
+      ? {}
+      : { review_run_id: requiredString(raw.review_run_id, `${context}.review_run_id`) }),
+    stages: array(raw.stages ?? [], `${context}.stages`).map((item, index) => {
+      const entry = record(item, `${context}.stages[${index}]`);
+      return {
+        stage: requiredString(entry.stage, `${context}.stages[${index}].stage`),
+        status: requiredString(entry.status, `${context}.stages[${index}].status`),
+      };
+    }),
   };
 }
 
