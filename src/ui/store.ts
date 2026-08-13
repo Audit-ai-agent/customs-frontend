@@ -55,6 +55,8 @@ import {
 
 /** One uploaded binary and its latest extraction job, keyed for the upload panel. */
 export interface AssetWorkbenchEntry {
+  /** True once this session confirmed the extracted text into a document. */
+  confirmed?: boolean;
   asset: DocumentAsset;
   extraction: ExtractionJob | null;
   extracting: boolean;
@@ -494,10 +496,17 @@ export class WorkbenchStore {
       this.api.listDocumentAssets(caseId),
       this.api.listReviewRuns(caseId),
     ]);
+    // The Backend does not return extraction state on the asset list, so a
+    // same-case reload keeps what this session already knows — otherwise a
+    // confirmed upload would fall back to "추출 전" with a rerun button.
+    const knownEntries = this.state.selectedCase?.case_id === caseId ? this.state.documentAssets : [];
     this.patch({
       selectedCase: caseDetail,
       documents,
-      documentAssets: assets.map((asset) => ({ asset, extraction: null, extracting: false })),
+      documentAssets: assets.map((asset) => {
+        const known = knownEntries.find((entry) => entry.asset.asset_id === asset.asset_id);
+        return known ? { ...known, asset } : { asset, extraction: null, extracting: false, confirmed: false };
+      }),
       uploadingAsset: false,
       runs: runSummaries,
       selectedRun: null,
@@ -680,6 +689,7 @@ export class WorkbenchStore {
         content_text: input.contentText,
         filename: input.filename,
       });
+      this.patchAssetEntry(input.assetId, { confirmed: true });
       await this.loadCase(current.case_id);
       this.patch({
         notice: "검수한 추출 텍스트를 문서로 등록했습니다. 활성 문서가 준비되면 AI 심사를 시작할 수 있습니다.",
@@ -795,7 +805,7 @@ export class WorkbenchStore {
     await this.withBusy(async () => {
       const recorded = await this.api.setFindingDecision(run.review_run_id, findingId, decision);
       this.mergeDecision(recorded);
-      this.patch({ notice: "담당자 판단과 사유를 기록했습니다. 이 판단은 자동 승인으로 이어지지 않습니다." });
+      this.patch({ notice: "기록했습니다." });
     });
   }
 
@@ -992,6 +1002,36 @@ export class WorkbenchStore {
     } finally {
       this.patch({ dutyLoading: false });
     }
+  }
+
+  /** True when the latest run exists and every finding carries a decision. */
+  caseClosable(): boolean {
+    const current = this.state.selectedCase;
+    return (
+      current !== null &&
+      current.status !== "closed" &&
+      this.state.selectedRun !== null &&
+      this.openFindings().length === 0
+    );
+  }
+
+  async closeCase(disposition: "cleared" | "returned", reason: string): Promise<void> {
+    if (!this.hasRole("reviewer")) {
+      this.showError(new Error("심사 종료는 심사자 역할에서만 할 수 있습니다."));
+      return;
+    }
+    const current = this.state.selectedCase;
+    if (!current) return;
+    await this.withBusy(async () => {
+      const closed = await this.api.closeCase(current.case_id, { disposition, reason });
+      this.patch({
+        selectedCase: closed,
+        cases: this.state.cases.map((item) => (item.case_id === closed.case_id ? closed : item)),
+        notice: disposition === "cleared"
+          ? "심사를 종료했습니다. 이 Case는 검토 종결 상태로 기록되었습니다."
+          : "심사를 종료했습니다. 이 Case는 반려·보완 요청 상태로 기록되었습니다.",
+      });
+    });
   }
 
   async recordHsSelection(code: string, reason: string): Promise<void> {

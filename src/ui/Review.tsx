@@ -84,6 +84,8 @@ export function ReviewStage() {
         <NextSteps run={run} />
       </section>
 
+      <CaseClosurePanel />
+
       {/* The agent narrative and the raw references are reference material: reachable,
           but not stacked on top of the judgement work by default. */}
       <CollapsibleSection
@@ -110,6 +112,80 @@ export function ReviewStage() {
           <ReportEvidenceRows run={run} />
         </div>
       </CollapsibleSection>
+    </section>
+  );
+}
+
+/** The final step of the journey: record the internal disposition and close. */
+function CaseClosurePanel() {
+  const store = useStore();
+  const state = useWorkbenchState();
+  const [disposition, setDisposition] = useState<"cleared" | "returned">("cleared");
+  const [reason, setReason] = useState("");
+  const current = state.selectedCase;
+  if (!current) return null;
+
+  if (current.status === "closed") {
+    const closure = current.closure ?? null;
+    return (
+      <section className="surface" data-case-closure>
+        <SectionHeading title="심사 종료" description="이 Case는 종료되었습니다. 결과는 읽기 전용으로 남습니다." />
+        {closure ? (
+          <p className="form-hint">
+            {`${closure.disposition === "cleared" ? "검토 종결" : "반려 · 보완 요청"} · ${closure.closed_by} · ${closure.reason}`}
+          </p>
+        ) : null}
+      </section>
+    );
+  }
+
+  const closable = store.caseClosable();
+  return (
+    <section className="surface" data-case-closure>
+      <SectionHeading
+        title="심사 종료"
+        description={
+          closable
+            ? "모든 확인 사항에 판단이 기록되었습니다. 최종 처리 방향을 선택해 이 Case를 종료할 수 있습니다."
+            : "모든 확인 사항에 담당자 판단이 기록되면 Case를 종료할 수 있습니다."
+        }
+      />
+      {store.hasRole("reviewer") ? (
+        closable ? (
+          <form
+            className="decision-form"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void store.closeCase(disposition, reason.trim()).then(() => setReason(""));
+            }}
+          >
+            <Field label="최종 처리 방향">
+              <select
+                name="closure_disposition"
+                value={disposition}
+                onChange={(event) => setDisposition(event.target.value as "cleared" | "returned")}
+              >
+                <option value="cleared">검토 종결 · 이상 없음</option>
+                <option value="returned">반려 · 보완 요청 후 종결</option>
+              </select>
+            </Field>
+            <Field label="종료 사유">
+              <input
+                name="closure_reason"
+                type="text"
+                required
+                maxLength={4_000}
+                placeholder="예: 확인 사항 판단 완료, 서류 이상 없음"
+                value={reason}
+                onChange={(event) => setReason(event.target.value)}
+              />
+            </Field>
+            <Submit label="심사 종료" disabled={state.busy} />
+          </form>
+        ) : null
+      ) : (
+        <RoleBoundaryNote>심사 종료는 심사자 역할에서만 할 수 있습니다.</RoleBoundaryNote>
+      )}
     </section>
   );
 }

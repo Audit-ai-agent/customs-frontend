@@ -8,6 +8,7 @@ import type {
   AssistantMessageExchange,
   Assessment,
   AuthConfig,
+  CaseClosure,
   CaseDocument,
   CaseSummary,
   ComparisonOperand,
@@ -125,6 +126,20 @@ export function decodeCaseSummary(value: unknown): CaseSummary {
     status: oneOf(raw.status, ["open", "in_review", "closed"], "case.status"),
     revision: nonNegativeInteger(raw.revision, "case.revision"),
     updated_at: requiredString(raw.updated_at, "case.updated_at"),
+    ...(raw.closure === undefined || raw.closure === null
+      ? {}
+      : { closure: decodeCaseClosure(raw.closure) }),
+  };
+}
+
+function decodeCaseClosure(value: unknown): CaseClosure {
+  const raw = record(value, "case.closure");
+  return {
+    disposition: oneOf(raw.disposition, ["cleared", "returned"] as const, "case.closure.disposition"),
+    reason: displayText(raw.reason, "case.closure.reason"),
+    review_run_id: requiredString(raw.review_run_id, "case.closure.review_run_id"),
+    closed_by: requiredString(raw.closed_by, "case.closure.closed_by"),
+    closed_at: requiredString(raw.closed_at, "case.closure.closed_at"),
   };
 }
 

@@ -46,26 +46,6 @@ export function Dashboard() {
         <DashStat label="종료" value={counts.closed} hint="검토가 끝난 건" tone="done" />
       </div>
 
-      <section className="dash-flow" aria-label="처리 흐름">
-        <p className="dash-flow__title">처리 흐름 · 서류 등록에서 담당자 확정까지</p>
-        <ol className="dash-flow__row">
-          {FLOW_MAP.map((step, index) => (
-            <li className="dash-flow__step" key={step.step}>
-              <span className="dash-flow__n">{step.step}</span>
-              <span className="dash-flow__tx">
-                <strong>{step.label}</strong>
-                <span>{step.hint}</span>
-              </span>
-              {index === FLOW_MAP.length - 1 ? null : (
-                <span className="dash-flow__arrow" aria-hidden="true">
-                  →
-                </span>
-              )}
-            </li>
-          ))}
-        </ol>
-      </section>
-
       <div className="dash-tools">
         <div className="dash-filters" role="group" aria-label="상태 필터">
           {CASE_FILTERS.map((filter) => (
@@ -105,6 +85,26 @@ export function Dashboard() {
       <section className="surface dash-table-panel">
         <SectionHeading title="Case 목록" description="행을 누르면 해당 Case의 심사 워크스페이스로 이동합니다." />
         <CaseTable />
+      </section>
+
+      <section className="dash-flow" aria-label="처리 흐름">
+        <p className="dash-flow__title">처리 흐름 · 서류 등록에서 담당자 확정까지</p>
+        <ol className="dash-flow__row">
+          {FLOW_MAP.map((step, index) => (
+            <li className="dash-flow__step" key={step.step}>
+              <span className="dash-flow__n">{step.step}</span>
+              <span className="dash-flow__tx">
+                <strong>{step.label}</strong>
+                <span>{step.hint}</span>
+              </span>
+              {index === FLOW_MAP.length - 1 ? null : (
+                <span className="dash-flow__arrow" aria-hidden="true">
+                  →
+                </span>
+              )}
+            </li>
+          ))}
+        </ol>
       </section>
 
       {!store.hasRole("reviewer") ? (

@@ -42,7 +42,9 @@
 html,body{height:100%}
 html{background:var(--krds-bg)}
 body{font-family:var(--ui);color:var(--krds-ink);line-height:1.6;font-synthesis:none;-webkit-font-smoothing:antialiased;
-  background:var(--krds-bg);overflow-x:hidden;min-width:20rem}
+  background:var(--krds-bg);overflow-x:hidden;min-width:20rem;
+  /* 한국어 어절 중간에서 줄이 끊기지 않도록. 긴 코드·경로는 overflow-wrap이 처리합니다. */
+  word-break:keep-all;overflow-wrap:break-word}
 ::selection{background:var(--krds-primary-bg)}
 /* 식별자·숫자 정렬용 유틸. 고정폭 서체 대신 KRDS 본문서체의 tabular 숫자를 씁니다. */
 .mono,[class].mono{font-family:var(--num);font-variant-numeric:tabular-nums;letter-spacing:0}

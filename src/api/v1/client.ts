@@ -27,6 +27,7 @@ import type {
   AssistantMessage,
   AssistantMessageExchange,
   AuthConfig,
+  CaseClosureRequest,
   CaseDetail,
   CaseDocument,
   CaseSummary,
@@ -135,6 +136,24 @@ export class ApiClient {
       this.assertOrg(item.org_id, "Case");
       return item;
     });
+  }
+
+  closeCase(caseId: string, payload: CaseClosureRequest): Promise<CaseDetail> {
+    const reason = payload.reason.trim();
+    if (!reason || reason.length > 4_000) throw new ContractError("closure reason is invalid");
+    if (payload.disposition !== "cleared" && payload.disposition !== "returned") {
+      throw new ContractError("closure disposition is invalid");
+    }
+    return this.request(
+      `/cases/${segment(caseId)}/closure`,
+      this.json("POST", { disposition: payload.disposition, reason }),
+      (value) => {
+        const item = decodeCaseSummary(value);
+        this.assertIdentity(item.case_id, caseId, "Closed Case");
+        this.assertOrg(item.org_id, "Closed Case");
+        return item;
+      },
+    );
   }
 
   listDocuments(caseId: string): Promise<CaseDocument[]> {

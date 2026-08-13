@@ -151,10 +151,17 @@ function UploadAssetForm() {
 
 function AssetRow({ entry }: { entry: AssetWorkbenchEntry }) {
   const store = useStore();
+  const state = useWorkbenchState();
   const { asset, extraction, extracting } = entry;
+  // The Backend does not link assets to their confirmed documents, so a prior
+  // session's confirmation is recognized by the default confirm filename.
+  const confirmedFilename = asset.filename.replace(/\.(pdf|jpe?g|png)$/iu, "") + ".txt";
+  const confirmed = entry.confirmed || state.documents.some((document) => document.filename === confirmedFilename);
   const preview = extraction?.result ?? null;
   const confirmable =
-    extraction !== null && (extraction.status === "preview_ready" || extraction.status === "needs_review");
+    !confirmed &&
+    extraction !== null &&
+    (extraction.status === "preview_ready" || extraction.status === "needs_review");
   return (
     <article className="asset-row" data-asset-id={asset.asset_id}>
       <header className="asset-row__head">
@@ -166,10 +173,16 @@ function AssetRow({ entry }: { entry: AssetWorkbenchEntry }) {
             {asset.media_type === "application/pdf" ? ` · ${asset.page_count}쪽` : ""}
           </small>
         </div>
-        <span className={`asset-status asset-status--${extraction?.status ?? "none"}`}>
-          {extracting ? "추출 중…" : extraction ? extractionStatusLabel(extraction.status) : "추출 전"}
+        <span className={`asset-status asset-status--${confirmed ? "confirmed" : extraction?.status ?? "none"}`}>
+          {confirmed
+            ? "문서로 확정됨"
+            : extracting
+              ? "추출 중…"
+              : extraction
+                ? extractionStatusLabel(extraction.status)
+                : "추출 전"}
         </span>
-        {!extraction && !extracting ? (
+        {!extraction && !extracting && !confirmed ? (
           <button className="btn" type="button" onClick={() => void store.runExtraction(asset.asset_id)}>
             자동 추출 실행
           </button>

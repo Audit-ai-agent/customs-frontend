@@ -32,6 +32,14 @@ export interface Session {
   roles: Array<"reviewer" | "approver">;
 }
 
+export interface CaseClosure {
+  disposition: "cleared" | "returned";
+  reason: string;
+  review_run_id: string;
+  closed_by: string;
+  closed_at: string;
+}
+
 export interface CaseSummary {
   case_id: string;
   org_id: string;
@@ -40,9 +48,15 @@ export interface CaseSummary {
   status: "open" | "in_review" | "closed";
   revision: number;
   updated_at: string;
+  closure?: CaseClosure | null;
 }
 
 export type CaseDetail = CaseSummary;
+
+export interface CaseClosureRequest {
+  disposition: "cleared" | "returned";
+  reason: string;
+}
 
 export interface CaseDocument {
   document_id: string;
