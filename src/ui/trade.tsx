@@ -46,6 +46,9 @@ export function HsClassificationCard() {
   const activeCode = chosen ?? selection?.code ?? null;
   const recommended = view.candidates.find((item) => item.recommended) ?? null;
   const manualOverride = selection !== null && recommended !== null && selection.code !== recommended.code;
+  const descriptionOnly =
+    view.candidates.length > 0 &&
+    view.candidates.every((item) => item.origin === "description_match");
 
   return (
     <section className="surface" data-hsk-card>
@@ -53,8 +56,14 @@ export function HsClassificationCard() {
         title="HSK 분류"
         description={`문서에서 추출된 HS 코드 근거로 후보를 제시합니다. 품목명 출처: ${view.reference.source} (${view.reference.as_of} 기준)`}
       />
+      {descriptionOnly ? (
+        <div className="hsk-note on" data-hsk-description-note>
+          문서에서 HS 코드를 찾지 못해 <b>품명 매칭 후보</b>를 제시합니다. 참조표의 품목명과 품명 텍스트를
+          대조한 결과일 뿐이므로 반드시 담당자가 검토 후 확정하십시오.
+        </div>
+      ) : null}
       {view.candidates.length === 0 ? (
-        <EmptyCopy>이번 실행의 문서 사실에서 HS 코드를 찾지 못했습니다. 문서 원문을 보완하십시오.</EmptyCopy>
+        <EmptyCopy>이번 실행의 문서 사실에서 HS 코드와 품명을 찾지 못했습니다. 문서 원문을 보완하십시오.</EmptyCopy>
       ) : (
         <div className="hsk">
           {view.candidates.map((candidate) => (
@@ -152,7 +161,15 @@ function HsCandidateRow({
         </div>
         <div className="pct">{candidate.confidence.toFixed(2)}</div>
       </div>
-      <span className="pin">{confirmed ? "확정" : candidate.recommended ? "추천" : "후보"}</span>
+      <span className="pin">
+        {confirmed
+          ? "확정"
+          : candidate.recommended
+            ? "추천"
+            : candidate.origin === "description_match"
+              ? "품명 기반"
+              : "후보"}
+      </span>
     </div>
   );
 }

@@ -592,6 +592,8 @@ export interface HsCandidateBasis {
   raw_value: string;
 }
 
+export type HsCandidateOrigin = "document_code" | "description_match";
+
 export interface HsCandidate {
   code: string;
   name_ko?: string | null;
@@ -600,6 +602,7 @@ export interface HsCandidate {
   confidence: number;
   in_reference: boolean;
   recommended: boolean;
+  origin: HsCandidateOrigin;
   basis: HsCandidateBasis[];
 }
 

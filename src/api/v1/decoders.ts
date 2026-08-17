@@ -915,6 +915,10 @@ function decodeHsCandidate(value: unknown, context: string): HsCandidate {
     confidence: boundedRatio(raw.confidence, `${context}.confidence`),
     in_reference: booleanValue(raw.in_reference, `${context}.in_reference`),
     recommended: booleanValue(raw.recommended, `${context}.recommended`),
+    origin:
+      raw.origin === undefined
+        ? "document_code"
+        : oneOf(raw.origin, ["document_code", "description_match"] as const, `${context}.origin`),
     basis: array(raw.basis ?? [], `${context}.basis`).map((item, index) => {
       const entry = record(item, `${context}.basis[${index}]`);
       return {
