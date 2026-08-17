@@ -12,6 +12,7 @@ import {
   decodeDutyAssessment,
   decodeExtractionJobEnvelope,
   decodeHsClassification,
+  decodeHsReferenceEntry,
   decodeHsSelection,
   decodeJob,
   decodeOriginVerification,
@@ -47,6 +48,7 @@ import type {
   ExtractionJobEnvelope,
   FindingDecisionRequest,
   HsClassification,
+  HsReferenceEntry,
   HsSelection,
   HsSelectionRequest,
   JobRecord,
@@ -341,6 +343,15 @@ export class ApiClient {
         return view;
       },
     );
+  }
+
+  getHskReference(code: string): Promise<HsReferenceEntry> {
+    if (!/^[0-9]{10}$/u.test(code)) throw new ContractError("HSK reference code is invalid");
+    return this.request(`/hsk-reference/${segment(code)}`, { method: "GET" }, (value) => {
+      const entry = decodeHsReferenceEntry(value);
+      this.assertIdentity(entry.code, code, "HSK reference code");
+      return entry;
+    });
   }
 
   recordHsSelection(reviewRunId: string, payload: HsSelectionRequest): Promise<HsSelection> {

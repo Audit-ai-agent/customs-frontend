@@ -16,6 +16,7 @@ import type {
   ExtractionJob,
   FindingDecisionRequest,
   HsClassification,
+  HsReferenceEntry,
   JobRecord,
   OriginVerification,
   ReviewComparison,
@@ -1111,6 +1112,11 @@ export class WorkbenchStore {
         notice: "HSK 분류를 확정했습니다. 관세 진단에 확정 코드가 반영됩니다.",
       });
     });
+  }
+
+  lookupHskReference(code: string): Promise<HsReferenceEntry> {
+    // Read-only reference lookup; the caller renders its own inline result.
+    return this.api.getHskReference(code);
   }
 
   /* ── correction proposals ────────────────────────────────────── */

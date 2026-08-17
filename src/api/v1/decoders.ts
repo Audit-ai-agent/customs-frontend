@@ -34,6 +34,7 @@ import type {
   DutyRate,
   HsCandidate,
   HsClassification,
+  HsReferenceEntry,
   HsSelection,
   JobRecord,
   OriginCheck,
@@ -928,6 +929,34 @@ function decodeHsCandidate(value: unknown, context: string): HsCandidate {
         raw_value: displayText(entry.raw_value, `${context}.basis[${index}].raw_value`),
       };
     }),
+  };
+}
+
+export function decodeHsReferenceEntry(value: unknown): HsReferenceEntry {
+  const context = "HSK reference entry";
+  const raw = record(value, context);
+  const reference = record(raw.reference, `${context}.reference`);
+  return {
+    code: hsCode(raw.code, `${context}.code`),
+    in_reference: booleanValue(raw.in_reference, `${context}.in_reference`),
+    ...(raw.name_ko === undefined || raw.name_ko === null
+      ? {}
+      : { name_ko: displayText(raw.name_ko, `${context}.name_ko`) }),
+    ...(raw.name_en === undefined || raw.name_en === null
+      ? {}
+      : { name_en: displayText(raw.name_en, `${context}.name_en`) }),
+    ancestors: array(raw.ancestors ?? [], `${context}.ancestors`).map((item, index) => {
+      const entry = record(item, `${context}.ancestors[${index}]`);
+      return {
+        level: nonNegativeInteger(entry.level, `${context}.ancestors[${index}].level`),
+        code: requiredString(entry.code, `${context}.ancestors[${index}].code`),
+        name_ko: displayText(entry.name_ko, `${context}.ancestors[${index}].name_ko`),
+      };
+    }),
+    reference: {
+      as_of: requiredString(reference.as_of, `${context}.reference.as_of`),
+      source: displayText(reference.source, `${context}.reference.source`),
+    },
   };
 }
 

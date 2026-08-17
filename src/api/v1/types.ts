@@ -606,6 +606,15 @@ export interface HsCandidate {
   basis: HsCandidateBasis[];
 }
 
+export interface HsReferenceEntry {
+  code: string;
+  in_reference: boolean;
+  name_ko?: string | null;
+  name_en?: string | null;
+  ancestors: HsAncestor[];
+  reference: { as_of: string; source: string };
+}
+
 export interface HsSelectionHistoryEntry {
   code: string;
   reason: string;

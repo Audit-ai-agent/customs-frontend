@@ -1,5 +1,5 @@
 import { useState } from "react";
-import type { DutyRate, HsCandidate, OriginCheckStatus } from "../api/v1/types";
+import type { DutyRate, HsCandidate, HsReferenceEntry, OriginCheckStatus } from "../api/v1/types";
 import { EmptyCopy, EmptyState, ExternalSourceLink, Field, Num, RoleBoundaryNote, SectionHeading, Submit } from "./primitives";
 import { GoToDocumentsButton } from "./stages";
 import { useStore, useWorkbenchState } from "./useStore";
@@ -16,6 +16,10 @@ export function HsClassificationCard() {
   const view = state.hsClassification;
   const [chosen, setChosen] = useState<string | null>(null);
   const [reason, setReason] = useState("");
+  const [manualCode, setManualCode] = useState("");
+  const [manualEntry, setManualEntry] = useState<HsReferenceEntry | null>(null);
+  const [manualError, setManualError] = useState<string | null>(null);
+  const [manualLoading, setManualLoading] = useState(false);
 
   if (!state.selectedRun) {
     return (
@@ -63,7 +67,10 @@ export function HsClassificationCard() {
         </div>
       ) : null}
       {view.candidates.length === 0 ? (
-        <EmptyCopy>이번 실행의 문서 사실에서 HS 코드와 품명을 찾지 못했습니다. 문서 원문을 보완하십시오.</EmptyCopy>
+        <EmptyCopy>
+          이번 실행의 문서 사실에서 HS 코드와 품명을 찾지 못했습니다. 문서 원문을 보완하거나 아래에서 HSK
+          코드를 직접 입력해 확정할 수 있습니다.
+        </EmptyCopy>
       ) : (
         <div className="hsk">
           {view.candidates.map((candidate) => (
@@ -77,6 +84,73 @@ export function HsClassificationCard() {
           ))}
         </div>
       )}
+      <form
+        className="decision-form"
+        data-hsk-manual-entry
+        onSubmit={(event) => {
+          event.preventDefault();
+          const code = manualCode.trim();
+          if (!/^[0-9]{10}$/u.test(code)) {
+            setManualEntry(null);
+            setManualError("HSK 코드는 10자리 숫자입니다.");
+            return;
+          }
+          setManualLoading(true);
+          setManualError(null);
+          store
+            .lookupHskReference(code)
+            .then((entry) => {
+              setManualEntry(entry);
+              if (!entry.in_reference) {
+                setManualError("이 코드는 관세청 HSK 참조표에 없습니다. 코드를 다시 확인하십시오.");
+              }
+            })
+            .catch(() => {
+              setManualEntry(null);
+              setManualError("HSK 참조표 조회에 실패했습니다. 잠시 후 다시 시도하십시오.");
+            })
+            .finally(() => setManualLoading(false));
+        }}
+      >
+        <Field label="HSK 코드 직접 입력 (10자리)">
+          <input
+            name="hs_manual_code"
+            type="text"
+            inputMode="numeric"
+            maxLength={10}
+            placeholder="예: 6109101000"
+            value={manualCode}
+            onChange={(event) => {
+              setManualCode(event.target.value.replace(/[^0-9]/gu, ""));
+              setManualEntry(null);
+              setManualError(null);
+            }}
+          />
+        </Field>
+        <Submit label={manualLoading ? "조회 중…" : "참조표 조회"} disabled={manualLoading} />
+      </form>
+      {manualError ? <p className="unsupported-inline">{manualError}</p> : null}
+      {manualEntry !== null && manualEntry.in_reference ? (
+        <div className="hsk" data-hsk-manual-result>
+          <HsCandidateRow
+            candidate={{
+              code: manualEntry.code,
+              name_ko: manualEntry.name_ko ?? null,
+              name_en: manualEntry.name_en ?? null,
+              ancestors: manualEntry.ancestors,
+              confidence: 0,
+              in_reference: true,
+              recommended: false,
+              origin: "document_code",
+              basis: [],
+            }}
+            picked={activeCode === manualEntry.code}
+            confirmed={selection?.code === manualEntry.code}
+            onPick={() => setChosen(manualEntry.code)}
+            manual
+          />
+        </div>
+      ) : null}
       {selection ? (
         <p className="form-hint" data-hsk-selection>
           {`확정 코드 ${selection.code} · ${selection.selected_by} · ${selection.reason}`}
@@ -126,11 +200,13 @@ function HsCandidateRow({
   picked,
   confirmed,
   onPick,
+  manual = false,
 }: {
   candidate: HsCandidate;
   picked: boolean;
   confirmed: boolean;
   onPick: () => void;
+  manual?: boolean;
 }) {
   const breadcrumbs = candidate.ancestors.map((item) => item.name_ko).join(" › ");
   return (
@@ -152,23 +228,29 @@ function HsCandidateRow({
         {candidate.name_ko ?? "품목명 정보 없음 (참조표 밖의 코드)"}
         <small>
           {breadcrumbs || "분류 경로 없음"}
-          {` · 근거 문서 ${new Set(candidate.basis.map((item) => item.document_id)).size}건`}
+          {manual
+            ? " · 담당자가 직접 입력한 코드"
+            : ` · 근거 문서 ${new Set(candidate.basis.map((item) => item.document_id)).size}건`}
         </small>
       </div>
-      <div className="conf-bar">
-        <div className="track">
-          <div className="fill" style={{ width: `${Math.round(candidate.confidence * 100)}%` }} />
+      {manual ? null : (
+        <div className="conf-bar">
+          <div className="track">
+            <div className="fill" style={{ width: `${Math.round(candidate.confidence * 100)}%` }} />
+          </div>
+          <div className="pct">{candidate.confidence.toFixed(2)}</div>
         </div>
-        <div className="pct">{candidate.confidence.toFixed(2)}</div>
-      </div>
+      )}
       <span className="pin">
         {confirmed
           ? "확정"
-          : candidate.recommended
-            ? "추천"
-            : candidate.origin === "description_match"
-              ? "품명 기반"
-              : "후보"}
+          : manual
+            ? "직접 입력"
+            : candidate.recommended
+              ? "추천"
+              : candidate.origin === "description_match"
+                ? "품명 기반"
+                : "후보"}
       </span>
     </div>
   );
