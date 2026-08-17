@@ -218,17 +218,27 @@ const api = {
       { code: "6109101000", name_ko: "티셔츠", name_en: "T-shirts", ancestors: [{ level: 2, code: "61", name_ko: "의류(편물제)" }, { level: 4, code: "6109", name_ko: "티셔츠·싱글리트와 그 밖의 조끼" }] },
       { code: "0303540000", name_ko: "고등어", name_en: "Mackerel", ancestors: [{ level: 2, code: "03", name_ko: "어류·갑각류" }, { level: 4, code: "0303", name_ko: "냉동어류" }] },
     ];
-    const results = rows.filter((row) =>
-      isCode
-        ? row.code.startsWith(compact)
-        : `${row.name_ko} ${row.name_en}`.toLowerCase().includes(trimmed.toLowerCase()),
-    );
+    // Mirrors the Backend's two phases: rows matching every word first,
+    // otherwise rows matching any word with the view flagged partial.
+    const tokens = trimmed.toLowerCase().split(/\s+/u).filter(Boolean);
+    const rowText = (row: { name_ko: string; name_en: string }) => `${row.name_ko} ${row.name_en}`.toLowerCase();
+    let results: typeof rows;
+    let partial = false;
+    if (isCode) {
+      results = rows.filter((row) => row.code.startsWith(compact));
+    } else {
+      results = rows.filter((row) => tokens.every((token) => rowText(row).includes(token)));
+      if (results.length === 0) {
+        results = rows.filter((row) => tokens.some((token) => rowText(row).includes(token)));
+        partial = results.length > 0;
+      }
+    }
     return {
       query: trimmed,
       mode: isCode ? "code_prefix" : "name",
       results: results.slice(0, 12),
       truncated: results.length > 12,
-      partial: false,
+      partial,
       reference: { as_of: "2026-01-01", source: "관세청 HS부호 단위별 품목명 (미리보기 고정값)" },
     };
   },
