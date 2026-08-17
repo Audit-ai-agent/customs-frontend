@@ -13,6 +13,7 @@ import {
   decodeExtractionJobEnvelope,
   decodeHsClassification,
   decodeHsReferenceEntry,
+  decodeHsReferenceSearch,
   decodeHsSelection,
   decodeJob,
   decodeOriginVerification,
@@ -49,6 +50,7 @@ import type {
   FindingDecisionRequest,
   HsClassification,
   HsReferenceEntry,
+  HsReferenceSearch,
   HsSelection,
   HsSelectionRequest,
   JobRecord,
@@ -352,6 +354,13 @@ export class ApiClient {
       this.assertIdentity(entry.code, code, "HSK reference code");
       return entry;
     });
+  }
+
+  searchHskReference(query: string): Promise<HsReferenceSearch> {
+    const trimmed = query.trim();
+    if (!trimmed || trimmed.length > 100) throw new ContractError("HSK reference search query is invalid");
+    const params = new URLSearchParams({ q: trimmed });
+    return this.request(`/hsk-reference?${params.toString()}`, { method: "GET" }, decodeHsReferenceSearch);
   }
 
   recordHsSelection(reviewRunId: string, payload: HsSelectionRequest): Promise<HsSelection> {

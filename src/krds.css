@@ -339,6 +339,20 @@ a{color:inherit}
   border-radius:var(--r-sm);padding:11px 14px;font-size:12.5px;color:var(--krds-warning-strong);display:none;line-height:1.6}
 .hsk-note.on{display:block}
 
+/* HSK reference typeahead (code prefix + item-name reverse search) */
+.hsk-search{position:relative;margin-top:14px}
+.hsk-search-list{position:absolute;z-index:40;left:0;right:0;top:100%;margin:4px 0 0;padding:4px;list-style:none;
+  background:var(--krds-surface);border:1px solid var(--krds-line-2);border-radius:var(--r);
+  box-shadow:var(--shadow-lg,0 8px 24px rgba(0,0,0,.14));max-height:320px;overflow-y:auto}
+.hsk-search-option{display:flex;align-items:baseline;gap:12px;padding:9px 10px;border-radius:var(--r-sm);cursor:pointer}
+.hsk-search-option.active{background:var(--krds-primary-bg-soft)}
+.hsk-search-option .code{font-family:var(--num);font-variant-numeric:tabular-nums;font-size:13.5px;font-weight:800;
+  flex:none;padding:0;background:none;color:var(--krds-ink);overflow:visible;line-height:1.4}
+.hsk-search-option .nm{font-size:13px;color:var(--krds-text);min-width:0}
+.hsk-search-option .nm small{display:block;color:var(--krds-muted);font-size:11.5px;margin-top:1px}
+.hsk-search-cap{padding:6px 10px;font-size:11.5px;color:var(--krds-muted)}
+.hsk-search-empty{padding:10px;font-size:12.5px;color:var(--krds-muted)}
+
 /* cross-check */
 .matrix{background:var(--krds-surface);border:1px solid var(--krds-line-2);border-radius:var(--r);
   box-shadow:var(--shadow);overflow:hidden}

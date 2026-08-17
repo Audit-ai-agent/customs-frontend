@@ -169,6 +169,10 @@ const api = {
     ...documents.find((item) => item.document_id === documentId),
     content_text: contents[documentId] ?? "",
   }),
+  // CP9 introduced the asset upload flow; the preview keeps it empty so the
+  // text-document path stays reviewable without a Backend.
+  listDocumentAssets: async () => [],
+  deleteCase: async () => undefined,
   listReviewRuns: async (caseId: string) => caseId === "case-2" ? [] : [runSummary],
   getReviewRun: async () => run,
   listAssistantConversations: async () => [conversation],
@@ -204,6 +208,29 @@ const api = {
       },
     ],
   }),
+  searchHskReference: async (query: string) => {
+    const trimmed = query.trim();
+    const compact = trimmed.replace(/ /gu, "");
+    const isCode = /^[0-9]{1,10}$/u.test(compact);
+    const rows = [
+      { code: "8517621000", name_ko: "유선 송신용 기기", name_en: "Wired transmission apparatus", ancestors: [{ level: 2, code: "85", name_ko: "전기기기와 그 부분품" }, { level: 4, code: "8517", name_ko: "전화기와 기타 음성·영상 송수신 기기" }] },
+      { code: "8517629000", name_ko: "기타 송수신 기기", name_en: "Other transmission apparatus", ancestors: [{ level: 2, code: "85", name_ko: "전기기기와 그 부분품" }, { level: 4, code: "8517", name_ko: "전화기와 기타 음성·영상 송수신 기기" }] },
+      { code: "6109101000", name_ko: "티셔츠", name_en: "T-shirts", ancestors: [{ level: 2, code: "61", name_ko: "의류(편물제)" }, { level: 4, code: "6109", name_ko: "티셔츠·싱글리트와 그 밖의 조끼" }] },
+      { code: "0303540000", name_ko: "고등어", name_en: "Mackerel", ancestors: [{ level: 2, code: "03", name_ko: "어류·갑각류" }, { level: 4, code: "0303", name_ko: "냉동어류" }] },
+    ];
+    const results = rows.filter((row) =>
+      isCode
+        ? row.code.startsWith(compact)
+        : `${row.name_ko} ${row.name_en}`.toLowerCase().includes(trimmed.toLowerCase()),
+    );
+    return {
+      query: trimmed,
+      mode: isCode ? "code_prefix" : "name",
+      results: results.slice(0, 12),
+      truncated: results.length > 12,
+      reference: { as_of: "2026-01-01", source: "관세청 HS부호 단위별 품목명 (미리보기 고정값)" },
+    };
+  },
   recordHsSelection: async (_runId: string, payload: { code: string; reason: string }) => ({
     code: payload.code,
     reason: payload.reason,

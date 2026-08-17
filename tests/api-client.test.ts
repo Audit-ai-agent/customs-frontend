@@ -239,4 +239,26 @@ describe("Backend API client", () => {
     ]);
     expect(JSON.parse(String(calls[1]?.init?.body))).toEqual({ code: "0303540000", reason: "문서 근거 일치" });
   });
+
+  it("searches the HSK reference by code prefix or item name", async () => {
+    const search = {
+      query: "티셔츠",
+      mode: "name",
+      results: [{ code: "6109101000", name_ko: "티셔츠", name_en: "T-shirts", ancestors: [{ level: 2, code: "61", name_ko: "의류" }] }],
+      truncated: false,
+      reference: { as_of: "2026-01-01", source: "관세청 HS부호 단위별 품목명" },
+    };
+    const calls: string[] = [];
+    const fetcher: typeof fetch = async (input) => {
+      calls.push(String(input));
+      return json(search);
+    };
+    const api = new ApiClient(fetcher, async () => "local-token");
+    const result = await api.searchHskReference(" 티셔츠 ");
+    expect(result.mode).toBe("name");
+    expect(result.results[0]?.code).toBe("6109101000");
+    expect(result.results[0]?.ancestors[0]?.name_ko).toBe("의류");
+    expect(calls).toEqual([`/api/v1/hsk-reference?q=${encodeURIComponent("티셔츠")}`]);
+    expect(() => api.searchHskReference("   ")).toThrow("HSK reference search query is invalid");
+  });
 });

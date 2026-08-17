@@ -32,9 +32,11 @@ import type {
   DutyAssessment,
   DutyEstimate,
   DutyRate,
+  HsAncestor,
   HsCandidate,
   HsClassification,
   HsReferenceEntry,
+  HsReferenceSearch,
   HsSelection,
   JobRecord,
   OriginCheck,
@@ -895,6 +897,17 @@ export function decodeHsSelection(value: unknown, context = "HS selection"): HsS
   };
 }
 
+function decodeHsAncestors(value: unknown, context: string): HsAncestor[] {
+  return array(value ?? [], context).map((item, index) => {
+    const entry = record(item, `${context}[${index}]`);
+    return {
+      level: nonNegativeInteger(entry.level, `${context}[${index}].level`),
+      code: requiredString(entry.code, `${context}[${index}].code`),
+      name_ko: displayText(entry.name_ko, `${context}[${index}].name_ko`),
+    };
+  });
+}
+
 function decodeHsCandidate(value: unknown, context: string): HsCandidate {
   const raw = record(value, context);
   return {
@@ -905,14 +918,7 @@ function decodeHsCandidate(value: unknown, context: string): HsCandidate {
     ...(raw.name_en === undefined || raw.name_en === null
       ? {}
       : { name_en: displayText(raw.name_en, `${context}.name_en`) }),
-    ancestors: array(raw.ancestors ?? [], `${context}.ancestors`).map((item, index) => {
-      const entry = record(item, `${context}.ancestors[${index}]`);
-      return {
-        level: nonNegativeInteger(entry.level, `${context}.ancestors[${index}].level`),
-        code: requiredString(entry.code, `${context}.ancestors[${index}].code`),
-        name_ko: displayText(entry.name_ko, `${context}.ancestors[${index}].name_ko`),
-      };
-    }),
+    ancestors: decodeHsAncestors(raw.ancestors, `${context}.ancestors`),
     confidence: boundedRatio(raw.confidence, `${context}.confidence`),
     in_reference: booleanValue(raw.in_reference, `${context}.in_reference`),
     recommended: booleanValue(raw.recommended, `${context}.recommended`),
@@ -945,14 +951,36 @@ export function decodeHsReferenceEntry(value: unknown): HsReferenceEntry {
     ...(raw.name_en === undefined || raw.name_en === null
       ? {}
       : { name_en: displayText(raw.name_en, `${context}.name_en`) }),
-    ancestors: array(raw.ancestors ?? [], `${context}.ancestors`).map((item, index) => {
-      const entry = record(item, `${context}.ancestors[${index}]`);
+    ancestors: decodeHsAncestors(raw.ancestors, `${context}.ancestors`),
+    reference: {
+      as_of: requiredString(reference.as_of, `${context}.reference.as_of`),
+      source: displayText(reference.source, `${context}.reference.source`),
+    },
+  };
+}
+
+export function decodeHsReferenceSearch(value: unknown): HsReferenceSearch {
+  const context = "HSK reference search";
+  const raw = record(value, context);
+  const reference = record(raw.reference, `${context}.reference`);
+  return {
+    query: displayText(raw.query, `${context}.query`),
+    mode: oneOf(raw.mode, ["code_prefix", "name"] as const, `${context}.mode`),
+    results: array(raw.results, `${context}.results`).map((item, index) => {
+      const entryContext = `${context}.results[${index}]`;
+      const entry = record(item, entryContext);
       return {
-        level: nonNegativeInteger(entry.level, `${context}.ancestors[${index}].level`),
-        code: requiredString(entry.code, `${context}.ancestors[${index}].code`),
-        name_ko: displayText(entry.name_ko, `${context}.ancestors[${index}].name_ko`),
+        code: hsCode(entry.code, `${entryContext}.code`),
+        ...(entry.name_ko === undefined || entry.name_ko === null
+          ? {}
+          : { name_ko: displayText(entry.name_ko, `${entryContext}.name_ko`) }),
+        ...(entry.name_en === undefined || entry.name_en === null
+          ? {}
+          : { name_en: displayText(entry.name_en, `${entryContext}.name_en`) }),
+        ancestors: decodeHsAncestors(entry.ancestors, `${entryContext}.ancestors`),
       };
     }),
+    truncated: booleanValue(raw.truncated, `${context}.truncated`),
     reference: {
       as_of: requiredString(reference.as_of, `${context}.reference.as_of`),
       source: displayText(reference.source, `${context}.reference.source`),

@@ -1,5 +1,11 @@
-import { useState } from "react";
-import type { DutyRate, HsCandidate, HsReferenceEntry, OriginCheckStatus } from "../api/v1/types";
+import { useEffect, useRef, useState } from "react";
+import type {
+  DutyRate,
+  HsCandidate,
+  HsReferenceSearch,
+  HsReferenceSearchResult,
+  OriginCheckStatus,
+} from "../api/v1/types";
 import { EmptyCopy, EmptyState, ExternalSourceLink, Field, Num, RoleBoundaryNote, SectionHeading, Submit } from "./primitives";
 import { GoToDocumentsButton } from "./stages";
 import { useStore, useWorkbenchState } from "./useStore";
@@ -16,10 +22,7 @@ export function HsClassificationCard() {
   const view = state.hsClassification;
   const [chosen, setChosen] = useState<string | null>(null);
   const [reason, setReason] = useState("");
-  const [manualCode, setManualCode] = useState("");
-  const [manualEntry, setManualEntry] = useState<HsReferenceEntry | null>(null);
-  const [manualError, setManualError] = useState<string | null>(null);
-  const [manualLoading, setManualLoading] = useState(false);
+  const [searchPick, setSearchPick] = useState<HsReferenceSearchResult | null>(null);
 
   if (!state.selectedRun) {
     return (
@@ -68,8 +71,8 @@ export function HsClassificationCard() {
       ) : null}
       {view.candidates.length === 0 ? (
         <EmptyCopy>
-          이번 실행의 문서 사실에서 HS 코드와 품명을 찾지 못했습니다. 문서 원문을 보완하거나 아래에서 HSK
-          코드를 직접 입력해 확정할 수 있습니다.
+          이번 실행의 문서 사실에서 HS 코드와 품명을 찾지 못했습니다. 문서 원문을 보완하거나 아래 검색창에서
+          코드나 품명으로 찾아 확정할 수 있습니다.
         </EmptyCopy>
       ) : (
         <div className="hsk">
@@ -84,69 +87,29 @@ export function HsClassificationCard() {
           ))}
         </div>
       )}
-      <form
-        className="decision-form"
-        data-hsk-manual-entry
-        onSubmit={(event) => {
-          event.preventDefault();
-          const code = manualCode.trim();
-          if (!/^[0-9]{10}$/u.test(code)) {
-            setManualEntry(null);
-            setManualError("HSK 코드는 10자리 숫자입니다.");
-            return;
-          }
-          setManualLoading(true);
-          setManualError(null);
-          store
-            .lookupHskReference(code)
-            .then((entry) => {
-              setManualEntry(entry);
-              if (!entry.in_reference) {
-                setManualError("이 코드는 관세청 HSK 참조표에 없습니다. 코드를 다시 확인하십시오.");
-              }
-            })
-            .catch(() => {
-              setManualEntry(null);
-              setManualError("HSK 참조표 조회에 실패했습니다. 잠시 후 다시 시도하십시오.");
-            })
-            .finally(() => setManualLoading(false));
+      <HsReferenceSearchBox
+        onChoose={(entry) => {
+          setSearchPick(entry);
+          setChosen(entry.code);
         }}
-      >
-        <Field label="HSK 코드 직접 입력 (10자리)">
-          <input
-            name="hs_manual_code"
-            type="text"
-            inputMode="numeric"
-            maxLength={10}
-            placeholder="예: 6109101000"
-            value={manualCode}
-            onChange={(event) => {
-              setManualCode(event.target.value.replace(/[^0-9]/gu, ""));
-              setManualEntry(null);
-              setManualError(null);
-            }}
-          />
-        </Field>
-        <Submit label={manualLoading ? "조회 중…" : "참조표 조회"} disabled={manualLoading} />
-      </form>
-      {manualError ? <p className="unsupported-inline">{manualError}</p> : null}
-      {manualEntry !== null && manualEntry.in_reference ? (
+      />
+      {searchPick !== null ? (
         <div className="hsk" data-hsk-manual-result>
           <HsCandidateRow
             candidate={{
-              code: manualEntry.code,
-              name_ko: manualEntry.name_ko ?? null,
-              name_en: manualEntry.name_en ?? null,
-              ancestors: manualEntry.ancestors,
+              code: searchPick.code,
+              name_ko: searchPick.name_ko ?? null,
+              name_en: searchPick.name_en ?? null,
+              ancestors: searchPick.ancestors,
               confidence: 0,
               in_reference: true,
               recommended: false,
               origin: "document_code",
               basis: [],
             }}
-            picked={activeCode === manualEntry.code}
-            confirmed={selection?.code === manualEntry.code}
-            onPick={() => setChosen(manualEntry.code)}
+            picked={activeCode === searchPick.code}
+            confirmed={selection?.code === searchPick.code}
+            onPick={() => setChosen(searchPick.code)}
             manual
           />
         </div>
@@ -195,6 +158,151 @@ export function HsClassificationCard() {
   );
 }
 
+/**
+ * Typeahead over the packaged HSK reference: a digits query suggests codes by
+ * prefix, any other text reverse-searches item names. Results are Backend
+ * reference rows only — choosing one still goes through the normal
+ * pick-reason-confirm flow, nothing is auto-confirmed.
+ */
+function HsReferenceSearchBox({ onChoose }: { onChoose: (entry: HsReferenceSearchResult) => void }) {
+  const store = useStore();
+  const [text, setText] = useState("");
+  const [view, setView] = useState<HsReferenceSearch | null>(null);
+  const [open, setOpen] = useState(false);
+  const [active, setActive] = useState(-1);
+  const [error, setError] = useState<string | null>(null);
+  // Set when the input is filled programmatically (option chosen), so the
+  // debounce effect does not immediately reopen the list for that text.
+  const suppressSearch = useRef(false);
+
+  useEffect(() => {
+    if (suppressSearch.current) {
+      suppressSearch.current = false;
+      return;
+    }
+    const query = text.trim();
+    if (query.length < 2) {
+      setView(null);
+      setOpen(false);
+      setError(null);
+      return;
+    }
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      store
+        .searchHskReference(query)
+        .then((result) => {
+          if (cancelled) return;
+          setView(result);
+          setOpen(true);
+          setActive(-1);
+          setError(null);
+        })
+        .catch(() => {
+          if (cancelled) return;
+          setView(null);
+          setOpen(false);
+          setError("HSK 참조표 검색에 실패했습니다. 잠시 후 다시 시도하십시오.");
+        });
+    }, 250);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [text, store]);
+
+  const choose = (entry: HsReferenceSearchResult) => {
+    suppressSearch.current = true;
+    setText(entry.code);
+    setOpen(false);
+    setActive(-1);
+    onChoose(entry);
+  };
+
+  const fullCodeMiss =
+    view !== null && view.mode === "code_prefix" && view.results.length === 0 && /^[0-9]{10}$/u.test(view.query);
+
+  return (
+    <div className="hsk-search" data-hsk-search>
+      <Field label="HSK 코드·품명 검색">
+        <input
+          name="hs_search"
+          type="text"
+          role="combobox"
+          aria-expanded={open}
+          aria-autocomplete="list"
+          aria-controls="hsk-search-listbox"
+          autoComplete="off"
+          maxLength={100}
+          placeholder="예: 6109101000 또는 티셔츠"
+          value={text}
+          onChange={(event) => setText(event.target.value)}
+          onFocus={() => {
+            if (view !== null && text.trim().length >= 2) setOpen(true);
+          }}
+          onBlur={() => setOpen(false)}
+          onKeyDown={(event) => {
+            if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+              if (view === null || view.results.length === 0) return;
+              event.preventDefault();
+              setOpen(true);
+              const count = view.results.length;
+              const delta = event.key === "ArrowDown" ? 1 : -1;
+              setActive((previous) => (previous + delta + count) % count);
+            } else if (event.key === "Enter") {
+              event.preventDefault();
+              const entry = open && view !== null ? view.results[active] : undefined;
+              if (entry) choose(entry);
+            } else if (event.key === "Escape" && open) {
+              event.stopPropagation();
+              setOpen(false);
+            }
+          }}
+        />
+      </Field>
+      {open && view !== null ? (
+        <ul className="hsk-search-list" id="hsk-search-listbox" role="listbox" data-hsk-search-results>
+          {view.mode === "name" && view.results.length > 0 ? (
+            <li className="hsk-search-cap">품명 역검색 — 참조표 품목명과 대조한 결과입니다.</li>
+          ) : null}
+          {view.results.length === 0 ? (
+            <li className="hsk-search-empty">
+              {fullCodeMiss
+                ? "이 코드는 관세청 HSK 참조표에 없습니다. 코드를 다시 확인하십시오."
+                : "일치하는 참조표 항목이 없습니다."}
+            </li>
+          ) : (
+            view.results.map((entry, index) => (
+              <li
+                key={entry.code}
+                role="option"
+                aria-selected={index === active}
+                className={`hsk-search-option${index === active ? " active" : ""}`}
+                data-hsk-search-code={entry.code}
+                onMouseDown={(event) => {
+                  event.preventDefault();
+                  choose(entry);
+                }}
+                onMouseEnter={() => setActive(index)}
+              >
+                <span className="code">{entry.code}</span>
+                <span className="nm">
+                  {entry.name_ko ?? entry.name_en ?? "품목명 정보 없음"}
+                  <small>{entry.ancestors.map((item) => item.name_ko).join(" › ") || "분류 경로 없음"}</small>
+                </span>
+              </li>
+            ))
+          )}
+          {view.truncated ? (
+            <li className="hsk-search-cap">결과가 더 있습니다 — 검색어를 좁히십시오.</li>
+          ) : null}
+        </ul>
+      ) : null}
+      {error !== null ? <p className="unsupported-inline">{error}</p> : null}
+    </div>
+  );
+}
+
 function HsCandidateRow({
   candidate,
   picked,
@@ -229,7 +337,7 @@ function HsCandidateRow({
         <small>
           {breadcrumbs || "분류 경로 없음"}
           {manual
-            ? " · 담당자가 직접 입력한 코드"
+            ? " · 담당자가 검색으로 선택한 코드"
             : ` · 근거 문서 ${new Set(candidate.basis.map((item) => item.document_id)).size}건`}
         </small>
       </div>
@@ -245,7 +353,7 @@ function HsCandidateRow({
         {confirmed
           ? "확정"
           : manual
-            ? "직접 입력"
+            ? "직접 선택"
             : candidate.recommended
               ? "추천"
               : candidate.origin === "description_match"

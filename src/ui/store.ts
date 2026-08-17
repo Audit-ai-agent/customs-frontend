@@ -17,6 +17,7 @@ import type {
   FindingDecisionRequest,
   HsClassification,
   HsReferenceEntry,
+  HsReferenceSearch,
   JobRecord,
   OriginVerification,
   ReviewComparison,
@@ -1117,6 +1118,11 @@ export class WorkbenchStore {
   lookupHskReference(code: string): Promise<HsReferenceEntry> {
     // Read-only reference lookup; the caller renders its own inline result.
     return this.api.getHskReference(code);
+  }
+
+  searchHskReference(query: string): Promise<HsReferenceSearch> {
+    // Read-only typeahead over the packaged reference; the caller renders it.
+    return this.api.searchHskReference(query);
   }
 
   /* ── correction proposals ────────────────────────────────────── */

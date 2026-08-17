@@ -615,6 +615,23 @@ export interface HsReferenceEntry {
   reference: { as_of: string; source: string };
 }
 
+export type HsReferenceSearchMode = "code_prefix" | "name";
+
+export interface HsReferenceSearchResult {
+  code: string;
+  name_ko?: string | null;
+  name_en?: string | null;
+  ancestors: HsAncestor[];
+}
+
+export interface HsReferenceSearch {
+  query: string;
+  mode: HsReferenceSearchMode;
+  results: HsReferenceSearchResult[];
+  truncated: boolean;
+  reference: { as_of: string; source: string };
+}
+
 export interface HsSelectionHistoryEntry {
   code: string;
   reason: string;
