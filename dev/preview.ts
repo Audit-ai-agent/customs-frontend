@@ -228,6 +228,7 @@ const api = {
       mode: isCode ? "code_prefix" : "name",
       results: results.slice(0, 12),
       truncated: results.length > 12,
+      partial: false,
       reference: { as_of: "2026-01-01", source: "관세청 HS부호 단위별 품목명 (미리보기 고정값)" },
     };
   },

@@ -981,6 +981,7 @@ export function decodeHsReferenceSearch(value: unknown): HsReferenceSearch {
       };
     }),
     truncated: booleanValue(raw.truncated, `${context}.truncated`),
+    partial: raw.partial === undefined ? false : booleanValue(raw.partial, `${context}.partial`),
     reference: {
       as_of: requiredString(reference.as_of, `${context}.reference.as_of`),
       source: displayText(reference.source, `${context}.reference.source`),

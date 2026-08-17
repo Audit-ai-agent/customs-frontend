@@ -629,6 +629,8 @@ export interface HsReferenceSearch {
   mode: HsReferenceSearchMode;
   results: HsReferenceSearchResult[];
   truncated: boolean;
+  /** True when no row matched every query word and results are ranked by partial word matches. */
+  partial: boolean;
   reference: { as_of: string; source: string };
 }
 

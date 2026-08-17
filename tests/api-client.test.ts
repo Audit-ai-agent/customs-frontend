@@ -246,6 +246,7 @@ describe("Backend API client", () => {
       mode: "name",
       results: [{ code: "6109101000", name_ko: "티셔츠", name_en: "T-shirts", ancestors: [{ level: 2, code: "61", name_ko: "의류" }] }],
       truncated: false,
+      partial: true,
       reference: { as_of: "2026-01-01", source: "관세청 HS부호 단위별 품목명" },
     };
     const calls: string[] = [];
@@ -256,6 +257,7 @@ describe("Backend API client", () => {
     const api = new ApiClient(fetcher, async () => "local-token");
     const result = await api.searchHskReference(" 티셔츠 ");
     expect(result.mode).toBe("name");
+    expect(result.partial).toBe(true);
     expect(result.results[0]?.code).toBe("6109101000");
     expect(result.results[0]?.ancestors[0]?.name_ko).toBe("의류");
     expect(calls).toEqual([`/api/v1/hsk-reference?q=${encodeURIComponent("티셔츠")}`]);

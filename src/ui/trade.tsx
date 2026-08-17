@@ -263,7 +263,11 @@ function HsReferenceSearchBox({ onChoose }: { onChoose: (entry: HsReferenceSearc
       {open && view !== null ? (
         <ul className="hsk-search-list" id="hsk-search-listbox" role="listbox" data-hsk-search-results>
           {view.mode === "name" && view.results.length > 0 ? (
-            <li className="hsk-search-cap">품명 역검색 — 참조표 품목명과 대조한 결과입니다.</li>
+            <li className="hsk-search-cap">
+              {view.partial
+                ? "품명 역검색 — 검색어 전체와 일치하는 항목이 없어 일부 단어가 일치한 결과를 표시합니다."
+                : "품명 역검색 — 참조표 품목명과 대조한 결과입니다."}
+            </li>
           ) : null}
           {view.results.length === 0 ? (
             <li className="hsk-search-empty">
