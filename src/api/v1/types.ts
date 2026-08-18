@@ -1,13 +1,5 @@
 /** Exact Browser projection of the compact Backend API v1 contract. */
 
-export type TradeType = "import" | "export";
-export type KnowledgeTradeType = TradeType | "both";
-
-/**
- * Text-document types accepted by the current review workflow.  The Browser
- * deliberately names operational evidence separately from the four core
- * commercial documents so reviewers do not have to disguise it as a CI/PL.
- */
 export type DocumentType =
   | "CI"
   | "PL"
@@ -40,6 +32,14 @@ export interface Session {
   roles: Array<"reviewer" | "approver">;
 }
 
+export interface CaseClosure {
+  disposition: "cleared" | "returned";
+  reason: string;
+  review_run_id: string;
+  closed_by: string;
+  closed_at: string;
+}
+
 export interface CaseSummary {
   case_id: string;
   org_id: string;
@@ -47,15 +47,22 @@ export interface CaseSummary {
   title: string;
   status: "open" | "in_review" | "closed";
   revision: number;
-  /**
-   * Backend-owned optional metadata. The workbench reads only the two
-   * documented Functional-UAT markers and never renders this object directly.
-   */
-  metadata?: Record<string, unknown>;
   updated_at: string;
+  closure?: CaseClosure | null;
 }
 
 export type CaseDetail = CaseSummary;
+
+export interface ReviewProgress {
+  status: "idle" | "running";
+  review_run_id?: string | null;
+  stages: { stage: string; status: string }[];
+}
+
+export interface CaseClosureRequest {
+  disposition: "cleared" | "returned";
+  reason: string;
+}
 
 export interface CaseDocument {
   document_id: string;
@@ -76,76 +83,6 @@ export interface CaseDocument {
 export interface DocumentView {
   record: CaseDocument;
   content_text: string;
-}
-
-/**
- * A binary source is intentionally separate from a CaseDocument.  It is not
- * part of the text-review input until a reviewer explicitly confirms edited
- * extraction text through the dedicated Backend route.
- */
-export type DocumentAssetMediaType = "application/pdf" | "image/jpeg" | "image/png";
-
-export interface DocumentAsset {
-  asset_id: string;
-  case_id: string;
-  document_type: DocumentType;
-  filename: string;
-  media_type: DocumentAssetMediaType;
-  byte_size: number;
-  page_count: number;
-  pixel_count: number;
-  created_by: string;
-  created_at: string;
-}
-
-export interface ExtractionBoundingBox {
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-}
-
-export interface ExtractionSpan {
-  span_id: string;
-  ordinal: number;
-  text: string;
-  bbox?: ExtractionBoundingBox | null;
-  reading_order: number;
-}
-
-export interface ExtractionPage {
-  page_number: number;
-  width: number;
-  height: number;
-  coordinate_unit: "pixels" | "pdf_points";
-  spans: ExtractionSpan[];
-}
-
-/**
- * This is a human-review preview only.  It deliberately excludes the source
- * hash, object path, canonical-text hash, and provider diagnostics.
- */
-export interface DocumentExtractionPreview {
-  status: "preview_ready" | "needs_review" | "unavailable";
-  extractor_revision?: string | null;
-  pages: ExtractionPage[];
-  warnings: string[];
-}
-
-export interface ExtractionJob {
-  extraction_job_id: string;
-  asset_id: string;
-  case_id: string;
-  status: "queued" | "preview_ready" | "needs_review" | "unavailable" | "failed";
-  result?: DocumentExtractionPreview | null;
-  created_by: string;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface DocumentAssetExtraction {
-  asset: DocumentAsset;
-  job: ExtractionJob;
 }
 
 export interface ReviewReport {
@@ -361,7 +298,7 @@ export interface ReviewRunSummary {
   case_id: string;
   job_id: string;
   review_as_of: string;
-  trade_type: TradeType;
+  trade_type: "import" | "export";
   execution_status: ExecutionStatus;
   assessment: Assessment;
   review_disposition: ReviewDisposition;
@@ -375,28 +312,6 @@ export interface ReviewRunSummary {
   applied_correction_proposal_ids?: string[];
 }
 
-/**
- * Safe, user-facing dates for the distinct sources used by one Evidence
- * retrieval.  They are provenance notices, not a legal-effect conclusion.
- */
-export interface EvidenceTemporalContext {
-  law_as_of: string;
-  hsk_snapshot_as_of: string;
-  requirements_snapshot_as_of: string;
-}
-
-/**
- * Availability is deliberately separate from the three displayed dates.  A
- * historical Review can retain a baseline HSK or requirements date while the
- * corresponding official archive is unavailable, so the Browser must never
- * infer coverage from the date alone.
- */
-export interface EvidenceTemporalCoverage {
-  law: "covered" | "unavailable";
-  hsk: "covered" | "unavailable";
-  requirements: "covered" | "unavailable";
-}
-
 export interface ReviewRun {
   review_run_id: string;
   case_id: string;
@@ -404,7 +319,7 @@ export interface ReviewRun {
   job_id: string;
   case_revision: number;
   review_as_of: string;
-  trade_type: TradeType;
+  trade_type: "import" | "export";
   execution_status: ExecutionStatus;
   assessment: Assessment;
   review_disposition: ReviewDisposition;
@@ -423,17 +338,6 @@ export interface ReviewRun {
   findings: ReviewFinding[];
   required_actions: RequiredAction[];
   reviewer_decisions: ReviewerDecision[];
-  /**
-   * Additive for the law-history profile.  Older three-law Review Runs omit
-   * this field and must continue to render normally.
-   */
-  temporal_context?: EvidenceTemporalContext | null;
-  /**
-   * Additive archive availability for a dated Evidence retrieval.  It is
-   * present only together with temporal_context; older Review Runs remain
-   * readable when both fields are absent.
-   */
-  temporal_coverage?: EvidenceTemporalCoverage | null;
   created_by: string;
   created_at: string;
   /** A child run keeps its parent for an auditable, non-destructive history. */
@@ -442,11 +346,11 @@ export interface ReviewRun {
   applied_correction_proposal_ids?: string[];
 }
 
-/** A link in an assistant answer back to an already displayed Case review item. */
-export type CaseCitationKind = "fact" | "comparison" | "evidence";
+/** A link in an assistant answer back to an already displayed review fact. */
+export type AssistantCitationKind = "fact" | "comparison" | "evidence";
 
-export interface CaseCitation {
-  kind: CaseCitationKind;
+export interface AssistantCitation {
+  kind: AssistantCitationKind;
   reference_id: string;
 }
 
@@ -457,16 +361,6 @@ export type AssistantAnswerScope =
   | "clarification_needed"
   | "insufficient_evidence"
   | "out_of_scope";
-
-/**
- * The standalone knowledge route has no Case facts or review evidence.  Keep
- * its answer scope narrower at the Browser boundary so it cannot accidentally
- * be rendered as a Case-grounded answer.
- */
-export type KnowledgeAnswerScope = Exclude<
-  AssistantAnswerScope,
-  "case_grounded" | "evidence_grounded"
->;
 
 /**
  * A structured correction draft returned by the Agent. It is only a proposal:
@@ -480,94 +374,6 @@ export interface AssistantCorrectionDraft {
   new_value: string;
   unit?: string | null;
   reason: string;
-}
-
-/**
- * A source from a versioned trade-knowledge snapshot.  It deliberately has
- * no Case or Review Run identifier and can therefore be shown safely in both
- * the global knowledge assistant and a separately labelled guidance section.
- */
-export interface GuidanceEvidenceCitation {
-  kind: "guidance_evidence";
-  /** Backend may retain this compatibility alias only when it equals source_id. */
-  reference_id?: string;
-  source_id: string;
-  /**
-   * A Backend-controlled source category from the versioned official-source
-   * registry. Presentation maps every contract value to a Korean work label;
-   * the code itself is never part of the normal reviewer surface.
-   */
-  source_kind: KnowledgeSourceKind;
-  source_title: string;
-  source_uri: string;
-  as_of: string;
-  snapshot_id: string;
-  coverage: KnowledgeCoverage;
-  /**
-   * Present only for a two-scope checklist.  The index binds this citation to
-   * exactly one independently resolved guidance scope.
-   */
-  resolution_index?: 0 | 1 | null;
-}
-
-export type KnowledgeCoverage = "covered" | "no_coverage" | "partial" | "unavailable";
-export type GuidanceTradeDirection = "import" | "export" | "both";
-
-/**
- * The safe, user-facing result of one bounded official-guidance lookup.
- * Registry hashes and source identifiers remain internal verification data.
- */
-export interface GuidanceResolution {
-  topic: string;
-  scope: string;
-  requested_direction: GuidanceTradeDirection;
-  applicable_directions: Exclude<GuidanceTradeDirection, "both">[];
-  coverage: KnowledgeCoverage;
-  snapshot_id?: string | null;
-  as_of: string;
-  registry_version: "1.0" | "2.0";
-}
-
-/** Exactly two independently resolved V2 guidance scopes, in classifier order. */
-export type GuidanceResolutionPair = readonly [GuidanceResolution, GuidanceResolution];
-
-/** Registered source categories in the Backend OpenAPI contract. */
-export type KnowledgeSourceKind =
-  | "official_law"
-  | "official_law_catalog"
-  | "official_agency_guidance"
-  | "official_requirement_reference"
-  | "official_public_guidance"
-  | "development_fixture";
-/** The shared citation contract for Case and official-guidance answer sections. */
-export type AssistantCitation = CaseCitation | GuidanceEvidenceCitation;
-export function isCaseCitation(citation: AssistantCitation): citation is CaseCitation {
-  return citation.kind !== "guidance_evidence";
-}
-export type AssistantAnswerSectionKind = "case_analysis" | "general_guidance" | "case_application";
-
-/**
- * An answer can contain a Case-grounded section, a separately labelled
- * general guidance section, and a deterministic next-check section.  The UI
- * must not merge them: their evidence boundaries are intentionally different.
- */
-export interface AssistantAnswerSection {
-  kind: AssistantAnswerSectionKind;
-  title: string;
-  content: string;
-  citations: AssistantCitation[];
-  /** Only a multi-scope general-guidance section owns one resolution index. */
-  resolution_index?: 0 | 1 | null;
-}
-
-/** The standalone knowledge route can render only general guidance sections. */
-export interface KnowledgeAnswerSection {
-  kind: "general_guidance";
-  title: string;
-  content: string;
-  citations: GuidanceEvidenceCitation[];
-  /** Only a multi-scope section owns one independently resolved scope. */
-  resolution_index?: 0 | 1 | null;
 }
 
 /** Browser projection of one persisted assistant conversation. */
@@ -593,72 +399,8 @@ export interface AssistantMessage {
   citations: AssistantCitation[];
   suggested_questions: string[];
   correction_draft?: AssistantCorrectionDraft | null;
-  /** Additive V3.3-style answer projection; absent on older stored messages. */
-  answer_sections?: AssistantAnswerSection[];
-  /** Present when this Case reply attempted one bounded official-guidance lookup. */
-  guidance_resolution?: GuidanceResolution | null;
-  /**
-   * Additive V2 two-scope result.  It is XOR with guidance_resolution and
-   * always has exactly two independently resolved scopes.
-   */
-  guidance_resolutions?: GuidanceResolutionPair | null;
-  /** Present only when guidance_resolutions is present. */
-  answer_format?: "multi_scope_checklist" | null;
-  /** The pasted Case-chat text was not admitted as Review evidence. */
-  case_input_notice?: "unregistered_document_text" | null;
   created_by: string;
   created_at: string;
-}
-
-/** A global, Case-independent conversation grounded in the official snapshot. */
-export interface KnowledgeConversation {
-  conversation_id: string;
-  title?: string | null;
-  trade_type: KnowledgeTradeType;
-  /** Backend resolves an omitted create value before persisting the conversation. */
-  as_of: string;
-  /**
-   * Resolved only after the first official-knowledge answer.  This technical
-   * identifier is shown exclusively inside the opt-in verification details.
-   */
-  snapshot_id?: string | null;
-  created_by: string;
-  created_at: string;
-  updated_at: string;
-}
-
-/** A global knowledge message never carries Case or Review Run references. */
-export interface KnowledgeMessage {
-  message_id: string;
-  conversation_id: string;
-  role: "user" | "assistant";
-  content: string;
-  answer_scope?: KnowledgeAnswerScope | null;
-  /** Global messages can only cite the official knowledge snapshot. */
-  citations: GuidanceEvidenceCitation[];
-  answer_sections?: KnowledgeAnswerSection[];
-  suggested_questions: string[];
-  /**
-   * Backend-owned resolution metadata for a standalone assistant answer.
-   * It is intentionally absent from user messages and every Case assistant
-   * message, so the Browser cannot mistake general guidance for Case data.
-   */
-  knowledge_coverage?: KnowledgeCoverage | null;
-  knowledge_snapshot_id?: string | null;
-  knowledge_as_of?: string | null;
-  /** Additive V2 scope/direction result; absent on legacy stored messages. */
-  guidance_resolution?: GuidanceResolution | null;
-  /** Additive V2 two-scope result; XOR with the legacy singular field. */
-  guidance_resolutions?: GuidanceResolutionPair | null;
-  /** Present only when guidance_resolutions is present. */
-  answer_format?: "multi_scope_checklist" | null;
-  created_by: string;
-  created_at: string;
-}
-
-export interface KnowledgeMessageExchange {
-  user_message: KnowledgeMessage;
-  assistant_message: KnowledgeMessage;
 }
 
 export interface AssistantMessageExchange {
@@ -714,6 +456,75 @@ export interface JobRecord {
   updated_at: string;
 }
 
+/* ── binary document assets and the extraction preview boundary ── */
+
+export type DocumentAssetMediaType = "application/pdf" | "image/jpeg" | "image/png";
+
+/** Safe Browser projection of one immutable uploaded binary document. */
+export interface DocumentAsset {
+  asset_id: string;
+  case_id: string;
+  document_type: DocumentType;
+  filename: string;
+  media_type: DocumentAssetMediaType;
+  byte_size: number;
+  page_count: number;
+  pixel_count: number;
+  created_by: string;
+  created_at: string;
+}
+
+export type ExtractionJobStatus = "queued" | "preview_ready" | "needs_review" | "unavailable" | "failed";
+
+export interface ExtractionSpan {
+  span_id: string;
+  ordinal: number;
+  text: string;
+  /** Normalized page-relative rectangle; absent when the adapter has no geometry. */
+  bbox?: Record<string, number> | null;
+  reading_order: number;
+}
+
+export interface ExtractionPage {
+  page_number: number;
+  width: number;
+  height: number;
+  coordinate_unit: "pixels" | "pdf_points";
+  spans: ExtractionSpan[];
+}
+
+/** A human-editable extraction candidate; never a verified review fact. */
+export interface ExtractionPreview {
+  status: "preview_ready" | "needs_review" | "unavailable";
+  pages: ExtractionPage[];
+  warnings: string[];
+  extractor_revision?: string | null;
+}
+
+export interface ExtractionJob {
+  extraction_job_id: string;
+  asset_id: string;
+  case_id: string;
+  status: ExtractionJobStatus;
+  error_code?: string | null;
+  result?: ExtractionPreview | null;
+  created_by: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ExtractionJobEnvelope {
+  asset: DocumentAsset;
+  job: ExtractionJob;
+}
+
+export interface ConfirmExtractedTextRequest {
+  extraction_job_id: string;
+  content_text: string;
+  filename: string;
+  replaces_document_id?: string | null;
+}
+
 export interface CreateCaseRequest {
   title: string;
   external_reference?: string | null;
@@ -728,25 +539,9 @@ export interface AddDocumentRequest {
   replaces_document_id?: string | null;
 }
 
-/** Raw file bytes remain in the Browser-to-Backend request body only. */
-export interface UploadDocumentAssetRequest {
-  document_type: DocumentType;
-  filename: string;
-  media_type: DocumentAssetMediaType;
-  content: Blob;
-}
-
-/** Only reviewer-confirmed text can enter the existing text-review workflow. */
-export interface ConfirmDocumentExtractionRequest {
-  extraction_job_id: string;
-  filename: string;
-  content_text: string;
-  replaces_document_id?: string | null;
-}
-
 export interface EnqueueReviewRequest {
   review_as_of?: string;
-  trade_type?: TradeType;
+  trade_type?: "import" | "export";
 }
 
 export interface FindingDecisionRequest {
@@ -759,16 +554,6 @@ export interface CreateAssistantConversationRequest {
 }
 
 export interface SendAssistantMessageRequest {
-  content: string;
-}
-
-export interface CreateKnowledgeConversationRequest {
-  title?: string;
-  trade_type?: KnowledgeTradeType;
-  as_of?: string;
-}
-
-export interface SendKnowledgeMessageRequest {
   content: string;
 }
 
@@ -790,4 +575,213 @@ export interface CorrectionDecisionRequest {
 
 export interface CreateRevisionRequest {
   proposal_ids: string[];
+}
+
+// ── Backend-derived trade views (HSK / CO / duty) ──────────────
+
+export interface HsAncestor {
+  level: number;
+  code: string;
+  name_ko: string;
+}
+
+export interface HsCandidateBasis {
+  document_id: string;
+  fact_id: string;
+  fact_name: string;
+  raw_value: string;
+}
+
+export type HsCandidateOrigin = "document_code" | "description_match";
+
+export interface HsCandidate {
+  code: string;
+  name_ko?: string | null;
+  name_en?: string | null;
+  ancestors: HsAncestor[];
+  confidence: number;
+  in_reference: boolean;
+  recommended: boolean;
+  origin: HsCandidateOrigin;
+  basis: HsCandidateBasis[];
+}
+
+export interface HsReferenceEntry {
+  code: string;
+  in_reference: boolean;
+  name_ko?: string | null;
+  name_en?: string | null;
+  ancestors: HsAncestor[];
+  reference: { as_of: string; source: string };
+}
+
+export type HsReferenceSearchMode = "code_prefix" | "name";
+
+export interface HsReferenceSearchResult {
+  code: string;
+  name_ko?: string | null;
+  name_en?: string | null;
+  ancestors: HsAncestor[];
+}
+
+export interface HsReferenceSearch {
+  query: string;
+  mode: HsReferenceSearchMode;
+  results: HsReferenceSearchResult[];
+  truncated: boolean;
+  /** True when no row matched every query word and results are ranked by partial word matches. */
+  partial: boolean;
+  reference: { as_of: string; source: string };
+}
+
+export interface HsSelectionHistoryEntry {
+  code: string;
+  reason: string;
+  selected_by: string;
+  selected_at: string;
+}
+
+export interface HsSelection {
+  code: string;
+  reason: string;
+  selected_by: string;
+  selected_at: string;
+  history: HsSelectionHistoryEntry[];
+}
+
+export interface HsClassification {
+  review_run_id: string;
+  case_id: string;
+  reference: { as_of: string; source: string };
+  candidates: HsCandidate[];
+  selection?: HsSelection | null;
+}
+
+export interface HsSelectionRequest {
+  code: string;
+  reason: string;
+}
+
+// ── Operations metrics (org-scoped counts over stored state) ────
+
+export interface OperationsMetrics {
+  generated_at: string;
+  cases: { total: number; open: number; in_review: number; closed: number };
+  reviews: {
+    total: number;
+    revisions: number;
+    no_issue_detected: number;
+    issues_detected: number;
+    indeterminate: number;
+    succeeded: number;
+    partial: number;
+    failed: number;
+  };
+  /** Findings on each case's latest run only — the judgement workload that still exists. */
+  findings: { total: number; decided: number; open: number };
+  closures: { cleared: number; returned: number };
+  daily_reviews: { date: string; count: number }[];
+}
+
+export type OriginCheckField = "certificate_no" | "origin_country" | "hs_code";
+export type OriginCheckStatus = "match" | "mismatch" | "missing";
+
+export interface OriginCheck {
+  field: OriginCheckField;
+  certificate_value?: string | null;
+  reference_value?: string | null;
+  reference_document_id?: string | null;
+  status: OriginCheckStatus;
+}
+
+export interface OriginFtaHint {
+  agreement_code: string;
+  agreement_name: string;
+  origin_covered: boolean;
+  certificate_form: string;
+  source_uri: string;
+}
+
+export type OriginVerificationStatus =
+  | "verified"
+  | "mismatch"
+  | "missing_certificate"
+  | "needs_review";
+
+export interface OriginVerification {
+  review_run_id: string;
+  case_id: string;
+  status: OriginVerificationStatus;
+  certificate?: {
+    document_id: string;
+    filename: string;
+    extraction_status: string;
+  } | null;
+  origin_country?: string | null;
+  checks: OriginCheck[];
+  fta_hints: OriginFtaHint[];
+}
+
+export type DutyRateKind = "basic" | "fta";
+export type DutyRequirementCode =
+  | "origin_in_agreement"
+  | "certificate_present"
+  | "certificate_origin_match";
+
+export interface DutyRateRequirement {
+  code: DutyRequirementCode;
+  satisfied: boolean;
+}
+
+export interface DutyRate {
+  rate_kind: DutyRateKind;
+  agreement_code?: string | null;
+  label: string;
+  rate_pct: number;
+  source_uri: string;
+  requirements: DutyRateRequirement[];
+  applicable: boolean;
+}
+
+export interface DutyEstimate {
+  rate_kind: DutyRateKind;
+  agreement_code?: string | null;
+  rate_pct: number;
+  duty_amount: number;
+  vat_rate_pct: number;
+  vat_amount: number;
+  total_estimated: number;
+  currency: string;
+}
+
+export type DutyAssessmentStatus =
+  | "estimated"
+  | "hs_code_unavailable"
+  | "rates_unavailable"
+  | "value_unavailable";
+
+export interface DutyAssessment {
+  review_run_id: string;
+  case_id: string;
+  status: DutyAssessmentStatus;
+  reference: { as_of: string; source: string; disclaimer: string };
+  hs_code?: {
+    code: string;
+    source: "reviewer_selection" | "document_fact";
+    name_ko?: string | null;
+  } | null;
+  origin_country?: string | null;
+  dutiable_value?: {
+    amount: number;
+    currency: string;
+    basis: string;
+    document_id?: string | null;
+  } | null;
+  rates: DutyRate[];
+  applied?: DutyEstimate | null;
+  savings?: {
+    vs_basic_duty: number;
+    currency: string;
+    blocked_requirements: string[];
+  } | null;
 }

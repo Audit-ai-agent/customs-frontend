@@ -1,6 +1,5 @@
 import type {
   AgentWorkflow,
-  AssistantAnswerSection,
   AssistantAnswerScope,
   AssistantCitation,
   AssistantConversation,
@@ -9,38 +8,40 @@ import type {
   AssistantMessageExchange,
   Assessment,
   AuthConfig,
+  CaseClosure,
   CaseDocument,
+  ReviewProgress,
   CaseSummary,
   ComparisonOperand,
   CorrectionDecision,
   CorrectionProposal,
   CorrectionProposalHistoryEntry,
-  DocumentAsset,
-  DocumentAssetExtraction,
   DocumentAnalysis,
-  DocumentExtractionPreview,
+  DocumentAsset,
   DocumentFact,
   DocumentLineItem,
   DocumentView,
-  ExtractionBoundingBox,
   ExtractionJob,
+  ExtractionJobEnvelope,
   ExtractionPage,
+  ExtractionPreview,
   ExtractionSpan,
   EvidenceItem,
-  EvidenceTemporalCoverage,
-  EvidenceTemporalContext,
   FactSourceReference,
   HumanProvidedSourceReference,
+  DutyAssessment,
+  DutyEstimate,
+  DutyRate,
+  HsAncestor,
+  HsCandidate,
+  HsClassification,
+  HsReferenceEntry,
+  HsReferenceSearch,
+  HsSelection,
   JobRecord,
-  KnowledgeAnswerScope,
-  KnowledgeAnswerSection,
-  KnowledgeCoverage,
-  KnowledgeConversation,
-  GuidanceResolution,
-  GuidanceResolutionPair,
-  GuidanceEvidenceCitation,
-  KnowledgeMessage,
-  KnowledgeMessageExchange,
+  OperationsMetrics,
+  OriginCheck,
+  OriginVerification,
   PlannerAction,
   PlannerTrace,
   ReportClaim,
@@ -64,6 +65,17 @@ export class ContractError extends Error {
     this.name = "ContractError";
   }
 }
+
+const DOCUMENT_TYPE_VALUES = [
+  "CI",
+  "PL",
+  "BL",
+  "CO",
+  "AWB",
+  "EXPORT_DECLARATION",
+  "SUPPORTING_EVIDENCE",
+  "UNKNOWN",
+] as const;
 
 export interface ApiProblem {
   detail: string;
@@ -109,9 +121,6 @@ export function decodeSession(value: unknown): Session {
 
 export function decodeCaseSummary(value: unknown): CaseSummary {
   const raw = record(value, "case");
-  const metadata = raw.metadata === undefined || raw.metadata === null
-    ? undefined
-    : record(raw.metadata, "case.metadata");
   return {
     case_id: requiredString(raw.case_id, "case.case_id"),
     org_id: requiredString(raw.org_id, "case.org_id"),
@@ -121,16 +130,45 @@ export function decodeCaseSummary(value: unknown): CaseSummary {
     title: requiredString(raw.title, "case.title"),
     status: oneOf(raw.status, ["open", "in_review", "closed"], "case.status"),
     revision: nonNegativeInteger(raw.revision, "case.revision"),
-    ...(metadata === undefined ? {} : { metadata }),
     updated_at: requiredString(raw.updated_at, "case.updated_at"),
+    ...(raw.closure === undefined || raw.closure === null
+      ? {}
+      : { closure: decodeCaseClosure(raw.closure) }),
+  };
+}
+
+export function decodeReviewProgress(value: unknown): ReviewProgress {
+  const context = "review progress";
+  const raw = record(value, context);
+  return {
+    status: oneOf(raw.status, ["idle", "running"] as const, `${context}.status`),
+    ...(raw.review_run_id === undefined || raw.review_run_id === null
+      ? {}
+      : { review_run_id: requiredString(raw.review_run_id, `${context}.review_run_id`) }),
+    stages: array(raw.stages ?? [], `${context}.stages`).map((item, index) => {
+      const entry = record(item, `${context}.stages[${index}]`);
+      return {
+        stage: requiredString(entry.stage, `${context}.stages[${index}].stage`),
+        status: requiredString(entry.status, `${context}.stages[${index}].status`),
+      };
+    }),
+  };
+}
+
+function decodeCaseClosure(value: unknown): CaseClosure {
+  const raw = record(value, "case.closure");
+  return {
+    disposition: oneOf(raw.disposition, ["cleared", "returned"] as const, "case.closure.disposition"),
+    reason: displayText(raw.reason, "case.closure.reason"),
+    review_run_id: requiredString(raw.review_run_id, "case.closure.review_run_id"),
+    closed_by: requiredString(raw.closed_by, "case.closure.closed_by"),
+    closed_at: requiredString(raw.closed_at, "case.closure.closed_at"),
   };
 }
 
 export function decodeDocument(value: unknown): CaseDocument {
   const raw = record(value, "document");
-  const type = oneOf(raw.document_type, [
-    "CI", "PL", "BL", "CO", "AWB", "EXPORT_DECLARATION", "SUPPORTING_EVIDENCE", "UNKNOWN",
-  ], "document.document_type");
+  const type = oneOf(raw.document_type, DOCUMENT_TYPE_VALUES, "document.document_type");
   if (raw.media_type !== "text/plain") throw new ContractError("only text/plain documents are supported");
   return {
     document_id: requiredString(raw.document_id, "document.document_id"),
@@ -167,116 +205,6 @@ export function decodeDocumentListItem(value: unknown): CaseDocument {
   return decodeDocument(raw.record ?? raw);
 }
 
-/**
- * Decode only the safe Browser projection of an uploaded binary source.  The
- * Backend may retain source hashes and object keys, but neither is accepted
- * into this Browser model.
- */
-export function decodeDocumentAsset(value: unknown): DocumentAsset {
-  const raw = record(value, "document asset");
-  return {
-    asset_id: technicalIdentifier(raw.asset_id, "document asset.asset_id"),
-    case_id: technicalIdentifier(raw.case_id, "document asset.case_id"),
-    document_type: oneOf(raw.document_type, [
-      "CI", "PL", "BL", "CO", "AWB", "EXPORT_DECLARATION", "SUPPORTING_EVIDENCE", "UNKNOWN",
-    ] as const, "document asset.document_type"),
-    filename: filename(raw.filename, "document asset.filename"),
-    media_type: oneOf(raw.media_type, ["application/pdf", "image/jpeg", "image/png"] as const, "document asset.media_type"),
-    byte_size: positiveInteger(raw.byte_size, "document asset.byte_size"),
-    page_count: positiveInteger(raw.page_count, "document asset.page_count"),
-    pixel_count: nonNegativeInteger(raw.pixel_count, "document asset.pixel_count"),
-    created_by: requiredString(raw.created_by, "document asset.created_by"),
-    created_at: requiredString(raw.created_at, "document asset.created_at"),
-  };
-}
-
-export function decodeDocumentAssetExtraction(value: unknown): DocumentAssetExtraction {
-  const raw = record(value, "document asset extraction");
-  const asset = decodeDocumentAsset(raw.asset);
-  const job = decodeExtractionJob(raw.job);
-  if (job.asset_id !== asset.asset_id) throw new ContractError("extraction job asset does not match its response asset");
-  if (job.case_id !== asset.case_id) throw new ContractError("extraction job Case does not match its response asset");
-  return { asset, job };
-}
-
-function decodeExtractionJob(value: unknown): ExtractionJob {
-  const raw = record(value, "document extraction job");
-  const status = oneOf(raw.status, ["queued", "preview_ready", "needs_review", "unavailable", "failed"] as const, "document extraction job.status");
-  const result = raw.result === undefined || raw.result === null
-    ? undefined
-    : decodeDocumentExtractionPreview(raw.result);
-  if ((status === "queued" || status === "failed") && result !== undefined) {
-    throw new ContractError("pending or failed document extraction must not include a preview");
-  }
-  if ((status === "preview_ready" || status === "needs_review" || status === "unavailable") && result === undefined) {
-    throw new ContractError("completed document extraction preview is absent");
-  }
-  if (result !== undefined && result.status !== status) {
-    throw new ContractError("document extraction status does not match its preview");
-  }
-  return {
-    extraction_job_id: technicalIdentifier(raw.extraction_job_id, "document extraction job.extraction_job_id"),
-    asset_id: technicalIdentifier(raw.asset_id, "document extraction job.asset_id"),
-    case_id: technicalIdentifier(raw.case_id, "document extraction job.case_id"),
-    status,
-    ...(result === undefined ? {} : { result }),
-    created_by: requiredString(raw.created_by, "document extraction job.created_by"),
-    created_at: requiredString(raw.created_at, "document extraction job.created_at"),
-    updated_at: requiredString(raw.updated_at, "document extraction job.updated_at"),
-  };
-}
-
-function decodeDocumentExtractionPreview(value: unknown): DocumentExtractionPreview {
-  const raw = record(value, "document extraction preview");
-  const pages = array(raw.pages, "document extraction preview.pages");
-  const warnings = array(raw.warnings, "document extraction preview.warnings");
-  if (pages.length > 20 || warnings.length > 32) {
-    throw new ContractError("document extraction preview exceeds its safe limit");
-  }
-  return {
-    status: oneOf(raw.status, ["preview_ready", "needs_review", "unavailable"] as const, "document extraction preview.status"),
-    ...(raw.extractor_revision === undefined || raw.extractor_revision === null
-      ? {}
-      : { extractor_revision: technicalIdentifier(raw.extractor_revision, "document extraction preview.extractor_revision") }),
-    pages: pages.map((page, index) => decodeExtractionPage(page, `document extraction preview.pages[${index}]`)),
-    warnings: warnings.map((warning, index) => warningCode(warning, `document extraction preview.warnings[${index}]`)),
-  };
-}
-
-function decodeExtractionPage(value: unknown, context: string): ExtractionPage {
-  const raw = record(value, context);
-  const spans = array(raw.spans, `${context}.spans`);
-  if (spans.length > 20_000) throw new ContractError(`${context} exceeds its span limit`);
-  return {
-    page_number: positiveInteger(raw.page_number, `${context}.page_number`),
-    width: positiveInteger(raw.width, `${context}.width`),
-    height: positiveInteger(raw.height, `${context}.height`),
-    coordinate_unit: oneOf(raw.coordinate_unit, ["pixels", "pdf_points"] as const, `${context}.coordinate_unit`),
-    spans: spans.map((span, index) => decodeExtractionSpan(span, `${context}.spans[${index}]`)),
-  };
-}
-
-function decodeExtractionSpan(value: unknown, context: string): ExtractionSpan {
-  const raw = record(value, context);
-  return {
-    span_id: technicalIdentifier(raw.span_id, `${context}.span_id`),
-    ordinal: positiveInteger(raw.ordinal, `${context}.ordinal`),
-    text: displayText(raw.text, `${context}.text`),
-    ...(raw.bbox === undefined || raw.bbox === null ? {} : { bbox: decodeExtractionBoundingBox(raw.bbox, `${context}.bbox`) }),
-    reading_order: positiveInteger(raw.reading_order, `${context}.reading_order`),
-  };
-}
-
-function decodeExtractionBoundingBox(value: unknown, context: string): ExtractionBoundingBox {
-  const raw = record(value, context);
-  return {
-    x: unitIntervalNumber(raw.x, `${context}.x`, false),
-    y: unitIntervalNumber(raw.y, `${context}.y`, false),
-    width: unitIntervalNumber(raw.width, `${context}.width`, true),
-    height: unitIntervalNumber(raw.height, `${context}.height`, true),
-  };
-}
-
 export function decodeReviewRunSummary(value: unknown): ReviewRunSummary {
   const raw = record(value, "review run summary");
   return {
@@ -303,15 +231,6 @@ export function decodeReviewRunSummary(value: unknown): ReviewRunSummary {
 
 export function decodeReviewRun(value: unknown): ReviewRun {
   const raw = record(value, "review run");
-  const temporalContext = raw.temporal_context === undefined || raw.temporal_context === null
-    ? undefined
-    : decodeEvidenceTemporalContext(raw.temporal_context);
-  const temporalCoverage = raw.temporal_coverage === undefined || raw.temporal_coverage === null
-    ? undefined
-    : decodeEvidenceTemporalCoverage(raw.temporal_coverage);
-  if (temporalCoverage && !temporalContext) {
-    throw new ContractError("run.temporal_coverage requires run.temporal_context");
-  }
   return {
     review_run_id: requiredString(raw.review_run_id, "run.review_run_id"),
     case_id: requiredString(raw.case_id, "run.case_id"),
@@ -337,8 +256,6 @@ export function decodeReviewRun(value: unknown): ReviewRun {
     findings: array(raw.findings, "run.findings").map(decodeFinding),
     required_actions: array(raw.required_actions, "run.required_actions").map(decodeAction),
     reviewer_decisions: array(raw.reviewer_decisions, "run.reviewer_decisions").map(decodeReviewerDecision),
-    ...(temporalContext === undefined ? {} : { temporal_context: temporalContext }),
-    ...(temporalCoverage === undefined ? {} : { temporal_coverage: temporalCoverage }),
     created_by: requiredString(raw.created_by, "run.created_by"),
     created_at: requiredString(raw.created_at, "run.created_at"),
     ...(raw.parent_review_run_id === undefined || raw.parent_review_run_id === null
@@ -347,31 +264,6 @@ export function decodeReviewRun(value: unknown): ReviewRun {
     ...(raw.applied_correction_proposal_ids === undefined
       ? {}
       : { applied_correction_proposal_ids: decodeIdentifierList(raw.applied_correction_proposal_ids, "run.applied_correction_proposal_ids") }),
-  };
-}
-
-function decodeEvidenceTemporalContext(value: unknown): EvidenceTemporalContext {
-  const raw = record(value, "run.temporal_context");
-  return {
-    law_as_of: isoDate(raw.law_as_of, "run.temporal_context.law_as_of"),
-    hsk_snapshot_as_of: isoDate(raw.hsk_snapshot_as_of, "run.temporal_context.hsk_snapshot_as_of"),
-    requirements_snapshot_as_of: isoDate(
-      raw.requirements_snapshot_as_of,
-      "run.temporal_context.requirements_snapshot_as_of",
-    ),
-  };
-}
-
-function decodeEvidenceTemporalCoverage(value: unknown): EvidenceTemporalCoverage {
-  const raw = record(value, "run.temporal_coverage");
-  return {
-    law: oneOf(raw.law, ["covered", "unavailable"] as const, "run.temporal_coverage.law"),
-    hsk: oneOf(raw.hsk, ["covered", "unavailable"] as const, "run.temporal_coverage.hsk"),
-    requirements: oneOf(
-      raw.requirements,
-      ["covered", "unavailable"] as const,
-      "run.temporal_coverage.requirements",
-    ),
   };
 }
 
@@ -399,64 +291,26 @@ export function decodeAssistantMessage(
   inferredRole?: AssistantMessage["role"],
 ): AssistantMessage {
   const raw = record(value, "assistant message");
-  assertCaseMessageHasNoKnowledgeProvenance(raw, "assistant message");
-  assertNoInternalGuidanceFields(raw, "assistant message");
   const role = raw.role === undefined
     ? inferredRole
     : oneOf(raw.role, ["user", "assistant"], "assistant message.role");
   if (!role) throw new ContractError("assistant message.role is absent");
   const content = raw.content ?? raw.direct_answer;
-  const answerScope = decodeAssistantAnswerScope(raw.answer_scope, role);
-  const citations = raw.citations === undefined
-    ? []
-    : decodeAssistantCitationList(raw.citations, "assistant message.citations");
-  const answerSections = raw.answer_sections === undefined || raw.answer_sections === null
-    ? []
-    : decodeAssistantAnswerSections(raw.answer_sections, role, "assistant message.answer_sections");
-  const suggestedQuestions = raw.suggested_questions === undefined
-    ? []
-    : decodeSuggestedQuestions(raw.suggested_questions);
-  const guidanceResolution = decodeSingleGuidanceResolution(raw, role, "assistant message");
-  const guidanceResolutions = decodeGuidanceResolutionPair(raw, role, "assistant message");
-  const answerFormat = decodeMultiScopeAnswerFormat(raw, role, "assistant message");
-  const caseInputNotice = decodeCaseInputNotice(raw, role, "assistant message");
-  const correctionDraft = raw.correction_draft === undefined || raw.correction_draft === null
-    ? undefined
-    : decodeAssistantCorrectionDraft(raw.correction_draft, "assistant message.correction_draft");
-  validateGuidanceMetadata({
-    role,
-    guidanceResolution,
-    guidanceResolutions,
-    answerFormat,
-    citations,
-    answerSections,
-    context: "assistant message",
-  });
-  if (guidanceResolutions) {
-    validateCaseMultiScopeChecklist({
-      answerScope: answerScope.answer_scope,
-      citations,
-      answerSections,
-      resolutions: guidanceResolutions,
-      caseInputNotice: caseInputNotice.case_input_notice,
-      hasCorrectionDraft: correctionDraft !== undefined,
-      context: "assistant message",
-    });
-  }
   return {
     message_id: requiredString(raw.message_id, "assistant message.message_id"),
     conversation_id: requiredString(raw.conversation_id, "assistant message.conversation_id"),
     role,
     content: displayText(content, "assistant message.content"),
-    ...answerScope,
-    citations,
-    suggested_questions: suggestedQuestions,
-    ...(correctionDraft === undefined ? {} : { correction_draft: correctionDraft }),
-    ...(answerSections.length ? { answer_sections: answerSections } : {}),
-    ...(guidanceResolution === undefined ? {} : { guidance_resolution: guidanceResolution }),
-    ...(guidanceResolutions === undefined ? {} : { guidance_resolutions: guidanceResolutions }),
-    ...(answerFormat === undefined ? {} : { answer_format: answerFormat }),
-    ...caseInputNotice,
+    ...decodeAssistantAnswerScope(raw.answer_scope, role),
+    citations: raw.citations === undefined
+      ? []
+      : array(raw.citations, "assistant message.citations").map(decodeAssistantCitation),
+    suggested_questions: raw.suggested_questions === undefined
+      ? []
+      : decodeSuggestedQuestions(raw.suggested_questions),
+    ...(raw.correction_draft === undefined || raw.correction_draft === null
+      ? {}
+      : { correction_draft: decodeAssistantCorrectionDraft(raw.correction_draft, "assistant message.correction_draft") }),
     created_by: requiredString(raw.created_by, "assistant message.created_by"),
     created_at: requiredString(raw.created_at, "assistant message.created_at"),
   };
@@ -467,540 +321,6 @@ export function decodeAssistantMessageExchange(value: unknown): AssistantMessage
   return {
     user_message: decodeAssistantMessage(raw.user_message, "user"),
     assistant_message: decodeAssistantMessage(raw.assistant_message, "assistant"),
-  };
-}
-
-function decodeSingleGuidanceResolution(
-  raw: Record<string, unknown>,
-  role: "user" | "assistant",
-  context: string,
-): GuidanceResolution | undefined {
-  if (raw.guidance_resolution === undefined || raw.guidance_resolution === null) return undefined;
-  if (role !== "assistant") throw new ContractError(`${context} user message cannot carry guidance resolution`);
-  return decodeGuidanceResolutionValue(raw.guidance_resolution, `${context}.guidance_resolution`);
-}
-
-function decodeGuidanceResolutionPair(
-  raw: Record<string, unknown>,
-  role: "user" | "assistant",
-  context: string,
-): GuidanceResolutionPair | undefined {
-  if (raw.guidance_resolutions === undefined || raw.guidance_resolutions === null) return undefined;
-  if (role !== "assistant") throw new ContractError(`${context} user message cannot carry multi-scope guidance resolutions`);
-  const values = array(raw.guidance_resolutions, `${context}.guidance_resolutions`);
-  if (values.length !== 2) throw new ContractError(`${context}.guidance_resolutions must contain exactly two scopes`);
-  const first = decodeGuidanceResolutionValue(values[0], `${context}.guidance_resolutions[0]`);
-  const second = decodeGuidanceResolutionValue(values[1], `${context}.guidance_resolutions[1]`);
-  if (first.registry_version !== "2.0" || second.registry_version !== "2.0") {
-    throw new ContractError(`${context}.guidance_resolutions require the V2 registry`);
-  }
-  if (first.topic === second.topic && first.scope === second.scope) {
-    throw new ContractError(`${context}.guidance_resolutions must be independent`);
-  }
-  return [first, second];
-}
-
-function decodeMultiScopeAnswerFormat(
-  raw: Record<string, unknown>,
-  role: "user" | "assistant",
-  context: string,
-): "multi_scope_checklist" | undefined {
-  if (raw.answer_format === undefined || raw.answer_format === null) return undefined;
-  if (role !== "assistant") throw new ContractError(`${context} user message cannot carry an answer format`);
-  return literal(raw.answer_format, "multi_scope_checklist", `${context}.answer_format`);
-}
-
-function validateGuidanceMetadata({
-  role,
-  guidanceResolution,
-  guidanceResolutions,
-  answerFormat,
-  citations,
-  answerSections,
-  context,
-}: {
-  role: "user" | "assistant";
-  guidanceResolution: GuidanceResolution | undefined;
-  guidanceResolutions: GuidanceResolutionPair | undefined;
-  answerFormat: "multi_scope_checklist" | undefined;
-  citations: readonly AssistantCitation[];
-  answerSections: readonly AssistantAnswerSection[];
-  context: string;
-}): void {
-  if (role !== "assistant") {
-    if (guidanceResolution || guidanceResolutions || answerFormat) {
-      throw new ContractError(`${context} user message cannot carry guidance answer metadata`);
-    }
-    return;
-  }
-  if (guidanceResolution && guidanceResolutions) {
-    throw new ContractError(`${context} guidance_resolution and guidance_resolutions are mutually exclusive`);
-  }
-  if (!guidanceResolutions) {
-    if (answerFormat !== undefined) {
-      throw new ContractError(`${context} single-scope answer cannot claim a multi-scope format`);
-    }
-    if (hasResolutionIndex(citations) || hasResolutionIndex(answerSections)) {
-      throw new ContractError(`${context} single-scope answer cannot carry a resolution index`);
-    }
-    validateLegacyAnswerSections(answerSections, context);
-    return;
-  }
-  if (answerFormat !== "multi_scope_checklist") {
-    throw new ContractError(`${context} multi-scope answer requires multi_scope_checklist`);
-  }
-}
-
-function validateLegacyAnswerSections(
-  sections: readonly AssistantAnswerSection[],
-  context: string,
-): void {
-  if (!sections.length) return;
-  if (sections.length > 3) {
-    throw new ContractError(`${context}.answer_sections: at most three legacy sections are allowed`);
-  }
-  if (new Set(sections.map((section) => section.kind)).size !== sections.length) {
-    throw new ContractError(`${context}.answer_sections: duplicate legacy section kind is not allowed`);
-  }
-  const ordering = sections[0]?.kind === "general_guidance"
-    ? ["general_guidance"] as const
-    : ["case_analysis", "general_guidance", "case_application"] as const;
-  if (sections.some((section, index) => ordering[index] !== section.kind)) {
-    throw new ContractError(`${context}.answer_sections must use the Case, general guidance, application order`);
-  }
-}
-
-function validateCaseMultiScopeChecklist({
-  answerScope,
-  citations,
-  answerSections,
-  resolutions,
-  caseInputNotice,
-  hasCorrectionDraft,
-  context,
-}: {
-  answerScope: AssistantAnswerScope | undefined;
-  citations: readonly AssistantCitation[];
-  answerSections: readonly AssistantAnswerSection[];
-  resolutions: GuidanceResolutionPair;
-  caseInputNotice: AssistantMessage["case_input_notice"] | undefined;
-  hasCorrectionDraft: boolean;
-  context: string;
-}): void {
-  if (caseInputNotice !== undefined || hasCorrectionDraft) {
-    throw new ContractError(`${context} multi-scope answer cannot carry Case input or correction metadata`);
-  }
-  if (answerScope === "insufficient_evidence") {
-    if (citations.length || answerSections.length) {
-      throw new ContractError(`${context} incomplete multi-scope answer must not expose citations or sections`);
-    }
-    return;
-  }
-  if (answerScope !== "case_grounded" && answerScope !== "evidence_grounded") {
-    throw new ContractError(`${context} multi-scope checklist requires a Case-grounded answer`);
-  }
-  if (resolutions.some((resolution) => resolution.coverage !== "covered")) {
-    throw new ContractError(`${context} multi-scope checklist requires both scopes covered`);
-  }
-  const guidanceCitations = citations.filter(isGuidanceCitation);
-  const caseCitations = citations.filter((citation) => !isGuidanceCitation(citation));
-  if (!guidanceCitations.length || !caseCitations.length) {
-    throw new ContractError(`${context} multi-scope checklist requires Case and guidance citations`);
-  }
-  validateMultiScopeGuidanceCitations(guidanceCitations, resolutions, context);
-  if (answerScope === "case_grounded" && !caseCitations.some((citation) => citation.kind === "fact" || citation.kind === "comparison")) {
-    throw new ContractError(`${context} case-grounded multi-scope answer requires a fact or comparison citation`);
-  }
-  if (answerScope === "evidence_grounded" && !caseCitations.some((citation) => citation.kind === "evidence")) {
-    throw new ContractError(`${context} evidence-grounded multi-scope answer requires an evidence citation`);
-  }
-  const expected = [
-    ["case_analysis", undefined],
-    ["general_guidance", 0],
-    ["general_guidance", 1],
-    ["case_application", undefined],
-  ] as const;
-  if (answerSections.length !== expected.length || answerSections.some((section, index) => {
-    const expectedSection = expected[index];
-    return expectedSection === undefined
-      || section.kind !== expectedSection[0]
-      || normalizedResolutionIndex(section.resolution_index) !== expectedSection[1];
-  })) {
-    throw new ContractError(`${context} multi-scope checklist must use the fixed four-section order`);
-  }
-  const [caseSection, firstGuidance, secondGuidance, application] = answerSections;
-  if (!caseSection || !firstGuidance || !secondGuidance || !application) {
-    throw new ContractError(`${context} multi-scope checklist is incomplete`);
-  }
-  if (!caseSection.citations.length || caseSection.citations.some(isGuidanceCitation)) {
-    throw new ContractError(`${context} multi-scope Case analysis may use only Case citations`);
-  }
-  for (const [index, section] of [firstGuidance, secondGuidance].entries()) {
-    if (!section.citations.length || section.citations.some((citation) => !isGuidanceCitation(citation) || citation.resolution_index !== index)) {
-      throw new ContractError(`${context} multi-scope guidance section must use only its own scope citations`);
-    }
-  }
-  const applicationGuidanceIndexes = new Set(
-    application.citations
-      .filter(isGuidanceCitation)
-      .map((citation) => citation.resolution_index),
-  );
-  if (
-    !application.citations.some((citation) => !isGuidanceCitation(citation))
-    || applicationGuidanceIndexes.size !== 2
-    || !applicationGuidanceIndexes.has(0)
-    || !applicationGuidanceIndexes.has(1)
-  ) {
-    throw new ContractError(`${context} multi-scope application requires Case and both scope citations`);
-  }
-  assertSectionCitationsAreTopLevel(citations, answerSections, context);
-}
-
-function validateKnowledgeMultiScopeChecklist({
-  answerScope,
-  citations,
-  answerSections,
-  resolutions,
-  knowledgeCoverage,
-  context,
-}: {
-  answerScope: KnowledgeAnswerScope | undefined;
-  citations: readonly GuidanceEvidenceCitation[];
-  answerSections: readonly KnowledgeAnswerSection[];
-  resolutions: GuidanceResolutionPair;
-  knowledgeCoverage: KnowledgeCoverage | undefined;
-  context: string;
-}): void {
-  if (answerScope === "insufficient_evidence") {
-    if (citations.length || answerSections.length) {
-      throw new ContractError(`${context} incomplete multi-scope answer must not expose citations or sections`);
-    }
-    return;
-  }
-  if (answerScope !== "general_customs_guidance") {
-    throw new ContractError(`${context} multi-scope knowledge answer requires general official guidance`);
-  }
-  if (knowledgeCoverage !== "covered" || resolutions.some((resolution) => resolution.coverage !== "covered")) {
-    throw new ContractError(`${context} multi-scope knowledge answer requires both scopes covered`);
-  }
-  const [first, second] = resolutions;
-  if (!first?.snapshot_id || first.snapshot_id !== second?.snapshot_id) {
-    throw new ContractError(`${context} multi-scope knowledge answer requires one immutable snapshot`);
-  }
-  validateMultiScopeGuidanceCitations(citations, resolutions, context);
-  const expected = [["general_guidance", 0], ["general_guidance", 1]] as const;
-  if (answerSections.length !== expected.length || answerSections.some((section, index) => {
-    const expectedSection = expected[index];
-    return expectedSection === undefined
-      || section.kind !== expectedSection[0]
-      || normalizedResolutionIndex(section.resolution_index) !== expectedSection[1];
-  })) {
-    throw new ContractError(`${context} multi-scope knowledge answer must use two indexed guidance sections`);
-  }
-  for (const [index, section] of answerSections.entries()) {
-    if (!section.citations.length || section.citations.some((citation) => citation.resolution_index !== index)) {
-      throw new ContractError(`${context} multi-scope knowledge section must use only its own scope citations`);
-    }
-  }
-  assertSectionCitationsAreTopLevel(citations, answerSections, context);
-}
-
-function validateMultiScopeGuidanceCitations(
-  citations: readonly GuidanceEvidenceCitation[],
-  resolutions: GuidanceResolutionPair,
-  context: string,
-): void {
-  const indexes = new Set<number>();
-  const identities = new Set<string>();
-  for (const citation of citations) {
-    const index = normalizedResolutionIndex(citation.resolution_index);
-    if (index !== 0 && index !== 1) {
-      throw new ContractError(`${context} multi-scope guidance citation requires resolution_index 0 or 1`);
-    }
-    const resolution = resolutions[index];
-    if (
-      citation.snapshot_id !== resolution.snapshot_id
-      || citation.as_of !== resolution.as_of
-      || citation.coverage !== resolution.coverage
-    ) {
-      throw new ContractError(`${context} multi-scope guidance citation provenance does not match its resolution`);
-    }
-    indexes.add(index);
-    const identity = `${citation.source_id}\u001f${index}`;
-    if (identities.has(identity)) {
-      throw new ContractError(`${context} multi-scope guidance citations must be unique within each scope`);
-    }
-    identities.add(identity);
-  }
-  if (indexes.size !== 2 || !indexes.has(0) || !indexes.has(1)) {
-    throw new ContractError(`${context} multi-scope guidance citations must cover both scopes`);
-  }
-}
-
-function assertSectionCitationsAreTopLevel(
-  citations: readonly AssistantCitation[],
-  sections: readonly AssistantAnswerSection[],
-  context: string,
-): void {
-  const topLevel = new Set(citations.map(assistantCitationIdentity));
-  for (const citation of sections.flatMap((section) => section.citations)) {
-    if (!topLevel.has(assistantCitationIdentity(citation))) {
-      throw new ContractError(`${context} section citation is not present in the top-level citation list`);
-    }
-  }
-}
-
-function assistantCitationIdentity(citation: AssistantCitation): string {
-  return isGuidanceCitation(citation)
-    ? `${citation.kind}\u001f${citation.source_id}\u001f${normalizedResolutionIndex(citation.resolution_index) ?? "single"}`
-    : `${citation.kind}\u001f${citation.reference_id}`;
-}
-
-function isGuidanceCitation(citation: AssistantCitation): citation is GuidanceEvidenceCitation {
-  return citation.kind === "guidance_evidence";
-}
-
-function hasResolutionIndex(values: readonly (AssistantCitation | AssistantAnswerSection)[]): boolean {
-  return values.some(
-    (value) =>
-      "resolution_index" in value && normalizedResolutionIndex(value.resolution_index) !== undefined,
-  );
-}
-
-function normalizedResolutionIndex(value: 0 | 1 | null | undefined): 0 | 1 | undefined {
-  return value === null ? undefined : value;
-}
-
-function assertNoInternalGuidanceFields(raw: Record<string, unknown>, context: string): void {
-  const prohibited = [
-    "guidance_registry_sha256",
-    "registry_sha256",
-    "provider_error",
-    "provider_errors",
-    "internal_error",
-    "source_hash",
-    "source_path",
-    "internal_path",
-    "engine",
-  ];
-  const found = prohibited.find((key) => raw[key] !== undefined && raw[key] !== null);
-  if (found) throw new ContractError(`${context} must not expose internal guidance diagnostics (${found})`);
-}
-
-function decodeGuidanceResolutionValue(value: unknown, context: string): GuidanceResolution {
-  const raw = record(value, context);
-  const applicable = array(raw.applicable_directions, `${context}.applicable_directions`);
-  if (!applicable.length || applicable.length > 2) {
-    throw new ContractError(`${context}.applicable_directions must have one or two values`);
-  }
-  const applicable_directions = applicable.map((direction, index) => oneOf(
-    direction,
-    ["import", "export"] as const,
-    `${context}.applicable_directions[${index}]`,
-  ));
-  if (new Set(applicable_directions).size !== applicable_directions.length) {
-    throw new ContractError(`${context}.applicable_directions must be unique`);
-  }
-  const coverage = oneOf(raw.coverage, ["covered", "no_coverage", "partial", "unavailable"] as const, `${context}.coverage`);
-  const snapshot = raw.snapshot_id === undefined || raw.snapshot_id === null
-    ? undefined
-    : technicalIdentifier(raw.snapshot_id, `${context}.snapshot_id`);
-  if ((coverage === "covered" || coverage === "partial") && !snapshot) {
-    throw new ContractError(`${context} coverage requires a snapshot`);
-  }
-  return {
-    topic: requiredString(raw.topic, `${context}.topic`),
-    scope: requiredString(raw.scope, `${context}.scope`),
-    requested_direction: oneOf(raw.requested_direction, ["import", "export", "both"] as const, `${context}.requested_direction`),
-    applicable_directions,
-    coverage,
-    ...(snapshot === undefined ? {} : { snapshot_id: snapshot }),
-    as_of: isoDate(raw.as_of, `${context}.as_of`),
-    registry_version: oneOf(raw.registry_version, ["1.0", "2.0"] as const, `${context}.registry_version`),
-  };
-}
-
-function decodeCaseInputNotice(
-  raw: Record<string, unknown>,
-  role: AssistantMessage["role"],
-  context: string,
-): Pick<AssistantMessage, "case_input_notice"> {
-  if (raw.case_input_notice === undefined || raw.case_input_notice === null) return {};
-  if (role !== "assistant") throw new ContractError(`${context} user message cannot carry a Case input notice`);
-  return {
-    case_input_notice: oneOf(raw.case_input_notice, ["unregistered_document_text"] as const, `${context}.case_input_notice`),
-  };
-}
-
-/** Decode the Case-independent official knowledge conversation boundary. */
-export function decodeKnowledgeConversation(value: unknown): KnowledgeConversation {
-  const raw = record(value, "knowledge conversation");
-  assertKnowledgeIsCaseIndependent(raw, "knowledge conversation");
-  return {
-    conversation_id: requiredString(raw.conversation_id, "knowledge conversation.conversation_id"),
-    ...(raw.title === undefined || raw.title === null
-      ? {}
-      : { title: displayText(raw.title, "knowledge conversation.title") }),
-    trade_type: oneOf(raw.trade_type, ["import", "export", "both"], "knowledge conversation.trade_type"),
-    as_of: isoDate(raw.as_of, "knowledge conversation.as_of"),
-    ...(raw.snapshot_id === undefined || raw.snapshot_id === null
-      ? {}
-      : { snapshot_id: technicalIdentifier(raw.snapshot_id, "knowledge conversation.snapshot_id") }),
-    created_by: requiredString(raw.created_by, "knowledge conversation.created_by"),
-    created_at: requiredString(raw.created_at, "knowledge conversation.created_at"),
-    updated_at: requiredString(raw.updated_at, "knowledge conversation.updated_at"),
-  };
-}
-
-export function decodeKnowledgeMessage(
-  value: unknown,
-  inferredRole?: KnowledgeMessage["role"],
-): KnowledgeMessage {
-  const raw = record(value, "knowledge message");
-  assertKnowledgeIsCaseIndependent(raw, "knowledge message");
-  assertNoInternalGuidanceFields(raw, "knowledge message");
-  const role = raw.role === undefined
-    ? inferredRole
-    : oneOf(raw.role, ["user", "assistant"], "knowledge message.role");
-  if (!role) throw new ContractError("knowledge message.role is absent");
-  if (raw.snapshot_id !== undefined || raw.as_of !== undefined || raw.coverage !== undefined || raw.registry_version !== undefined) {
-    throw new ContractError("knowledge message provenance must be carried by guidance evidence citations");
-  }
-  const citations = raw.citations === undefined
-    ? []
-    : decodeAssistantCitationList(raw.citations, "knowledge message.citations");
-  const answerSections = raw.answer_sections === undefined || raw.answer_sections === null
-    ? []
-    : decodeAssistantAnswerSections(raw.answer_sections, role, "knowledge message.answer_sections");
-  const suggestedQuestions = raw.suggested_questions === undefined
-    ? []
-    : decodeSuggestedQuestions(raw.suggested_questions);
-  const answerScope = decodeKnowledgeAnswerScope(raw.answer_scope, role);
-  const provenance = decodeKnowledgeMessageProvenance(raw, role, "knowledge message");
-  const guidanceResolution = decodeSingleGuidanceResolution(raw, role, "knowledge message");
-  const guidanceResolutions = decodeGuidanceResolutionPair(raw, role, "knowledge message");
-  const answerFormat = decodeMultiScopeAnswerFormat(raw, role, "knowledge message");
-  if ([...citations, ...answerSections.flatMap((section) => section.citations)].some((citation) => citation.kind !== "guidance_evidence")) {
-    throw new ContractError("knowledge message citations must not reference a Case or review run");
-  }
-  if (role === "user" && (citations.length || answerSections.length || suggestedQuestions.length || answerScope.answer_scope !== undefined)) {
-    throw new ContractError("knowledge user message cannot carry an answer projection");
-  }
-  if (role === "assistant" && answerSections.some((section) => section.kind !== "general_guidance")) {
-    throw new ContractError("knowledge answer cannot contain a Case analysis section");
-  }
-  validateGuidanceMetadata({
-    role,
-    guidanceResolution,
-    guidanceResolutions,
-    answerFormat,
-    citations,
-    answerSections,
-    context: "knowledge message",
-  });
-  if (guidanceResolutions) {
-    validateKnowledgeMultiScopeChecklist({
-      answerScope: answerScope.answer_scope,
-      citations: citations as GuidanceEvidenceCitation[],
-      answerSections: answerSections as KnowledgeAnswerSection[],
-      resolutions: guidanceResolutions,
-      knowledgeCoverage: provenance.knowledge_coverage ?? undefined,
-      context: "knowledge message",
-    });
-  }
-  return {
-    message_id: requiredString(raw.message_id, "knowledge message.message_id"),
-    conversation_id: requiredString(raw.conversation_id, "knowledge message.conversation_id"),
-    role,
-    content: displayText(raw.content, "knowledge message.content"),
-    ...answerScope,
-    citations: citations as GuidanceEvidenceCitation[],
-    ...(answerSections.length ? { answer_sections: answerSections as KnowledgeAnswerSection[] } : {}),
-    suggested_questions: suggestedQuestions,
-    ...provenance,
-    ...(guidanceResolution === undefined ? {} : { guidance_resolution: guidanceResolution }),
-    ...(guidanceResolutions === undefined ? {} : { guidance_resolutions: guidanceResolutions }),
-    ...(answerFormat === undefined ? {} : { answer_format: answerFormat }),
-    created_by: requiredString(raw.created_by, "knowledge message.created_by"),
-    created_at: requiredString(raw.created_at, "knowledge message.created_at"),
-  };
-}
-
-/**
- * The Backend's ordinary Case conversation route must never carry a global
- * knowledge-snapshot resolution.  Rejecting it here prevents a future API
- * regression from blurring the Case and general-guidance data boundaries.
- */
-function assertCaseMessageHasNoKnowledgeProvenance(raw: Record<string, unknown>, context: string): void {
-  const prohibited = ["knowledge_coverage", "knowledge_snapshot_id", "knowledge_as_of"];
-  const found = prohibited.find((key) => raw[key] !== undefined);
-  if (found) throw new ContractError(`${context} must not include standalone knowledge provenance (${found})`);
-}
-
-/**
- * New standalone knowledge answers retain the Data resolution even when no
- * citation exists (for example, no coverage or a temporary unavailable
- * result).  Older persisted messages legitimately have none of these
- * additive fields, but partial provenance and provenance on a user message
- * are both rejected.
- */
-function decodeKnowledgeMessageProvenance(
-  raw: Record<string, unknown>,
-  role: KnowledgeMessage["role"],
-  context: string,
-): Pick<KnowledgeMessage, "knowledge_coverage" | "knowledge_snapshot_id" | "knowledge_as_of"> {
-  const hasCoverage = raw.knowledge_coverage !== undefined;
-  const hasSnapshot = raw.knowledge_snapshot_id !== undefined;
-  const hasAsOf = raw.knowledge_as_of !== undefined;
-  const supplied = hasCoverage || hasSnapshot || hasAsOf;
-  if (!supplied) return {};
-  if (role !== "assistant") {
-    throw new ContractError(`${context} user message must not include standalone knowledge provenance`);
-  }
-  if (!hasCoverage || !hasAsOf) {
-    throw new ContractError(`${context} provenance requires knowledge_coverage and knowledge_as_of`);
-  }
-  return {
-    knowledge_coverage: oneOf(
-      raw.knowledge_coverage,
-      ["covered", "no_coverage", "partial", "unavailable"] as const,
-      `${context}.knowledge_coverage`,
-    ) as KnowledgeCoverage,
-    knowledge_as_of: isoDate(raw.knowledge_as_of, `${context}.knowledge_as_of`),
-    ...(hasSnapshot
-      ? { knowledge_snapshot_id: technicalIdentifier(raw.knowledge_snapshot_id, `${context}.knowledge_snapshot_id`) }
-      : {}),
-  };
-}
-
-function assertKnowledgeIsCaseIndependent(raw: Record<string, unknown>, context: string): void {
-  const prohibited = [
-    "case_id",
-    "review_run_id",
-    "case",
-    "review_run",
-    "review_input",
-    "review_result",
-    "document_id",
-    "document_ids",
-    "document",
-    "documents",
-    "document_content",
-    "content_text",
-    "document_analyses",
-    "correction_draft",
-  ];
-  const found = prohibited.find((key) => raw[key] !== undefined && raw[key] !== null);
-  if (found) {
-    throw new ContractError(`${context} must not include Case, review, or document data (${found})`);
-  }
-}
-
-export function decodeKnowledgeMessageExchange(value: unknown): KnowledgeMessageExchange {
-  const raw = record(value, "knowledge message exchange");
-  return {
-    user_message: decodeKnowledgeMessage(raw.user_message, "user"),
-    assistant_message: decodeKnowledgeMessage(raw.assistant_message, "assistant"),
   };
 }
 
@@ -1267,10 +587,11 @@ function decodeDocumentAnalysis(value: unknown): DocumentAnalysis {
     document_id: requiredString(raw.document_id, "document analysis.document_id"),
     filename: requiredString(raw.filename, "document analysis.filename"),
     declared_type: raw.declared_type === null ? null : requiredString(raw.declared_type, "document analysis.declared_type"),
-    document_type: oneOf(raw.document_type, [
-      "invoice", "packing_list", "bill_of_lading", "certificate_of_origin", "air_waybill",
-      "export_declaration", "supporting_evidence", "unknown",
-    ], "document analysis.document_type"),
+    document_type: oneOf(
+      raw.document_type,
+      ["invoice", "packing_list", "bill_of_lading", "certificate_of_origin", "air_waybill", "export_declaration", "supporting_evidence", "unknown"],
+      "document analysis.document_type",
+    ),
     classification_source: raw.classification_source === null ? null : decodeDocumentSource(raw.classification_source),
     extraction_status: oneOf(raw.extraction_status, ["complete", "needs_review"], "document analysis.extraction_status"),
     facts: array(raw.facts, "document analysis.facts").map(decodeFact),
@@ -1411,50 +732,12 @@ function decodeReviewerDecisionEntry(value: Record<string, unknown>, context: st
   };
 }
 
-function decodeAssistantCitation(value: unknown, context: string): AssistantCitation {
-  const raw = record(value, context);
-  if (raw.kind === "guidance_evidence") {
-    const sourceId = requiredString(raw.source_id, `${context}.source_id`);
-    if (raw.reference_id !== undefined && raw.reference_id !== sourceId) {
-      throw new ContractError(`${context}: guidance evidence reference_id must match source_id`);
-    }
-    return {
-      kind: "guidance_evidence",
-      ...(raw.reference_id === undefined ? {} : { reference_id: sourceId }),
-      source_id: sourceId,
-      source_kind: knowledgeSourceKind(raw.source_kind, `${context}.source_kind`),
-      source_title: displayText(raw.source_title, `${context}.source_title`),
-      source_uri: requiredString(raw.source_uri, `${context}.source_uri`),
-      as_of: isoDate(raw.as_of, `${context}.as_of`),
-      snapshot_id: requiredString(raw.snapshot_id, `${context}.snapshot_id`),
-      coverage: oneOf(raw.coverage, ["covered", "no_coverage", "partial", "unavailable"] as const, `${context}.coverage`),
-      ...(raw.resolution_index === undefined || raw.resolution_index === null
-        ? {}
-        : { resolution_index: resolutionIndex(raw.resolution_index, `${context}.resolution_index`) }),
-    } satisfies GuidanceEvidenceCitation;
-  }
-  if (
-    raw.source_id !== undefined
-    || raw.source_kind !== undefined
-    || raw.source_title !== undefined
-    || raw.source_uri !== undefined
-    || raw.as_of !== undefined
-    || raw.snapshot_id !== undefined
-    || raw.coverage !== undefined
-    || raw.resolution_index !== undefined
-  ) {
-    throw new ContractError(`${context}: Case citation cannot include guidance provenance`);
-  }
+function decodeAssistantCitation(value: unknown): AssistantCitation {
+  const raw = record(value, "assistant citation");
   return {
-    kind: oneOf(raw.kind, ["fact", "comparison", "evidence"] as const, `${context}.kind`),
-    reference_id: requiredString(raw.reference_id, `${context}.reference_id`),
+    kind: oneOf(raw.kind, ["fact", "comparison", "evidence"], "assistant citation.kind"),
+    reference_id: requiredString(raw.reference_id, "assistant citation.reference_id"),
   };
-}
-
-function decodeAssistantCitationList(value: unknown, context: string): AssistantCitation[] {
-  const values = array(value, context);
-  if (values.length > 100) throw new ContractError(`${context} exceeds one hundred items`);
-  return values.map((citation, index) => decodeAssistantCitation(citation, `${context}[${index}]`));
 }
 
 function decodeAssistantAnswerScope(
@@ -1474,25 +757,6 @@ function decodeAssistantAnswerScope(
       "insufficient_evidence",
       "out_of_scope",
     ], "assistant message.answer_scope"),
-  };
-}
-
-function decodeKnowledgeAnswerScope(
-  value: unknown,
-  role: KnowledgeMessage["role"],
-): { answer_scope?: KnowledgeAnswerScope } {
-  if (value === undefined || value === null) {
-    if (role === "assistant") throw new ContractError("knowledge assistant answer_scope is absent");
-    return {};
-  }
-  if (role !== "assistant") throw new ContractError("knowledge user message cannot carry an answer scope");
-  return {
-    answer_scope: oneOf(value, [
-      "general_customs_guidance",
-      "clarification_needed",
-      "insufficient_evidence",
-      "out_of_scope",
-    ] as const, "knowledge message.answer_scope"),
   };
 }
 
@@ -1523,36 +787,469 @@ function decodeAssistantCorrectionDraft(value: unknown, context: string): Assist
   };
 }
 
-function decodeAssistantAnswerSections(
-  value: unknown,
-  role: "user" | "assistant",
-  context: string,
-): AssistantAnswerSection[] {
-  const sections = array(value, context);
-  if (!sections.length) return [];
-  if (role !== "assistant") throw new ContractError(`${context}: only assistant messages can include sections`);
-  if (sections.length > 4) throw new ContractError(`${context}: at most four bounded sections are allowed`);
-  return sections.map((section, index) => decodeAssistantAnswerSection(section, `${context}[${index}]`));
+function decodeIdentifierList(value: unknown, context: string): string[] {
+  return array(value, context).map((item, index) => requiredString(item, `${context}[${index}]`));
 }
 
-function decodeAssistantAnswerSection(value: unknown, context: string): AssistantAnswerSection {
-  const raw = record(value, context);
-  const citations = raw.citations === undefined
-    ? []
-    : decodeAssistantCitationList(raw.citations, `${context}.citations`);
+/* ── binary document assets and the extraction preview boundary ── */
+
+export function decodeDocumentAsset(value: unknown): DocumentAsset {
+  const raw = record(value, "document asset");
   return {
-    kind: oneOf(raw.kind, ["case_analysis", "general_guidance", "case_application"], `${context}.kind`),
-    title: displayText(raw.title, `${context}.title`),
-    content: displayText(raw.content, `${context}.content`),
-    citations,
-    ...(raw.resolution_index === undefined || raw.resolution_index === null
-      ? {}
-      : { resolution_index: resolutionIndex(raw.resolution_index, `${context}.resolution_index`) }),
+    asset_id: requiredString(raw.asset_id, "document asset.asset_id"),
+    case_id: requiredString(raw.case_id, "document asset.case_id"),
+    document_type: oneOf(raw.document_type, DOCUMENT_TYPE_VALUES, "document asset.document_type"),
+    filename: requiredString(raw.filename, "document asset.filename"),
+    media_type: oneOf(raw.media_type, ["application/pdf", "image/jpeg", "image/png"], "document asset.media_type"),
+    byte_size: positiveInteger(raw.byte_size, "document asset.byte_size"),
+    page_count: nonNegativeInteger(raw.page_count, "document asset.page_count"),
+    pixel_count: nonNegativeInteger(raw.pixel_count, "document asset.pixel_count"),
+    created_by: requiredString(raw.created_by, "document asset.created_by"),
+    created_at: requiredString(raw.created_at, "document asset.created_at"),
   };
 }
 
-function decodeIdentifierList(value: unknown, context: string): string[] {
-  return array(value, context).map((item, index) => requiredString(item, `${context}[${index}]`));
+function decodeExtractionSpan(value: unknown, context: string): ExtractionSpan {
+  const raw = record(value, context);
+  const bbox = raw.bbox;
+  return {
+    span_id: requiredString(raw.span_id, `${context}.span_id`),
+    ordinal: positiveInteger(raw.ordinal, `${context}.ordinal`),
+    text: displayText(raw.text, `${context}.text`),
+    ...(bbox === undefined || bbox === null
+      ? {}
+      : { bbox: decodeBoundingBox(bbox, `${context}.bbox`) }),
+    reading_order: positiveInteger(raw.reading_order, `${context}.reading_order`),
+  };
+}
+
+function decodeBoundingBox(value: unknown, context: string): Record<string, number> {
+  const raw = record(value, context);
+  const result: Record<string, number> = {};
+  for (const [key, item] of Object.entries(raw)) {
+    if (typeof item !== "number" || !Number.isFinite(item)) throw new ContractError(`${context}.${key}: number expected`);
+    result[key] = item;
+  }
+  return result;
+}
+
+function decodeExtractionPage(value: unknown, context: string): ExtractionPage {
+  const raw = record(value, context);
+  return {
+    page_number: positiveInteger(raw.page_number, `${context}.page_number`),
+    width: positiveInteger(raw.width, `${context}.width`),
+    height: positiveInteger(raw.height, `${context}.height`),
+    coordinate_unit: oneOf(raw.coordinate_unit, ["pixels", "pdf_points"], `${context}.coordinate_unit`),
+    spans: array(raw.spans, `${context}.spans`).map((item, index) => decodeExtractionSpan(item, `${context}.spans[${index}]`)),
+  };
+}
+
+function decodeExtractionPreview(value: unknown): ExtractionPreview {
+  const raw = record(value, "extraction preview");
+  const revision = optionalString(raw.extractor_revision, "extraction preview.extractor_revision");
+  return {
+    status: oneOf(raw.status, ["preview_ready", "needs_review", "unavailable"], "extraction preview.status"),
+    pages: array(raw.pages, "extraction preview.pages").map((item, index) => decodeExtractionPage(item, `extraction preview.pages[${index}]`)),
+    warnings: array(raw.warnings, "extraction preview.warnings").map((item, index) => requiredString(item, `extraction preview.warnings[${index}]`)),
+    ...(revision === undefined ? {} : { extractor_revision: revision }),
+  };
+}
+
+export function decodeExtractionJob(value: unknown): ExtractionJob {
+  const raw = record(value, "extraction job");
+  const errorCode = optionalString(raw.error_code, "extraction job.error_code");
+  return {
+    extraction_job_id: requiredString(raw.extraction_job_id, "extraction job.extraction_job_id"),
+    asset_id: requiredString(raw.asset_id, "extraction job.asset_id"),
+    case_id: requiredString(raw.case_id, "extraction job.case_id"),
+    status: oneOf(raw.status, ["queued", "preview_ready", "needs_review", "unavailable", "failed"], "extraction job.status"),
+    ...(errorCode === undefined ? {} : { error_code: errorCode }),
+    ...(raw.result === undefined || raw.result === null ? {} : { result: decodeExtractionPreview(raw.result) }),
+    created_by: requiredString(raw.created_by, "extraction job.created_by"),
+    created_at: requiredString(raw.created_at, "extraction job.created_at"),
+    updated_at: requiredString(raw.updated_at, "extraction job.updated_at"),
+  };
+}
+
+export function decodeExtractionJobEnvelope(value: unknown): ExtractionJobEnvelope {
+  const raw = record(value, "extraction job response");
+  return {
+    asset: decodeDocumentAsset(raw.asset),
+    job: decodeExtractionJob(raw.job),
+  };
+}
+
+export function decodeHsSelection(value: unknown, context = "HS selection"): HsSelection {
+  const raw = record(value, context);
+  return {
+    code: hsCode(raw.code, `${context}.code`),
+    reason: displayText(raw.reason, `${context}.reason`),
+    selected_by: requiredString(raw.selected_by, `${context}.selected_by`),
+    selected_at: requiredString(raw.selected_at, `${context}.selected_at`),
+    history: array(raw.history, `${context}.history`).map((item, index) => {
+      const entry = record(item, `${context}.history[${index}]`);
+      return {
+        code: hsCode(entry.code, `${context}.history[${index}].code`),
+        reason: displayText(entry.reason, `${context}.history[${index}].reason`),
+        selected_by: requiredString(entry.selected_by, `${context}.history[${index}].selected_by`),
+        selected_at: requiredString(entry.selected_at, `${context}.history[${index}].selected_at`),
+      };
+    }),
+  };
+}
+
+function decodeHsAncestors(value: unknown, context: string): HsAncestor[] {
+  return array(value ?? [], context).map((item, index) => {
+    const entry = record(item, `${context}[${index}]`);
+    return {
+      level: nonNegativeInteger(entry.level, `${context}[${index}].level`),
+      code: requiredString(entry.code, `${context}[${index}].code`),
+      name_ko: displayText(entry.name_ko, `${context}[${index}].name_ko`),
+    };
+  });
+}
+
+function decodeHsCandidate(value: unknown, context: string): HsCandidate {
+  const raw = record(value, context);
+  return {
+    code: hsCode(raw.code, `${context}.code`),
+    ...(raw.name_ko === undefined || raw.name_ko === null
+      ? {}
+      : { name_ko: displayText(raw.name_ko, `${context}.name_ko`) }),
+    ...(raw.name_en === undefined || raw.name_en === null
+      ? {}
+      : { name_en: displayText(raw.name_en, `${context}.name_en`) }),
+    ancestors: decodeHsAncestors(raw.ancestors, `${context}.ancestors`),
+    confidence: boundedRatio(raw.confidence, `${context}.confidence`),
+    in_reference: booleanValue(raw.in_reference, `${context}.in_reference`),
+    recommended: booleanValue(raw.recommended, `${context}.recommended`),
+    origin:
+      raw.origin === undefined
+        ? "document_code"
+        : oneOf(raw.origin, ["document_code", "description_match"] as const, `${context}.origin`),
+    basis: array(raw.basis ?? [], `${context}.basis`).map((item, index) => {
+      const entry = record(item, `${context}.basis[${index}]`);
+      return {
+        document_id: requiredString(entry.document_id, `${context}.basis[${index}].document_id`),
+        fact_id: requiredString(entry.fact_id, `${context}.basis[${index}].fact_id`),
+        fact_name: requiredString(entry.fact_name, `${context}.basis[${index}].fact_name`),
+        raw_value: displayText(entry.raw_value, `${context}.basis[${index}].raw_value`),
+      };
+    }),
+  };
+}
+
+export function decodeHsReferenceEntry(value: unknown): HsReferenceEntry {
+  const context = "HSK reference entry";
+  const raw = record(value, context);
+  const reference = record(raw.reference, `${context}.reference`);
+  return {
+    code: hsCode(raw.code, `${context}.code`),
+    in_reference: booleanValue(raw.in_reference, `${context}.in_reference`),
+    ...(raw.name_ko === undefined || raw.name_ko === null
+      ? {}
+      : { name_ko: displayText(raw.name_ko, `${context}.name_ko`) }),
+    ...(raw.name_en === undefined || raw.name_en === null
+      ? {}
+      : { name_en: displayText(raw.name_en, `${context}.name_en`) }),
+    ancestors: decodeHsAncestors(raw.ancestors, `${context}.ancestors`),
+    reference: {
+      as_of: requiredString(reference.as_of, `${context}.reference.as_of`),
+      source: displayText(reference.source, `${context}.reference.source`),
+    },
+  };
+}
+
+export function decodeHsReferenceSearch(value: unknown): HsReferenceSearch {
+  const context = "HSK reference search";
+  const raw = record(value, context);
+  const reference = record(raw.reference, `${context}.reference`);
+  return {
+    query: displayText(raw.query, `${context}.query`),
+    mode: oneOf(raw.mode, ["code_prefix", "name"] as const, `${context}.mode`),
+    results: array(raw.results, `${context}.results`).map((item, index) => {
+      const entryContext = `${context}.results[${index}]`;
+      const entry = record(item, entryContext);
+      return {
+        code: hsCode(entry.code, `${entryContext}.code`),
+        ...(entry.name_ko === undefined || entry.name_ko === null
+          ? {}
+          : { name_ko: displayText(entry.name_ko, `${entryContext}.name_ko`) }),
+        ...(entry.name_en === undefined || entry.name_en === null
+          ? {}
+          : { name_en: displayText(entry.name_en, `${entryContext}.name_en`) }),
+        ancestors: decodeHsAncestors(entry.ancestors, `${entryContext}.ancestors`),
+      };
+    }),
+    truncated: booleanValue(raw.truncated, `${context}.truncated`),
+    partial: raw.partial === undefined ? false : booleanValue(raw.partial, `${context}.partial`),
+    reference: {
+      as_of: requiredString(reference.as_of, `${context}.reference.as_of`),
+      source: displayText(reference.source, `${context}.reference.source`),
+    },
+  };
+}
+
+export function decodeOperationsMetrics(value: unknown): OperationsMetrics {
+  const context = "operations metrics";
+  const raw = record(value, context);
+  const cases = record(raw.cases, `${context}.cases`);
+  const reviews = record(raw.reviews, `${context}.reviews`);
+  const findings = record(raw.findings, `${context}.findings`);
+  const closures = record(raw.closures, `${context}.closures`);
+  const count = (holder: Record<string, unknown>, key: string, scope: string): number =>
+    nonNegativeInteger(holder[key], `${context}.${scope}.${key}`);
+  return {
+    generated_at: requiredString(raw.generated_at, `${context}.generated_at`),
+    cases: {
+      total: count(cases, "total", "cases"),
+      open: count(cases, "open", "cases"),
+      in_review: count(cases, "in_review", "cases"),
+      closed: count(cases, "closed", "cases"),
+    },
+    reviews: {
+      total: count(reviews, "total", "reviews"),
+      revisions: count(reviews, "revisions", "reviews"),
+      no_issue_detected: count(reviews, "no_issue_detected", "reviews"),
+      issues_detected: count(reviews, "issues_detected", "reviews"),
+      indeterminate: count(reviews, "indeterminate", "reviews"),
+      succeeded: count(reviews, "succeeded", "reviews"),
+      partial: count(reviews, "partial", "reviews"),
+      failed: count(reviews, "failed", "reviews"),
+    },
+    findings: {
+      total: count(findings, "total", "findings"),
+      decided: count(findings, "decided", "findings"),
+      open: count(findings, "open", "findings"),
+    },
+    closures: {
+      cleared: count(closures, "cleared", "closures"),
+      returned: count(closures, "returned", "closures"),
+    },
+    daily_reviews: array(raw.daily_reviews, `${context}.daily_reviews`).map((item, index) => {
+      const entry = record(item, `${context}.daily_reviews[${index}]`);
+      return {
+        date: requiredString(entry.date, `${context}.daily_reviews[${index}].date`),
+        count: nonNegativeInteger(entry.count, `${context}.daily_reviews[${index}].count`),
+      };
+    }),
+  };
+}
+
+export function decodeHsClassification(value: unknown): HsClassification {
+  const context = "HS classification";
+  const raw = record(value, context);
+  const reference = record(raw.reference, `${context}.reference`);
+  return {
+    review_run_id: requiredString(raw.review_run_id, `${context}.review_run_id`),
+    case_id: requiredString(raw.case_id, `${context}.case_id`),
+    reference: {
+      as_of: requiredString(reference.as_of, `${context}.reference.as_of`),
+      source: displayText(reference.source, `${context}.reference.source`),
+    },
+    candidates: array(raw.candidates, `${context}.candidates`).map((item, index) =>
+      decodeHsCandidate(item, `${context}.candidates[${index}]`),
+    ),
+    ...(raw.selection === undefined || raw.selection === null
+      ? {}
+      : { selection: decodeHsSelection(raw.selection, `${context}.selection`) }),
+  };
+}
+
+function decodeOriginCheck(value: unknown, context: string): OriginCheck {
+  const raw = record(value, context);
+  return {
+    field: oneOf(raw.field, ["certificate_no", "origin_country", "hs_code"] as const, `${context}.field`),
+    ...(raw.certificate_value === undefined || raw.certificate_value === null
+      ? {}
+      : { certificate_value: displayText(raw.certificate_value, `${context}.certificate_value`) }),
+    ...(raw.reference_value === undefined || raw.reference_value === null
+      ? {}
+      : { reference_value: displayText(raw.reference_value, `${context}.reference_value`) }),
+    ...(raw.reference_document_id === undefined || raw.reference_document_id === null
+      ? {}
+      : {
+          reference_document_id: requiredString(
+            raw.reference_document_id,
+            `${context}.reference_document_id`,
+          ),
+        }),
+    status: oneOf(raw.status, ["match", "mismatch", "missing"] as const, `${context}.status`),
+  };
+}
+
+export function decodeOriginVerification(value: unknown): OriginVerification {
+  const context = "origin verification";
+  const raw = record(value, context);
+  const certificate =
+    raw.certificate === undefined || raw.certificate === null
+      ? undefined
+      : record(raw.certificate, `${context}.certificate`);
+  return {
+    review_run_id: requiredString(raw.review_run_id, `${context}.review_run_id`),
+    case_id: requiredString(raw.case_id, `${context}.case_id`),
+    status: oneOf(
+      raw.status,
+      ["verified", "mismatch", "missing_certificate", "needs_review"] as const,
+      `${context}.status`,
+    ),
+    ...(certificate === undefined
+      ? {}
+      : {
+          certificate: {
+            document_id: requiredString(certificate.document_id, `${context}.certificate.document_id`),
+            filename: requiredString(certificate.filename, `${context}.certificate.filename`),
+            extraction_status: requiredString(
+              certificate.extraction_status,
+              `${context}.certificate.extraction_status`,
+            ),
+          },
+        }),
+    ...(raw.origin_country === undefined || raw.origin_country === null
+      ? {}
+      : { origin_country: requiredString(raw.origin_country, `${context}.origin_country`) }),
+    checks: array(raw.checks ?? [], `${context}.checks`).map((item, index) =>
+      decodeOriginCheck(item, `${context}.checks[${index}]`),
+    ),
+    fta_hints: array(raw.fta_hints ?? [], `${context}.fta_hints`).map((item, index) => {
+      const entry = record(item, `${context}.fta_hints[${index}]`);
+      return {
+        agreement_code: requiredString(entry.agreement_code, `${context}.fta_hints[${index}].agreement_code`),
+        agreement_name: displayText(entry.agreement_name, `${context}.fta_hints[${index}].agreement_name`),
+        origin_covered: booleanValue(entry.origin_covered, `${context}.fta_hints[${index}].origin_covered`),
+        certificate_form: displayText(
+          entry.certificate_form,
+          `${context}.fta_hints[${index}].certificate_form`,
+        ),
+        source_uri: displayText(entry.source_uri, `${context}.fta_hints[${index}].source_uri`),
+      };
+    }),
+  };
+}
+
+function decodeDutyRate(value: unknown, context: string): DutyRate {
+  const raw = record(value, context);
+  return {
+    rate_kind: oneOf(raw.rate_kind, ["basic", "fta"] as const, `${context}.rate_kind`),
+    ...(raw.agreement_code === undefined || raw.agreement_code === null
+      ? {}
+      : { agreement_code: requiredString(raw.agreement_code, `${context}.agreement_code`) }),
+    label: displayText(raw.label, `${context}.label`),
+    rate_pct: nonNegativeNumber(raw.rate_pct, `${context}.rate_pct`),
+    source_uri: displayText(raw.source_uri, `${context}.source_uri`),
+    requirements: array(raw.requirements ?? [], `${context}.requirements`).map((item, index) => {
+      const entry = record(item, `${context}.requirements[${index}]`);
+      return {
+        code: oneOf(
+          entry.code,
+          ["origin_in_agreement", "certificate_present", "certificate_origin_match"] as const,
+          `${context}.requirements[${index}].code`,
+        ),
+        satisfied: booleanValue(entry.satisfied, `${context}.requirements[${index}].satisfied`),
+      };
+    }),
+    applicable: booleanValue(raw.applicable, `${context}.applicable`),
+  };
+}
+
+function decodeDutyEstimate(value: unknown, context: string): DutyEstimate {
+  const raw = record(value, context);
+  return {
+    rate_kind: oneOf(raw.rate_kind, ["basic", "fta"] as const, `${context}.rate_kind`),
+    ...(raw.agreement_code === undefined || raw.agreement_code === null
+      ? {}
+      : { agreement_code: requiredString(raw.agreement_code, `${context}.agreement_code`) }),
+    rate_pct: nonNegativeNumber(raw.rate_pct, `${context}.rate_pct`),
+    duty_amount: nonNegativeNumber(raw.duty_amount, `${context}.duty_amount`),
+    vat_rate_pct: nonNegativeNumber(raw.vat_rate_pct, `${context}.vat_rate_pct`),
+    vat_amount: nonNegativeNumber(raw.vat_amount, `${context}.vat_amount`),
+    total_estimated: nonNegativeNumber(raw.total_estimated, `${context}.total_estimated`),
+    currency: currencyCode(raw.currency, `${context}.currency`),
+  };
+}
+
+export function decodeDutyAssessment(value: unknown): DutyAssessment {
+  const context = "duty assessment";
+  const raw = record(value, context);
+  const reference = record(raw.reference, `${context}.reference`);
+  const hs = raw.hs_code === undefined || raw.hs_code === null ? undefined : record(raw.hs_code, `${context}.hs_code`);
+  const dutiable =
+    raw.dutiable_value === undefined || raw.dutiable_value === null
+      ? undefined
+      : record(raw.dutiable_value, `${context}.dutiable_value`);
+  const savings =
+    raw.savings === undefined || raw.savings === null
+      ? undefined
+      : record(raw.savings, `${context}.savings`);
+  return {
+    review_run_id: requiredString(raw.review_run_id, `${context}.review_run_id`),
+    case_id: requiredString(raw.case_id, `${context}.case_id`),
+    status: oneOf(
+      raw.status,
+      ["estimated", "hs_code_unavailable", "rates_unavailable", "value_unavailable"] as const,
+      `${context}.status`,
+    ),
+    reference: {
+      as_of: requiredString(reference.as_of, `${context}.reference.as_of`),
+      source: displayText(reference.source, `${context}.reference.source`),
+      disclaimer: displayText(reference.disclaimer, `${context}.reference.disclaimer`),
+    },
+    ...(hs === undefined
+      ? {}
+      : {
+          hs_code: {
+            code: hsCode(hs.code, `${context}.hs_code.code`),
+            source: oneOf(
+              hs.source,
+              ["reviewer_selection", "document_fact"] as const,
+              `${context}.hs_code.source`,
+            ),
+            ...(hs.name_ko === undefined || hs.name_ko === null
+              ? {}
+              : { name_ko: displayText(hs.name_ko, `${context}.hs_code.name_ko`) }),
+          },
+        }),
+    ...(raw.origin_country === undefined || raw.origin_country === null
+      ? {}
+      : { origin_country: requiredString(raw.origin_country, `${context}.origin_country`) }),
+    ...(dutiable === undefined
+      ? {}
+      : {
+          dutiable_value: {
+            amount: nonNegativeNumber(dutiable.amount, `${context}.dutiable_value.amount`),
+            currency: currencyCode(dutiable.currency, `${context}.dutiable_value.currency`),
+            basis: requiredString(dutiable.basis, `${context}.dutiable_value.basis`),
+            ...(dutiable.document_id === undefined || dutiable.document_id === null
+              ? {}
+              : {
+                  document_id: requiredString(
+                    dutiable.document_id,
+                    `${context}.dutiable_value.document_id`,
+                  ),
+                }),
+          },
+        }),
+    rates: array(raw.rates ?? [], `${context}.rates`).map((item, index) =>
+      decodeDutyRate(item, `${context}.rates[${index}]`),
+    ),
+    ...(raw.applied === undefined || raw.applied === null
+      ? {}
+      : { applied: decodeDutyEstimate(raw.applied, `${context}.applied`) }),
+    ...(savings === undefined
+      ? {}
+      : {
+          savings: {
+            vs_basic_duty: nonNegativeNumber(savings.vs_basic_duty, `${context}.savings.vs_basic_duty`),
+            currency: currencyCode(savings.currency, `${context}.savings.currency`),
+            blocked_requirements: array(
+              savings.blocked_requirements ?? [],
+              `${context}.savings.blocked_requirements`,
+            ).map((item, index) =>
+              requiredString(item, `${context}.savings.blocked_requirements[${index}]`),
+            ),
+          },
+        }),
+  };
 }
 
 function record(value: unknown, context: string): Record<string, unknown> {
@@ -1570,30 +1267,6 @@ function requiredString(value: unknown, context: string): string {
   return value;
 }
 
-/**
- * Snapshot identifiers are technical values: validate them before they reach
- * an opt-in copyable verification panel, and never render arbitrary provider
- * text as an identifier.
- */
-function technicalIdentifier(value: unknown, context: string): string {
-  const identifier = requiredString(value, context);
-  if (identifier.length > 512 || !/^[A-Za-z0-9][A-Za-z0-9._:-]*$/.test(identifier)) {
-    throw new ContractError(`${context} is not a safe technical identifier`);
-  }
-  return identifier;
-}
-
-function knowledgeSourceKind(value: unknown, context: string): GuidanceEvidenceCitation["source_kind"] {
-  return oneOf(value, [
-    "official_law",
-    "official_law_catalog",
-    "official_agency_guidance",
-    "official_requirement_reference",
-    "official_public_guidance",
-    "development_fixture",
-  ] as const, context);
-}
-
 function displayText(value: unknown, context: string): string {
   if (typeof value !== "string" || value.length === 0 || value.length > 20_000 || /\0/u.test(value)) throw new ContractError(`${context}: display text expected`);
   return value;
@@ -1603,27 +1276,8 @@ function optionalString(value: unknown, context: string): string | undefined {
   return value === undefined || value === null ? undefined : requiredString(value, context);
 }
 
-function filename(value: unknown, context: string): string {
-  const result = requiredString(value, context);
-  if (result.length > 255 || /[\\/]/u.test(result)) throw new ContractError(`${context}: safe filename expected`);
-  return result;
-}
-
-function warningCode(value: unknown, context: string): string {
-  const result = requiredString(value, context);
-  if (result.length > 128 || !/^[a-z][a-z0-9_]{1,127}$/u.test(result)) {
-    throw new ContractError(`${context}: warning code expected`);
-  }
-  return result;
-}
-
 function nonNegativeInteger(value: unknown, context: string): number {
   if (typeof value !== "number" || !Number.isInteger(value) || value < 0 || value > 1_000_000_000) throw new ContractError(`${context}: non-negative integer expected`);
-  return value;
-}
-
-function resolutionIndex(value: unknown, context: string): 0 | 1 {
-  if (value !== 0 && value !== 1) throw new ContractError(`${context}: 0 or 1 expected`);
   return value;
 }
 
@@ -1632,11 +1286,35 @@ function positiveInteger(value: unknown, context: string): number {
   return value;
 }
 
-function unitIntervalNumber(value: unknown, context: string, mustBePositive: boolean): number {
-  if (typeof value !== "number" || !Number.isFinite(value) || value < 0 || value > 1 || (mustBePositive && value <= 0)) {
-    throw new ContractError(`${context}: normalized coordinate expected`);
+function booleanValue(value: unknown, context: string): boolean {
+  if (typeof value !== "boolean") throw new ContractError(`${context}: boolean expected`);
+  return value;
+}
+
+function nonNegativeNumber(value: unknown, context: string): number {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0 || value > 1_000_000_000_000) {
+    throw new ContractError(`${context}: non-negative number expected`);
   }
   return value;
+}
+
+function boundedRatio(value: unknown, context: string): number {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0 || value > 1) {
+    throw new ContractError(`${context}: ratio between zero and one expected`);
+  }
+  return value;
+}
+
+function hsCode(value: unknown, context: string): string {
+  const result = requiredString(value, context);
+  if (!/^[0-9]{10}$/u.test(result)) throw new ContractError(`${context}: ten-digit HS code expected`);
+  return result;
+}
+
+function currencyCode(value: unknown, context: string): string {
+  const result = requiredString(value, context);
+  if (!/^[A-Z]{3}$/u.test(result)) throw new ContractError(`${context}: ISO currency code expected`);
+  return result;
 }
 
 function plannerCycle(value: unknown, context: string): 1 | 2 {

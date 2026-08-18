@@ -34,9 +34,14 @@ export class OidcSession implements BrowserSession {
       },
       stateStore: new WebStorageStateStore({ store: window.sessionStorage, prefix: "customs.oidc." }),
       userStore: new WebStorageStateStore({ store: new InMemoryWebStorage() }),
-      automaticSilentRenew: false,
+      // The refresh token renews the access token in the background so a
+      // journey is not interrupted mid-task; tokens still live only in memory.
+      automaticSilentRenew: true,
       monitorSession: false,
       loadUserInfo: false,
+    });
+    this.manager.events.addUserLoaded((user) => {
+      this.user = user;
     });
   }
 
@@ -85,7 +90,21 @@ export class OidcSession implements BrowserSession {
 
   freshAccessToken = async (): Promise<string | undefined> => {
     const user = this.user;
-    return user?.access_token && user.expired !== true ? user.access_token : undefined;
+    if (user?.access_token && user.expired !== true) return user.access_token;
+    // The renew timer can miss (for example after system sleep); one on-demand
+    // refresh-token exchange recovers the session without a redirect.
+    if (user?.refresh_token && this.manager) {
+      try {
+        const renewed = await this.manager.signinSilent();
+        if (renewed?.access_token) {
+          this.user = renewed;
+          return renewed.access_token;
+        }
+      } catch {
+        return undefined;
+      }
+    }
+    return undefined;
   };
 
   isAuthenticated(): boolean {

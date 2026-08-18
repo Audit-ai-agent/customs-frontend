@@ -7,14 +7,19 @@ import {
   decodeCaseSummary,
   decodeCorrectionProposal,
   decodeDocumentAsset,
-  decodeDocumentAssetExtraction,
   decodeDocumentListItem,
   decodeDocumentView,
+  decodeDutyAssessment,
+  decodeExtractionJobEnvelope,
+  decodeHsClassification,
+  decodeHsReferenceEntry,
+  decodeHsReferenceSearch,
+  decodeHsSelection,
   decodeJob,
-  decodeKnowledgeConversation,
-  decodeKnowledgeMessage,
-  decodeKnowledgeMessageExchange,
+  decodeOperationsMetrics,
+  decodeOriginVerification,
   decodeProblem,
+  decodeReviewProgress,
   decodeReviewerDecision,
   decodeReviewRun,
   decodeReviewRunSummary,
@@ -26,55 +31,54 @@ import type {
   AssistantMessage,
   AssistantMessageExchange,
   AuthConfig,
+  CaseClosureRequest,
   CaseDetail,
   CaseDocument,
   CaseSummary,
-  ConfirmDocumentExtractionRequest,
+  ConfirmExtractedTextRequest,
   CreateCaseRequest,
   CreateAssistantConversationRequest,
   CreateCorrectionProposalRequest,
   CorrectionDecisionRequest,
   CorrectionProposal,
-  DocumentAsset,
-  DocumentAssetExtraction,
   CreateRevisionRequest,
+  DocumentAsset,
+  DocumentAssetMediaType,
+  DocumentType,
+  DutyAssessment,
   EnqueueReviewRequest,
+  ExtractionJobEnvelope,
   FindingDecisionRequest,
+  HsClassification,
+  HsReferenceEntry,
+  HsReferenceSearch,
+  HsSelection,
+  HsSelectionRequest,
   JobRecord,
-  CreateKnowledgeConversationRequest,
-  KnowledgeConversation,
-  KnowledgeMessage,
-  KnowledgeMessageExchange,
+  OperationsMetrics,
+  OriginVerification,
+  ReviewProgress,
   ReviewerDecision,
   ReviewRun,
   ReviewRunSummary,
   SendAssistantMessageRequest,
-  SendKnowledgeMessageRequest,
   Session,
-  UploadDocumentAssetRequest,
 } from "./types";
 import type { LocalDevelopmentSessionResponse } from "../../auth";
 import { stableApiErrorMessage, technicalApiErrorDetail } from "../user-facing-errors";
 
 const API_BASE = "/api/v1" as const;
 const MAX_JSON_BODY_BYTES = 4 * 1024 * 1024;
+/** The Backend's document-asset byte bound (16MiB); checked client-side for a fast, clear error. */
+const MAX_ASSET_BODY_BYTES = 16 * 1024 * 1024;
 const REQUEST_TIMEOUT_MS = 30_000;
-// A review can legitimately wait for the bounded Agent workflow and one
-// provider response.  Keep ordinary workbench reads/actions responsive, but
-// do not abandon a real review before the Backend has had a fair chance to
-// return its terminal Job projection.
-const REVIEW_EXECUTION_TIMEOUT_MS = 120_000;
-const DOCUMENT_EXTRACTION_TIMEOUT_MS = 120_000;
-// Match the Agent's isolated binary-admission default.  Backend revalidates
-// the same bound before any source bytes reach the local preview adapter.
-const MAX_DOCUMENT_ASSET_UPLOAD_BYTES = 16 * 1024 * 1024;
-const MAX_TEXT_DOCUMENT_CHARACTERS = 200_000;
-// A standalone official-knowledge answer may make one bounded Data lookup
-// and one Claude presentation call.  Backend's normal Agent response budget
-// is 180 seconds, so the Browser must not abort the public request first.
-// The small margin is only for the local public-response handoff; it is not
-// another provider attempt.
-const KNOWLEDGE_ANSWER_TIMEOUT_MS = 190_000;
+/**
+ * Backend runs the whole AI workflow inside the request for review start,
+ * revision, and assistant replies: with the real model connected these
+ * complete in minutes, not seconds. Aborting sooner loses work the server
+ * keeps doing, so those calls get the long bound instead.
+ */
+const AI_WORKFLOW_TIMEOUT_MS = 600_000;
 
 type Decoder<T> = (value: unknown) => T;
 type AccessTokenProvider = () => string | undefined | Promise<string | undefined>;
@@ -142,6 +146,36 @@ export class ApiClient {
     });
   }
 
+  getReviewProgress(caseId: string): Promise<ReviewProgress> {
+    return this.request(
+      `/cases/${segment(caseId)}/review-progress`,
+      { method: "GET" },
+      (value) => decodeReviewProgress(value),
+    );
+  }
+
+  async deleteCase(caseId: string): Promise<void> {
+    await this.request(`/cases/${segment(caseId)}`, { method: "DELETE" }, () => undefined);
+  }
+
+  closeCase(caseId: string, payload: CaseClosureRequest): Promise<CaseDetail> {
+    const reason = payload.reason.trim();
+    if (!reason || reason.length > 4_000) throw new ContractError("closure reason is invalid");
+    if (payload.disposition !== "cleared" && payload.disposition !== "returned") {
+      throw new ContractError("closure disposition is invalid");
+    }
+    return this.request(
+      `/cases/${segment(caseId)}/closure`,
+      this.json("POST", { disposition: payload.disposition, reason }),
+      (value) => {
+        const item = decodeCaseSummary(value);
+        this.assertIdentity(item.case_id, caseId, "Closed Case");
+        this.assertOrg(item.org_id, "Closed Case");
+        return item;
+      },
+    );
+  }
+
   listDocuments(caseId: string): Promise<CaseDocument[]> {
     return this.request(`/cases/${segment(caseId)}/documents`, { method: "GET" }, (value) => {
       const documents = itemsFrom(value, "Document list").map(decodeDocumentListItem);
@@ -158,6 +192,83 @@ export class ApiClient {
     });
   }
 
+  listDocumentAssets(caseId: string): Promise<DocumentAsset[]> {
+    return this.request(`/cases/${segment(caseId)}/document-assets`, { method: "GET" }, (value) => {
+      const assets = itemsFrom(value, "Document asset list").map(decodeDocumentAsset);
+      assets.forEach((item) => this.assertIdentity(item.case_id, caseId, "Document asset Case"));
+      return assets;
+    });
+  }
+
+  /** Uploads one immutable PDF/JPEG/PNG source file for the extraction preview. */
+  addDocumentAsset(
+    caseId: string,
+    input: { documentType: DocumentType; filename: string; mediaType: DocumentAssetMediaType; body: Blob },
+  ): Promise<DocumentAsset> {
+    const filename = input.filename.trim();
+    if (!filename || filename.length > 255 || /[\r\n\0]/u.test(filename)) {
+      throw new ContractError("document asset filename is invalid");
+    }
+    if (input.body.size < 1 || input.body.size > MAX_ASSET_BODY_BYTES) {
+      throw new ContractError("document asset size is outside the allowed limit");
+    }
+    const query = new URLSearchParams({ document_type: input.documentType, filename });
+    return this.request(
+      `/cases/${segment(caseId)}/document-assets?${query.toString()}`,
+      { method: "POST", headers: { "Content-Type": input.mediaType }, body: input.body },
+      (value) => {
+        const asset = decodeDocumentAsset(value);
+        this.assertIdentity(asset.case_id, caseId, "Document asset Case");
+        return asset;
+      },
+    );
+  }
+
+  startExtraction(caseId: string, assetId: string): Promise<ExtractionJobEnvelope> {
+    return this.request(
+      `/cases/${segment(caseId)}/document-assets/${segment(assetId)}/extractions`,
+      { method: "POST" },
+      (value) => {
+        const envelope = decodeExtractionJobEnvelope(value);
+        this.assertIdentity(envelope.job.case_id, caseId, "Extraction Case");
+        this.assertIdentity(envelope.job.asset_id, assetId, "Extraction asset");
+        return envelope;
+      },
+    );
+  }
+
+  getExtraction(caseId: string, assetId: string, extractionJobId: string): Promise<ExtractionJobEnvelope> {
+    return this.request(
+      `/cases/${segment(caseId)}/document-assets/${segment(assetId)}/extractions/${segment(extractionJobId)}`,
+      { method: "GET" },
+      (value) => {
+        const envelope = decodeExtractionJobEnvelope(value);
+        this.assertIdentity(envelope.job.extraction_job_id, extractionJobId, "Extraction job");
+        return envelope;
+      },
+    );
+  }
+
+  /** Human-confirmed extracted text enters the existing text-review workflow. */
+  confirmExtractedText(
+    caseId: string,
+    assetId: string,
+    payload: ConfirmExtractedTextRequest,
+  ): Promise<CaseDocument> {
+    if (!payload.content_text.trim() || payload.content_text.length > 200_000) {
+      throw new ContractError("confirmed text is invalid");
+    }
+    return this.request(
+      `/cases/${segment(caseId)}/document-assets/${segment(assetId)}/confirmed-document`,
+      this.json("POST", payload),
+      (value) => {
+        const item = decodeDocumentView(value);
+        this.assertIdentity(item.record.case_id, caseId, "Document Case");
+        return item.record;
+      },
+    );
+  }
+
   getDocumentContent(caseId: string, documentId: string): Promise<CaseDocument & { content_text: string }> {
     return this.request(
       `/cases/${segment(caseId)}/documents/${segment(documentId)}/content`,
@@ -167,108 +278,6 @@ export class ApiClient {
         this.assertIdentity(item.record.case_id, caseId, "Document Case");
         this.assertIdentity(item.record.document_id, documentId, "Document");
         return { ...item.record, content_text: item.content_text };
-      },
-    );
-  }
-
-  /** Binary assets have a distinct preview-only boundary from text documents. */
-  listDocumentAssets(caseId: string): Promise<DocumentAsset[]> {
-    return this.request(`/cases/${segment(caseId)}/document-assets`, { method: "GET" }, (value) => {
-      const assets = itemsFrom(value, "Document asset list").map(decodeDocumentAsset);
-      assets.forEach((asset, index) => this.assertIdentity(asset.case_id, caseId, `documentAssets[${index}] Case`));
-      return assets;
-    });
-  }
-
-  /**
-   * Sends the selected file as an opaque raw body.  It never turns source
-   * bytes into JSON, base64, Browser storage, or a review request.
-  */
-  uploadDocumentAsset(caseId: string, payload: UploadDocumentAssetRequest): Promise<DocumentAsset> {
-    const assetDocumentType = validDocumentType(payload.document_type);
-    const filename = uploadFilename(payload.filename);
-    const mediaType = documentAssetMediaType(payload.media_type);
-    if (!(payload.content instanceof Blob) || payload.content.size < 1 || payload.content.size > MAX_DOCUMENT_ASSET_UPLOAD_BYTES) {
-      throw new ContractError("document asset binary content is invalid");
-    }
-    const query = new URLSearchParams({ document_type: assetDocumentType, filename });
-    return this.request(
-      `/cases/${segment(caseId)}/document-assets?${query.toString()}`,
-      {
-        method: "POST",
-        headers: { "Content-Type": mediaType },
-        body: payload.content,
-      },
-      (value) => {
-        const asset = decodeDocumentAsset(value);
-        this.assertIdentity(asset.case_id, caseId, "Document asset Case");
-        return asset;
-      },
-      true,
-      DOCUMENT_EXTRACTION_TIMEOUT_MS,
-    );
-  }
-
-  requestDocumentExtraction(caseId: string, assetId: string): Promise<DocumentAssetExtraction> {
-    return this.request(
-      `/cases/${segment(caseId)}/document-assets/${segment(assetId)}/extractions`,
-      { method: "POST" },
-      (value) => {
-        const extraction = decodeDocumentAssetExtraction(value);
-        this.assertIdentity(extraction.asset.case_id, caseId, "Document extraction Case");
-        this.assertIdentity(extraction.asset.asset_id, assetId, "Document extraction asset");
-        return extraction;
-      },
-      true,
-      DOCUMENT_EXTRACTION_TIMEOUT_MS,
-    );
-  }
-
-  getDocumentExtraction(
-    caseId: string,
-    assetId: string,
-    extractionJobId: string,
-  ): Promise<DocumentAssetExtraction> {
-    return this.request(
-      `/cases/${segment(caseId)}/document-assets/${segment(assetId)}/extractions/${segment(extractionJobId)}`,
-      { method: "GET" },
-      (value) => {
-        const extraction = decodeDocumentAssetExtraction(value);
-        this.assertIdentity(extraction.asset.case_id, caseId, "Document extraction Case");
-        this.assertIdentity(extraction.asset.asset_id, assetId, "Document extraction asset");
-        this.assertIdentity(extraction.job.extraction_job_id, extractionJobId, "Document extraction job");
-        return extraction;
-      },
-    );
-  }
-
-  /** A reviewer-confirmed text copy is the sole OCR-to-review transition. */
-  confirmDocumentExtraction(
-    caseId: string,
-    assetId: string,
-    payload: ConfirmDocumentExtractionRequest,
-  ): Promise<CaseDocument> {
-    const filename = uploadFilename(payload.filename);
-    const contentText = payload.content_text;
-    if (!contentText.trim() || contentText.length > MAX_TEXT_DOCUMENT_CHARACTERS) {
-      throw new ContractError("confirmed extraction text is invalid");
-    }
-    const extractionJobId = requestIdentifier(payload.extraction_job_id, "extraction job ID");
-    const replacesDocumentId = payload.replaces_document_id === undefined || payload.replaces_document_id === null
-      ? undefined
-      : requestIdentifier(payload.replaces_document_id, "replacement document ID");
-    return this.request(
-      `/cases/${segment(caseId)}/document-assets/${segment(assetId)}/confirmed-document`,
-      this.json("POST", {
-        extraction_job_id: extractionJobId,
-        filename,
-        content_text: contentText,
-        ...(replacesDocumentId === undefined ? {} : { replaces_document_id: replacesDocumentId }),
-      }),
-      (value) => {
-        const item = decodeDocumentView(value);
-        this.assertIdentity(item.record.case_id, caseId, "Confirmed document Case");
-        return item.record;
       },
     );
   }
@@ -318,7 +327,7 @@ export class ApiClient {
         return job;
       },
       true,
-      REVIEW_EXECUTION_TIMEOUT_MS,
+      AI_WORKFLOW_TIMEOUT_MS,
     );
   }
 
@@ -326,6 +335,73 @@ export class ApiClient {
     const job = await this.request(`/jobs/${segment(jobId)}`, { method: "GET" }, decodeJobEnvelope);
     this.assertIdentity(job.job_id, jobId, "Job");
     return job;
+  }
+
+  getHsClassification(reviewRunId: string): Promise<HsClassification> {
+    return this.request(
+      `/review-runs/${segment(reviewRunId)}/hs-classification`,
+      { method: "GET" },
+      (value) => {
+        const view = decodeHsClassification(value);
+        this.assertIdentity(view.review_run_id, reviewRunId, "HS classification review run");
+        return view;
+      },
+    );
+  }
+
+  getHskReference(code: string): Promise<HsReferenceEntry> {
+    if (!/^[0-9]{10}$/u.test(code)) throw new ContractError("HSK reference code is invalid");
+    return this.request(`/hsk-reference/${segment(code)}`, { method: "GET" }, (value) => {
+      const entry = decodeHsReferenceEntry(value);
+      this.assertIdentity(entry.code, code, "HSK reference code");
+      return entry;
+    });
+  }
+
+  getOperationsMetrics(): Promise<OperationsMetrics> {
+    return this.request("/operations-metrics", { method: "GET" }, decodeOperationsMetrics);
+  }
+
+  searchHskReference(query: string): Promise<HsReferenceSearch> {
+    const trimmed = query.trim();
+    if (!trimmed || trimmed.length > 100) throw new ContractError("HSK reference search query is invalid");
+    const params = new URLSearchParams({ q: trimmed });
+    return this.request(`/hsk-reference?${params.toString()}`, { method: "GET" }, decodeHsReferenceSearch);
+  }
+
+  recordHsSelection(reviewRunId: string, payload: HsSelectionRequest): Promise<HsSelection> {
+    const reason = payload.reason.trim();
+    if (!reason || reason.length > 4_000) throw new ContractError("HS selection reason is invalid");
+    if (!/^[0-9]{10}$/u.test(payload.code)) throw new ContractError("HS selection code is invalid");
+    return this.request(
+      `/review-runs/${segment(reviewRunId)}/hs-classification`,
+      this.json("POST", { code: payload.code, reason }),
+      (value) => decodeHsSelection(value),
+    );
+  }
+
+  getOriginVerification(reviewRunId: string): Promise<OriginVerification> {
+    return this.request(
+      `/review-runs/${segment(reviewRunId)}/origin-verification`,
+      { method: "GET" },
+      (value) => {
+        const view = decodeOriginVerification(value);
+        this.assertIdentity(view.review_run_id, reviewRunId, "Origin verification review run");
+        return view;
+      },
+    );
+  }
+
+  getDutyAssessment(reviewRunId: string): Promise<DutyAssessment> {
+    return this.request(
+      `/review-runs/${segment(reviewRunId)}/duty-assessment`,
+      { method: "GET" },
+      (value) => {
+        const view = decodeDutyAssessment(value);
+        this.assertIdentity(view.review_run_id, reviewRunId, "Duty assessment review run");
+        return view;
+      },
+    );
   }
 
   setFindingDecision(
@@ -383,82 +459,6 @@ export class ApiClient {
     );
   }
 
-  /**
-   * Global official-knowledge conversations are deliberately separate from a
-   * Case review.  The Browser still calls only Backend API v1.
-   */
-  listKnowledgeConversations(): Promise<KnowledgeConversation[]> {
-    return this.request(
-      "/knowledge/conversations",
-      { method: "GET" },
-      (value) => itemsFrom(value, "Knowledge conversation list").map(decodeKnowledgeConversation),
-    );
-  }
-
-  createKnowledgeConversation(
-    payload: CreateKnowledgeConversationRequest,
-  ): Promise<KnowledgeConversation> {
-    const title = payload.title?.trim();
-    if (title !== undefined && (!title || title.length > 200)) {
-      throw new ContractError("knowledge conversation title is invalid");
-    }
-    const tradeType = payload.trade_type ?? "both";
-    if (!(["import", "export", "both"] as const).includes(tradeType)) {
-      throw new ContractError("knowledge conversation trade type is invalid");
-    }
-    if (payload.as_of !== undefined && !isIsoDate(payload.as_of)) {
-      throw new ContractError("knowledge conversation date must be an ISO calendar date");
-    }
-    return this.request(
-      "/knowledge/conversations",
-      this.json("POST", {
-        ...(title ? { title } : {}),
-        trade_type: tradeType,
-        ...(payload.as_of === undefined ? {} : { as_of: payload.as_of }),
-      }),
-      decodeKnowledgeConversation,
-    );
-  }
-
-  listKnowledgeMessages(conversationId: string): Promise<KnowledgeMessage[]> {
-    return this.request(
-      `/knowledge/conversations/${segment(conversationId)}/messages`,
-      { method: "GET" },
-      (value) => {
-        const messages = itemsFrom(value, "Knowledge message list").map((item) => decodeKnowledgeMessage(item));
-        messages.forEach((item, index) => {
-          this.assertIdentity(item.conversation_id, conversationId, `knowledge messages[${index}] conversation`);
-        });
-        return messages;
-      },
-    );
-  }
-
-  sendKnowledgeMessage(
-    conversationId: string,
-    payload: SendKnowledgeMessageRequest,
-    idempotencyKey: string,
-  ): Promise<KnowledgeMessageExchange> {
-    const content = payload.content.trim();
-    if (!content || content.length > 4_000) throw new ContractError("knowledge message content is invalid");
-    if (!isSafeIdempotencyKey(idempotencyKey)) throw new ContractError("knowledge message Idempotency-Key is invalid");
-    const init = this.json("POST", { content });
-    const headers = new Headers(init.headers);
-    headers.set("Idempotency-Key", idempotencyKey);
-    return this.request(
-      `/knowledge/conversations/${segment(conversationId)}/messages`,
-      { ...init, headers },
-      (value) => {
-        const exchange = decodeKnowledgeMessageExchange(value);
-        this.assertIdentity(exchange.user_message.conversation_id, conversationId, "Knowledge user message conversation");
-        this.assertIdentity(exchange.assistant_message.conversation_id, conversationId, "Knowledge answer conversation");
-        return exchange;
-      },
-      true,
-      KNOWLEDGE_ANSWER_TIMEOUT_MS,
-    );
-  }
-
   listAssistantMessages(conversationId: string): Promise<AssistantMessage[]> {
     return this.request(
       `/assistant/conversations/${segment(conversationId)}/messages`,
@@ -493,6 +493,8 @@ export class ApiClient {
         this.assertIdentity(exchange.assistant_message.conversation_id, conversationId, "Assistant answer conversation");
         return exchange;
       },
+      true,
+      AI_WORKFLOW_TIMEOUT_MS,
     );
   }
 
@@ -567,7 +569,7 @@ export class ApiClient {
       { ...init, headers },
       decodeJobEnvelope,
       true,
-      REVIEW_EXECUTION_TIMEOUT_MS,
+      AI_WORKFLOW_TIMEOUT_MS,
     );
   }
 
@@ -584,7 +586,7 @@ export class ApiClient {
     init: RequestInit,
     decoder: Decoder<T>,
     authenticate = true,
-    timeoutMs = REQUEST_TIMEOUT_MS,
+    timeoutMs: number = REQUEST_TIMEOUT_MS,
   ): Promise<T> {
     const headers = new Headers(init.headers);
     headers.set("Accept", "application/json");
@@ -702,40 +704,6 @@ async function readJson(response: Response): Promise<unknown> {
   } catch {
     throw new ContractError("Backend response contains invalid JSON");
   }
-}
-
-function validDocumentType(value: unknown): UploadDocumentAssetRequest["document_type"] {
-  const allowed = [
-    "CI", "PL", "BL", "CO", "AWB", "EXPORT_DECLARATION", "SUPPORTING_EVIDENCE", "UNKNOWN",
-  ] as const;
-  if (typeof value !== "string" || !allowed.includes(value as (typeof allowed)[number])) {
-    throw new ContractError("document asset type is invalid");
-  }
-  return value as UploadDocumentAssetRequest["document_type"];
-}
-
-function documentAssetMediaType(value: unknown): UploadDocumentAssetRequest["media_type"] {
-  if (value !== "application/pdf" && value !== "image/jpeg" && value !== "image/png") {
-    throw new ContractError("document asset media type is invalid");
-  }
-  return value;
-}
-
-function uploadFilename(value: unknown): string {
-  if (
-    typeof value !== "string" || !value.trim() || value.length > 255 ||
-    /[\\/\r\n\0]/u.test(value)
-  ) {
-    throw new ContractError("document asset filename is invalid");
-  }
-  return value;
-}
-
-function requestIdentifier(value: unknown, label: string): string {
-  if (typeof value !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u.test(value)) {
-    throw new ContractError(`${label} is invalid`);
-  }
-  return value;
 }
 
 function segment(value: string): string {
