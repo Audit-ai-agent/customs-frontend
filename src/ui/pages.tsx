@@ -1,9 +1,177 @@
 import { useEffect, useRef, useState } from "react";
 import type { HsReferenceSearch, HsReferenceSearchResult } from "../api/v1/types";
-import { FLOW_MAP } from "./constants";
+import { FLOW_MAP, type SitePage } from "./constants";
 import { display, formatDate } from "./labels";
-import { EmptyCopy, SectionHeading } from "./primitives";
+import { DashStat, EmptyCopy, ExternalSourceLink, SectionHeading } from "./primitives";
 import { useStore, useWorkbenchState } from "./useStore";
+
+/* ── 홈 (#/home) ─────────────────────────────────────────────────
+ * KRDS 방문(visiting) 서비스 패턴: 서비스가 무엇인지, 지금 무엇을 하면
+ * 되는지, 어디로 가면 되는지를 첫 화면에서 답한다. 수치는 전부 실데이터. */
+
+const HOME_TASKS: readonly { page: SitePage; title: string; copy: string }[] = [
+  { page: "cases", title: "심사 업무함", copy: "Case를 등록하고 서류·심사·판단을 한 화면에서 처리합니다." },
+  { page: "hsk", title: "HSK 분류 참조", copy: "관세청 참조표에서 코드·품명으로 HSK 분류를 검색합니다." },
+  { page: "laws", title: "법령 조회", copy: "심사가 실제 인용한 법령 근거를 모아 확인합니다." },
+  { page: "records", title: "심사 기록", copy: "모든 Case의 AI 심사 실행 이력을 봅니다." },
+  { page: "guide", title: "이용안내", copy: "절차·역할·단축키와 책임 범위를 안내합니다." },
+];
+
+export function HomePage() {
+  const store = useStore();
+  const state = useWorkbenchState();
+  const counts = store.caseCounts();
+  return (
+    <section className="page-grid" data-home-page>
+      <section className="surface">
+        <SectionHeading title="바로 가기" description="자주 쓰는 업무 화면입니다. 카드를 누르면 이동합니다." />
+        <div className="home-cards">
+          {HOME_TASKS.map((task) => (
+            <button key={task.page} className="home-card" type="button" onClick={() => store.goToPage(task.page)}>
+              <strong>{task.title}</strong>
+              <span>{task.copy}</span>
+              <span className="home-card__go" aria-hidden="true">
+                →
+              </span>
+            </button>
+          ))}
+        </div>
+      </section>
+
+      <section className="surface">
+        <SectionHeading
+          title="심사 현황"
+          description={`등록된 Case ${state.cases.length}건의 상태별 현황입니다. 카드 수치는 실시간 목록 기준입니다.`}
+        />
+        <div className="dash-stats">
+          <DashStat label="전체 Case" value={counts.all} hint="업무함에 등록된 전체 건" />
+          <DashStat label="진행 전" value={counts.open} hint="심사를 아직 시작하지 않은 건" tone="open" />
+          <DashStat label="검토 중" value={counts.in_review} hint="담당자 판단이 필요한 건" tone="review" />
+          <DashStat label="종료" value={counts.closed} hint="검토가 끝난 건" tone="done" />
+        </div>
+      </section>
+
+      <section className="surface">
+        <SectionHeading title="처리 절차" description="서류 등록에서 담당자 확정까지 — 모든 결과는 담당자 검토를 거칩니다." />
+        <ol className="guide-steps">
+          {FLOW_MAP.map((step) => (
+            <li key={step.step}>
+              <span className="guide-steps__n">{step.step}</span>
+              <span className="guide-steps__tx">
+                <strong>{step.label}</strong>
+                <span>{step.hint}</span>
+              </span>
+            </li>
+          ))}
+        </ol>
+      </section>
+    </section>
+  );
+}
+
+/* ── 법령 조회 (#/reference/laws) ────────────────────────────────
+ * Browser는 법령 데이터베이스에 직접 접근하지 않는다. 이 화면은 각 Case
+ * 최신 심사 실행이 실제 인용한 법령 Evidence를 모은 것이고, 원문 전체
+ * 검색은 공식 출처 링크로 안내한다. */
+
+const OFFICIAL_LAW_SOURCES: readonly { name: string; copy: string; uri: string }[] = [
+  { name: "국가법령정보센터", copy: "대한민국 법령 원문 전체 검색", uri: "https://www.law.go.kr" },
+  { name: "관세청 UNI-PASS", copy: "실제 적용 세율·수입 요건 확인", uri: "https://unipass.customs.go.kr/clip/index.do" },
+  { name: "관세청 FTA 포털", copy: "협정별 원산지 기준·증명 서식", uri: "https://www.customs.go.kr/ftaportalkor/main.do" },
+];
+
+export function LawsPage() {
+  const store = useStore();
+  const state = useWorkbenchState();
+  const [keyword, setKeyword] = useState("");
+  const entries = state.laws ?? [];
+  const lowered = keyword.trim().toLocaleLowerCase();
+  const visible = lowered
+    ? entries.filter((entry) =>
+      `${entry.law_name ?? ""} ${entry.title} ${entry.text}`.toLocaleLowerCase().includes(lowered),
+    )
+    : entries;
+  const groups = new Map<string, typeof visible>();
+  for (const entry of visible) {
+    const groupName = entry.law_name ?? "기타 출처";
+    groups.set(groupName, [...(groups.get(groupName) ?? []), entry]);
+  }
+
+  return (
+    <section className="page-grid" data-laws-page>
+      <section className="surface">
+        <div className="dash-head">
+          <SectionHeading
+            title="심사에 인용된 법령 근거"
+            description="각 Case의 최신 심사 실행이 실제 인용한 법령 조문입니다. 근거 없는 법령 목록은 만들지 않습니다."
+          />
+          <button className="btn" type="button" disabled={state.lawsLoading} onClick={() => void store.refreshLaws()}>
+            {state.lawsLoading ? "불러오는 중…" : "새로 고침"}
+          </button>
+        </div>
+        {state.lawsError !== null ? <p className="unsupported-inline">{state.lawsError}</p> : null}
+        {state.lawsLoading && state.laws === null ? (
+          <EmptyCopy>인용 법령을 불러오는 중…</EmptyCopy>
+        ) : entries.length === 0 ? (
+          <EmptyCopy>아직 인용된 법령이 없습니다. AI 심사를 실행하면 판단에 사용된 조문이 여기에 모입니다.</EmptyCopy>
+        ) : (
+          <>
+            <div className="hsk-page-search">
+              <label className="field">
+                <span className="field__label">인용 법령 검색</span>
+                <input
+                  name="law_query"
+                  type="text"
+                  autoComplete="off"
+                  maxLength={100}
+                  placeholder="예: 관세법 · 안전확인 · 226조"
+                  value={keyword}
+                  onChange={(event) => setKeyword(event.target.value)}
+                />
+              </label>
+            </div>
+            {visible.length === 0 ? (
+              <EmptyCopy>검색어와 일치하는 인용 법령이 없습니다.</EmptyCopy>
+            ) : (
+              [...groups.entries()].map(([groupName, groupEntries]) => (
+                <div className="law-group" key={groupName}>
+                  <h3 className="law-group__name">{groupName}</h3>
+                  {groupEntries.map((entry) => (
+                    <article className="law-item" key={`${entry.source_hash}:${entry.title}`}>
+                      <div className="law-item__head">
+                        <strong>{entry.title}</strong>
+                        <ExternalSourceLink uri={entry.source_uri} />
+                      </div>
+                      <p className="law-item__text">{entry.text}</p>
+                      <p className="law-item__cites">
+                        {`인용 Case: ${entry.citedIn.map((cited) => cited.external_reference ?? cited.case_id).join(", ")}`}
+                      </p>
+                    </article>
+                  ))}
+                </div>
+              ))
+            )}
+          </>
+        )}
+      </section>
+
+      <section className="surface">
+        <SectionHeading title="공식 출처 바로가기" description="법령 원문 전체 검색과 실제 적용 기준은 공식 출처에서 확인하십시오." />
+        <div className="home-cards">
+          {OFFICIAL_LAW_SOURCES.map((source) => (
+            <a key={source.name} className="home-card" href={source.uri} target="_blank" rel="noreferrer noopener">
+              <strong>{source.name}</strong>
+              <span>{source.copy}</span>
+              <span className="home-card__go" aria-hidden="true">
+                ↗
+              </span>
+            </a>
+          ))}
+        </div>
+      </section>
+    </section>
+  );
+}
 
 /* ── HSK 분류 참조 (#/reference/hsk) ─────────────────────────────
  * KRDS 검색 패턴: 하나의 검색창, 결과 목록, 선택 상세. 데이터는 전부

@@ -73,6 +73,17 @@ export interface CaseRunRecord {
   run: ReviewRunSummary;
 }
 
+/** One law evidence item actually cited by a review run, joined with its citing cases. */
+export interface LawEvidenceEntry {
+  law_id: string | null;
+  law_name: string | null;
+  title: string;
+  text: string;
+  source_uri: string;
+  source_hash: string;
+  citedIn: CaseSummary[];
+}
+
 export interface WorkbenchState {
   session: Session | null;
   /** Which KRDS global-navigation page is showing. */
@@ -81,6 +92,10 @@ export interface WorkbenchState {
   records: CaseRunRecord[] | null;
   recordsLoading: boolean;
   recordsError: string | null;
+  /** Law evidence cited across all cases; null until the laws page first loads it. */
+  laws: LawEvidenceEntry[] | null;
+  lawsLoading: boolean;
+  lawsError: string | null;
   cases: CaseSummary[];
   selectedCase: CaseDetail | null;
   documents: CaseDocument[];
@@ -150,10 +165,13 @@ export interface AddDocumentInput {
 
 const INITIAL_STATE: WorkbenchState = {
   session: null,
-  activePage: "cases",
+  activePage: "home",
   records: null,
   recordsLoading: false,
   recordsError: null,
+  laws: null,
+  lawsLoading: false,
+  lawsError: null,
   cases: [],
   selectedCase: null,
   documents: [],
@@ -288,7 +306,7 @@ export class WorkbenchStore {
     // another site page is still honored so reloading does not lose the place.
     const initialRoute = parseRoute(window.location.hash);
     if (initialRoute.caseId === null && window.location.hash !== pageHash(initialRoute.page)) {
-      history.replaceState(null, "", "#/cases");
+      history.replaceState(null, "", "#/home");
     }
     window.addEventListener("hashchange", this.hashChange);
     await this.withBusy(async () => {
@@ -472,6 +490,7 @@ export class WorkbenchStore {
         selectedCorrectionProposalIds: new Set<string>(),
       });
       if (route.page === "records") await this.ensureRecordsLoaded();
+      if (route.page === "laws") await this.ensureLawsLoaded();
       return;
     }
     // A route change is a navigation: the source overlay must not survive it.
@@ -552,6 +571,70 @@ export class WorkbenchStore {
       this.patch({ recordsError: userMessage(error, "심사 기록을 불러오지 못했습니다.") });
     } finally {
       this.patch({ recordsLoading: false });
+    }
+  }
+
+  /* ── cited law evidence ──────────────────────────────────────── */
+
+  async ensureLawsLoaded(): Promise<void> {
+    if (this.state.laws !== null || this.state.lawsLoading) return;
+    await this.loadLaws();
+  }
+
+  async refreshLaws(): Promise<void> {
+    if (this.state.lawsLoading) return;
+    await this.loadLaws();
+  }
+
+  /**
+   * Collects the law evidence each case's latest review run actually cited.
+   * Read-only aggregation of stored run payloads — the Browser has no direct
+   * law-database access, so only genuinely cited provisions appear here.
+   */
+  private async loadLaws(): Promise<void> {
+    this.patch({ lawsLoading: true, lawsError: null });
+    try {
+      await this.refreshCases();
+      const latestRuns = await Promise.all(
+        this.state.cases.map(async (caseSummary) => {
+          const runs = await this.api.listReviewRuns(caseSummary.case_id);
+          const latest = runs[0];
+          if (!latest) return null;
+          return { caseSummary, run: await this.api.getReviewRun(latest.review_run_id) };
+        }),
+      );
+      const byKey = new Map<string, LawEvidenceEntry>();
+      for (const loaded of latestRuns) {
+        if (!loaded) continue;
+        for (const item of loaded.run.evidence) {
+          if (item.source_type !== "law") continue;
+          const key = `${item.source_hash}:${item.title}`;
+          const existing = byKey.get(key);
+          if (existing) {
+            if (!existing.citedIn.some((c) => c.case_id === loaded.caseSummary.case_id)) {
+              existing.citedIn.push(loaded.caseSummary);
+            }
+            continue;
+          }
+          byKey.set(key, {
+            law_id: item.law_id ?? null,
+            law_name: item.law_name ?? null,
+            title: item.title,
+            text: item.text,
+            source_uri: item.source_uri,
+            source_hash: item.source_hash,
+            citedIn: [loaded.caseSummary],
+          });
+        }
+      }
+      const laws = [...byKey.values()].sort(
+        (left, right) => (left.law_name ?? "힣").localeCompare(right.law_name ?? "힣") || left.title.localeCompare(right.title),
+      );
+      this.patch({ laws });
+    } catch (error) {
+      this.patch({ lawsError: userMessage(error, "인용 법령 목록을 불러오지 못했습니다.") });
+    } finally {
+      this.patch({ lawsLoading: false });
     }
   }
 

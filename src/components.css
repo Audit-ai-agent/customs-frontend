@@ -164,6 +164,33 @@ small { color: var(--krds-muted); }
 
 /* ── 사이트 페이지 공통 ───────────────────────────────────────── */
 .page-grid { display: grid; gap: 1rem; min-width: 0; }
+.g-crumb__link {
+  padding: 0; color: var(--krds-muted); background: none; border: 0;
+  font-size: inherit; text-decoration: underline; text-underline-offset: .2em; cursor: pointer;
+}
+.g-crumb__link:hover { color: var(--krds-primary-strong); }
+
+/* ── 홈 바로 가기 카드 ────────────────────────────────────────── */
+.home-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(14rem, 1fr)); gap: .8rem; }
+.home-card {
+  position: relative; display: grid; gap: .35rem; padding: 1rem 1.1rem; text-align: left;
+  background: var(--krds-surface); border: 1px solid var(--krds-line-2); border-radius: .625rem;
+  cursor: pointer; text-decoration: none; transition: border-color .13s, background .13s;
+}
+.home-card:hover { border-color: var(--krds-primary); background: var(--krds-primary-bg-soft); }
+.home-card:focus-visible { outline: 2px solid var(--krds-primary); outline-offset: 2px; }
+.home-card strong { color: var(--krds-ink); font-size: .98rem; }
+.home-card span { color: var(--krds-muted); font-size: .82rem; line-height: 1.55; }
+.home-card__go { position: absolute; top: .9rem; right: 1rem; color: var(--krds-primary-strong); font-weight: 700; }
+
+/* ── 인용 법령 목록 ───────────────────────────────────────────── */
+.law-group { margin-top: 1.1rem; }
+.law-group__name { margin: 0 0 .5rem; padding-bottom: .35rem; border-bottom: 2px solid var(--krds-primary); font-size: 1rem; font-weight: 700; }
+.law-item { padding: .75rem .2rem; border-bottom: 1px solid var(--krds-line); }
+.law-item:last-child { border-bottom: 0; }
+.law-item__head { display: flex; flex-wrap: wrap; align-items: baseline; gap: .5rem; font-size: .92rem; }
+.law-item__text { margin: .35rem 0 0; color: var(--krds-text); font-size: .88rem; line-height: 1.65; }
+.law-item__cites { margin: .35rem 0 0; color: var(--krds-muted); font-size: .78rem; }
 .guide-copy { margin: 0; color: var(--krds-text); font-size: .95rem; line-height: 1.75; max-width: 52rem; }
 .guide-list { display: grid; gap: .45rem; margin: 0; padding-left: 1.3rem; }
 .guide-list li { color: var(--krds-text); font-size: .9rem; line-height: 1.65; }

@@ -5,7 +5,7 @@ import { CaseSubNav, GlobalNav, Hero, SiteFooter, Topbar, UtilityBar } from "./C
 import { Dashboard } from "./Dashboard";
 import { DocumentModal } from "./DocumentModal";
 import { HistoryScreen } from "./History";
-import { GuidePage, HskReferencePage, MetricsPage, RecordsPage } from "./pages";
+import { GuidePage, HomePage, HskReferencePage, LawsPage, MetricsPage, RecordsPage } from "./pages";
 import { display } from "./labels";
 import { Message } from "./primitives";
 import { DocumentRail, TraceRail } from "./Rails";
@@ -77,8 +77,12 @@ export function App() {
 function PageScreen() {
   const state = useWorkbenchState();
   switch (state.activePage) {
+    case "home":
+      return <HomePage />;
     case "hsk":
       return <HskReferencePage />;
+    case "laws":
+      return <LawsPage />;
     case "records":
       return <RecordsPage />;
     case "metrics":
