@@ -75,7 +75,7 @@ export function ReviewStage() {
       </section>
 
       <section className="surface">
-        <SectionHeading title="법령 Evidence" description="Agent가 Data Evidence API에서 받은 근거입니다." />
+        <SectionHeading title="법령정보" description="이 심사 실행이 검색해 인용한 법령 조문입니다." />
         <EvidenceList run={run} />
       </section>
 
@@ -90,7 +90,7 @@ export function ReviewStage() {
           but not stacked on top of the judgement work by default. */}
       <CollapsibleSection
         title={`Agent 보고서 전문 · ${run.report.sections.length}개 구역`}
-        description="Agent가 이 실행에서 반환한 주장과 근거 참조를 그대로 표시합니다. 근거 버튼을 누르면 해당 문서 사실, 비교 결과, Evidence로 이동합니다."
+        description="Agent가 이 실행에서 반환한 주장과 근거 참조를 그대로 표시합니다. 근거 버튼을 누르면 해당 문서 사실, 비교 결과, 법령정보로 이동합니다."
       >
         <div className="report-section-stack">
           {run.report.sections.map((section, index) => (
@@ -573,7 +573,7 @@ function NextSteps({ run }: { run: ReviewRun }) {
     : [
       {
         action_code: "human_review_required",
-        message: "자동 완료하지 않습니다. 담당자가 문서와 Evidence를 확인하십시오.",
+        message: "자동 완료하지 않습니다. 담당자가 문서와 법령정보를 확인하십시오.",
         finding_ids: [],
       },
     ];
@@ -672,7 +672,7 @@ function ReportDocuments({ run }: { run: ReviewRun }) {
 
 function ReportEvidenceRows({ run }: { run: ReviewRun }) {
   const store = useStore();
-  if (!run.evidence.length) return <EmptyCopy>이번 실행에서 연결된 법령 Evidence가 없습니다.</EmptyCopy>;
+  if (!run.evidence.length) return <EmptyCopy>이번 실행에서 연결된 법령정보가 없습니다.</EmptyCopy>;
   return (
     <div className="report-evidence-list">
       {run.evidence.map((evidence) => (

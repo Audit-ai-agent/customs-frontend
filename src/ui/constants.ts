@@ -54,7 +54,7 @@ export const FLOW_MAP: readonly { step: string; label: string; hint: string }[] 
   { step: "1", label: "서류 등록", hint: "텍스트 문서 구조화" },
   { step: "2", label: "AI 사전심사", hint: "제한형 Agent workflow" },
   { step: "3", label: "교차 검증", hint: "문서 간 값 대조" },
-  { step: "4", label: "판정 · 근거", hint: "확인 사항 · 법령 Evidence" },
+  { step: "4", label: "판정 · 근거", hint: "확인 사항 · 법령정보" },
   { step: "5", label: "담당자 확정", hint: "판단 기록 · 정정 승인" },
 ];
 

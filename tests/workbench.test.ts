@@ -238,9 +238,9 @@ describe("commercial review workspace", () => {
     expect(root.textContent).toContain("Evidence를 열었습니다.");
 
     const evidenceCitation = Array.from(root.querySelectorAll<HTMLButtonElement>(".assistant-citations .citation-chip"))
-      .find((item) => item.textContent?.includes("Evidence"));
+      .find((item) => item.textContent?.includes("법령정보"));
     await click(evidenceCitation);
-    // Evidence lives inside the "통관 심사" stage now; the flow follows the mockup's stage bar.
+    // 법령정보 lives inside the "통관 심사" stage now; the flow follows the mockup's stage bar.
     expect(window.location.hash).toBe("#/cases/case-1/review");
     dispose();
   });

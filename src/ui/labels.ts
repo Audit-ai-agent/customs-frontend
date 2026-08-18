@@ -39,7 +39,7 @@ export function display(value: string): string {
 export function workflowLabel(value: string): string {
   const labels: Record<string, string> = {
     classify_documents: "문서 유형 판별", extract_facts: "문서 사실 추출", normalize_facts: "값 정규화", match_documents: "문서·품목 대응",
-    validate_documents: "정합성 검사", reextract_documents: "제한 재추출", retrieve_evidence: "법령 Evidence 조회", generate_result: "검토 결과 생성",
+    validate_documents: "정합성 검사", reextract_documents: "제한 재추출", retrieve_evidence: "법령정보 조회", generate_result: "검토 결과 생성",
   };
   return labels[value] ?? value;
 }
@@ -50,7 +50,7 @@ export function plannerActionLabel(value: string): string {
     apply_human_corrections: "승인된 사람 수정 반영",
     compare_documents: "문서·품목 비교",
     reextract_documents: "제한 재추출",
-    retrieve_evidence: "Evidence 일괄 조회",
+    retrieve_evidence: "법령정보 일괄 조회",
     generate_report: "근거 기반 보고서 생성",
   };
   return labels[value] ?? value;
@@ -62,7 +62,7 @@ export function reportSectionDescription(section: ReportSection["section"]): str
     execution_process: "실제로 수행한 제한형 Agent workflow를 설명합니다.",
     document_comparison: "문서·품목 대응과 코드 기반 비교 결과를 설명합니다.",
     issues_and_causes: "확인 사항과 판단 보류가 필요한 원인을 설명합니다.",
-    legal_evidence: "연결된 Evidence가 어떤 근거인지 설명합니다.",
+    legal_evidence: "연결된 법령정보가 어떤 근거인지 설명합니다.",
     impact: "현재 결과가 업무 검토에 미치는 영향을 설명합니다.",
     next_actions: "사람이 이어서 수행할 조치를 설명합니다.",
     limitations: "입력·근거·텍스트 범위의 한계를 설명합니다.",
@@ -87,7 +87,7 @@ export function documentAnalysisLabel(value: string): string {
 export function assistantScopeLabel(value: NonNullable<AssistantMessage["answer_scope"]>): string {
   const labels: Record<NonNullable<AssistantMessage["answer_scope"]>, string> = {
     case_grounded: "Case 근거 답변",
-    evidence_grounded: "Evidence 근거 답변",
+    evidence_grounded: "법령정보 근거 답변",
     general_customs_guidance: "일반 통관 안내 · 사건 판단 아님",
     clarification_needed: "추가 확인 필요",
     insufficient_evidence: "근거 부족",
@@ -100,7 +100,7 @@ export function citationLabel(citation: AssistantCitation): string {
   const labels: Record<AssistantCitation["kind"], string> = {
     fact: "문서 사실",
     comparison: "문서 비교",
-    evidence: "Evidence",
+    evidence: "법령정보",
   };
   return `${labels[citation.kind]} · ${citation.reference_id.slice(0, 18)}`;
 }
@@ -111,7 +111,7 @@ export function assistantSuggestions(run: ReviewRun, messages: AssistantMessage[
   const suggestions: string[] = [];
   if (run.findings.length) suggestions.push("가장 우선해서 확인할 항목과 그 근거를 알려줘");
   if (run.comparisons.length) suggestions.push("문서 간 비교에서 확인이 필요한 값은 무엇이야?");
-  if (run.evidence.length) suggestions.push("연결된 법령 Evidence가 이 Case와 어떻게 관련되는지 알려줘");
+  if (run.evidence.length) suggestions.push("연결된 법령정보가 이 Case와 어떻게 관련되는지 알려줘");
   return suggestions.slice(0, 3);
 }
 

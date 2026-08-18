@@ -13,7 +13,7 @@ export function AssistantScreen() {
     return (
       <EmptyState
         title="아직 질문할 심사 결과가 없습니다."
-        copy="심사를 실행한 뒤 문서·비교·Evidence에 대해 질문할 수 있습니다."
+        copy="심사를 실행한 뒤 문서·비교·법령정보에 대해 질문할 수 있습니다."
       />
     );
   }
@@ -23,7 +23,7 @@ export function AssistantScreen() {
       <aside className="surface assistant-sidebar">
         <SectionHeading
           title="AI 도우미"
-          description="사건 답변은 이 심사 실행의 문서·비교·Evidence만 사용합니다. 일반 통관 안내는 허용된 주제의 일반 설명이며 사건별 판단이 아닙니다."
+          description="사건 답변은 이 심사 실행의 문서·비교·법령정보만 사용합니다. 일반 통관 안내는 허용된 주제의 일반 설명이며 사건별 판단이 아닙니다."
         />
         <button
           className="button button--secondary"
@@ -57,7 +57,7 @@ export function AssistantScreen() {
       <section className="surface assistant-panel">
         <SectionHeading
           title="심사 결과에 질문하기"
-          description="사건 답변의 인용을 누르면 문서 원문, 비교 결과, Evidence로 바로 이동합니다. 일반 안내에는 사건별 결론을 넣지 않습니다."
+          description="사건 답변의 인용을 누르면 문서 원문, 비교 결과, 법령정보로 바로 이동합니다. 일반 안내에는 사건별 결론을 넣지 않습니다."
         />
         {state.assistantError ? (
           <div className="assistant-error" role="alert">
@@ -155,7 +155,7 @@ function ConversationPanel({ run }: { run: ReviewRun }) {
             name="assistant_message"
             rows={8}
             maxLength={4_000}
-            placeholder="현재 심사 결과·문서 사실·비교 결과·Evidence 또는 제한된 일반 통관 안내에 관해 질문하십시오."
+            placeholder="현재 심사 결과·문서 사실·비교 결과·법령정보 또는 제한된 일반 통관 안내에 관해 질문하십시오."
             value={state.assistantDraft}
             onChange={(event) => store.updateAssistantDraft(event.target.value)}
             onKeyDown={(event) => {

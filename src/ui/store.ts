@@ -1199,7 +1199,7 @@ export class WorkbenchStore {
       return;
     }
     if (!run.evidence.some((item) => item.evidence_id === citation.reference_id)) {
-      throw new Error("이 답변의 Evidence를 찾지 못했습니다.");
+      throw new Error("이 답변의 법령정보를 찾지 못했습니다.");
     }
     this.focusEvidence(citation.reference_id);
   }
