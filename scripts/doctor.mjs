@@ -36,7 +36,6 @@ for (const retired of [
   "@vitejs/plugin-react",
   "@testing-library/react",
   "@testing-library/user-event",
-  "@playwright/test",
   "@vitest/coverage-v8",
   "axe-core",
   "@noble/hashes",
@@ -44,6 +43,12 @@ for (const retired of [
   if (packageJson.dependencies?.[retired] || packageJson.devDependencies?.[retired]) {
     problems.push(`retired dependency remains: ${retired}`);
   }
+}
+if (packageJson.devDependencies?.["@playwright/test"] !== "1.62.1") {
+  problems.push("@playwright/test 1.62.1 is required for the local Functional-UAT Browser runner");
+}
+if (packageLock.packages?.["node_modules/@playwright/test"]?.version !== "1.62.1") {
+  problems.push("package-lock.json must preserve @playwright/test 1.62.1 exactly");
 }
 
 if (problems.length > 0) {

@@ -11,6 +11,7 @@ Browser에 전달하지 않습니다.
 | --- | --- | --- |
 | corepack npm run dev:local | 기본 팀 개발 | 없음 |
 | corepack npm run dev:functional-uat | 실제 기능 UAT 화면 | Backend Functional-UAT와 OIDC 설정 |
+| Backend의 `uv run --no-sync python tools/run_functional_uat_browser_e2e.py` | 실제 Browser 대표 E2E | 준비된 네 서비스·개인 Functional-UAT profile |
 
 기본 개발은 Backend의 loopback 전용 development session을 메모리에만
 보관합니다. 공용 키, OIDC, Docker, 모델 cache, Law API 또는 Claude 키가
@@ -68,6 +69,56 @@ Agent/Data/DB 값으로 Browser를 설정하지 마십시오.
 질문하고, 정정 제안을 독립된 approver가 승인한 뒤 자식 심사를 요청할 수 있습니다. 이 과정도
 자동 승인이나 원문 변경으로 이어지지 않습니다. Browser는 심사 기준일을 보내지 않습니다. Backend가 개발 모드의
 로컬 날짜를 정하거나 Functional UAT의 2026-08-05를 강제합니다.
+
+## PDF·이미지 추출 미리보기
+
+문서 탭에서 PDF, JPEG, PNG를 별도의 **추출 미리보기용 파일 등록**으로 올릴 수 있습니다.
+Browser는 선택한 파일을 base64나 JSON으로 바꾸지 않고 Backend API v1에 raw body로만 전송하며,
+Browser와 Backend는 16 MiB 이하만 받아들이고, Backend가 실제 MIME·magic byte·PDF 페이지·이미지 픽셀을 다시 검사합니다.
+
+- 업로드와 추출 미리보기는 기존 텍스트 문서와 분리됩니다. 파일만 올리거나 추출을 요청해도 AI 심사,
+  Finding, 통관 결론은 시작하거나 바뀌지 않습니다.
+- 화면의 결과는 항상 **검증 전 추출 후보**입니다. 원본과 대조해 수정한 사람이 명시적으로
+  `확인한 텍스트를 심사 문서로 등록`할 때만 기존 text-only 문서가 생성됩니다.
+- 텍스트 등록 뒤에도 심사는 자동 실행되지 않습니다. 담당자가 기존의 `AI 심사 시작`을 별도로 눌러야 합니다.
+- 원본 hash, 내부 저장 경로, 추출기 상세 revision, provider 오류는 화면에 표시하지 않습니다.
+
+기본 profile에는 승인된 로컬 추출 엔진이 없을 수 있습니다. 이 경우 화면은 `추출 후보 제공 불가`로
+끝나며 OCR 결과를 추정하거나 text-review로 우회하지 않습니다. OCR Gold의 사람 승인과 성능 승격은
+별도 승인 Gate이며, 현재 Browser UI는 그 전 단계의 미리보기·사람 확인 경계만 제공합니다.
+
+Evidence 탭의 기준 시점 표시는 Review Run이 완전한 `temporal_context`를 제공할 때만
+법령·HSK 품목 기준·수입/수출 요건 스냅샷의 세 날짜를 분리해 보여 줍니다. 이 값은
+근거의 기준 시점 안내이며 개별 사건의 법적 적용 결론은 아닙니다. 기존 3법령 결과처럼
+값이 없거나 `null`인 심사 이력은 기준 시점 패널을 표시하지 않고 그대로 읽을 수 있습니다.
+
+## 실제 Browser E2E
+
+현재 `main` 조합의 화면 연결을 실제로 확인할 때만 Backend 저장소에서 다음 명령을 실행합니다.
+Frontend 저장소에서 환경변수나 비밀번호를 직접 설정한 뒤 이 명령을 실행하지 않습니다.
+
+```powershell
+Set-Location ..\customs-backend
+uv run --no-sync python tools/run_functional_uat_browser_e2e.py
+```
+
+이 명령은 이미 실행 중인 Functional-UAT 서비스만 확인하고, profile의 reviewer·approver
+비밀번호를 자식 프로세스 메모리에만 주입합니다. Microsoft Edge의 설치된 `msedge` 채널을
+headless로 사용하며 별도 Browser 다운로드, Docker 기동·정리, 서비스 재기동, GitHub Actions
+실행을 하지 않습니다.
+
+검증 범위는 reviewer 로그인 → Case·텍스트 문서 등록(.txt 업로드 포함) → 실제 심사 → 보고서·Evidence·인용 →
+AI 도우미 → finding 판단·정정 제안 → 독립 approver 승인 → 자식 심사 → 문서 대체와 새 심사 이력입니다.
+Browser는 Frontend의 `/api/v1` proxy만 사용해야 하며 Agent·Data 직접 요청은 실패로 처리합니다.
+기본 Functional-UAT는 65법령 이력 Evidence를 사용하므로 Browser E2E는 Evidence 기준 시점
+패널의 법령·HSK·요건 세 날짜가 모두 `2026-08-05` baseline으로 표시되는지 검증합니다.
+기존 3법령 결과처럼 `temporal_context`가 없는 이력은 Frontend API·화면 계약 테스트에서
+패널 없이 계속 읽을 수 있는 호환 동작으로 별도 보장합니다.
+
+Playwright는 이 로컬 명령에만 쓰는 정확히 고정된 개발 의존성입니다. 일반 `test`, `check:quick`,
+CI에는 Browser E2E를 넣지 않습니다. trace·video·screenshot·HTML 보고서는 만들지 않고, 성공 시
+Backend가 지정한 `_local/state/e2e-runs/<run-id>/receipt.json`에 비밀 제거 요약만 한 번 기록합니다.
+실제 문서·대화·Claude 결과는 기존 Functional-UAT transcript 경계에만 남습니다.
 
 ## 선택적 정적 Docker smoke
 

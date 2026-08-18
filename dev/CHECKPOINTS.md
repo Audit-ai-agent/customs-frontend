@@ -357,6 +357,11 @@ FTA 힌트) → 관세 진단(기본세율 10% 현재 적용, FTA 0% 요건 미�
 
 ## 남은 것 (제가 손대지 않은 부분)
 
+- **functional-UAT 브라우저 e2e 재작성** — main의 playwright e2e 패키지(e2e/ 스펙,
+  presentation.ts, 설정)는 React 재작성 이전의 탭 UI·구 클라이언트 API를 전제로 해서
+  이 브랜치 화면에서는 실행 불가라 main 병합 시 제외했습니다. 새 UI(홈/서브탭/단계
+  라우트) 기준으로 다시 작성해야 합니다.
+
 - **Backend 공백 8건** — `customs-backend/docs/FRONTEND_UX_BACKEND_GAP.ko.md`.
   특히 목업 4단계(관세 진단)는 계약이 통째로 없어 화면을 비워 뒀습니다.
 - ~~두 저장소 API v1 세대 불일치~~ — **CP7에서 해소.** Backend가 `bd0b893`으로 올라오고

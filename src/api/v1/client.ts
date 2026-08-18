@@ -69,8 +69,8 @@ import { stableApiErrorMessage, technicalApiErrorDetail } from "../user-facing-e
 
 const API_BASE = "/api/v1" as const;
 const MAX_JSON_BODY_BYTES = 4 * 1024 * 1024;
-/** The Backend's document-asset byte bound; checked client-side for a fast, clear error. */
-const MAX_ASSET_BODY_BYTES = 32 * 1024 * 1024;
+/** The Backend's document-asset byte bound (16MiB); checked client-side for a fast, clear error. */
+const MAX_ASSET_BODY_BYTES = 16 * 1024 * 1024;
 const REQUEST_TIMEOUT_MS = 30_000;
 /**
  * Backend runs the whole AI workflow inside the request for review start,

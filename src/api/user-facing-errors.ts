@@ -4,6 +4,9 @@ export function stableApiErrorMessage(
   fallback = "요청을 안전하게 처리하지 못했습니다.",
 ): string {
   const normalizedCode = code?.toLowerCase() ?? "";
+  if (normalizedCode.includes("knowledge_input")) {
+    return "통관 지식 도우미에는 사건 문서·식별정보·원문을 입력할 수 없습니다. 일반 통관 질문만 입력해 주세요.";
+  }
   if (normalizedCode.includes("stale") || normalizedCode.includes("revision_conflict")) {
     return "다른 담당자의 변경이 먼저 반영되었습니다. 최신 내용을 다시 불러온 뒤 시도해 주십시오.";
   }
