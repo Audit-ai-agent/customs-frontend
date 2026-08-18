@@ -662,6 +662,38 @@ export interface HsSelectionRequest {
   reason: string;
 }
 
+// ── Law reference (statute search proxied Browser→Backend→Agent→Data) ──
+
+export interface LawSearchResult {
+  law_id?: string | null;
+  law_name: string;
+  article_no?: string | null;
+  title: string;
+  text: string;
+  source_uri: string;
+  valid_from?: string | null;
+  valid_to?: string | null;
+  score: number;
+}
+
+export interface LawSearch {
+  query: string;
+  as_of: string;
+  results: LawSearchResult[];
+}
+
+export interface LawCatalogEntry {
+  law_id: string;
+  law_name: string;
+  hierarchy?: string | null;
+  article_count: number;
+}
+
+export interface LawCatalog {
+  as_of: string;
+  laws: LawCatalogEntry[];
+}
+
 // ── Operations metrics (org-scoped counts over stored state) ────
 
 export interface OperationsMetrics {

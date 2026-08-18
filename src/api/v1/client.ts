@@ -16,6 +16,8 @@ import {
   decodeHsReferenceSearch,
   decodeHsSelection,
   decodeJob,
+  decodeLawCatalog,
+  decodeLawSearch,
   decodeOperationsMetrics,
   decodeOriginVerification,
   decodeProblem,
@@ -55,6 +57,8 @@ import type {
   HsSelection,
   HsSelectionRequest,
   JobRecord,
+  LawCatalog,
+  LawSearch,
   OperationsMetrics,
   OriginVerification,
   ReviewProgress,
@@ -360,6 +364,18 @@ export class ApiClient {
 
   getOperationsMetrics(): Promise<OperationsMetrics> {
     return this.request("/operations-metrics", { method: "GET" }, decodeOperationsMetrics);
+  }
+
+  searchLaws(query: string, topK?: number): Promise<LawSearch> {
+    const trimmed = query.trim();
+    if (!trimmed || trimmed.length > 200) throw new ContractError("law search query is invalid");
+    const params = new URLSearchParams({ q: trimmed });
+    if (topK !== undefined) params.set("top_k", String(topK));
+    return this.request(`/law-search?${params.toString()}`, { method: "GET" }, decodeLawSearch);
+  }
+
+  getLawCatalog(): Promise<LawCatalog> {
+    return this.request("/laws", { method: "GET" }, decodeLawCatalog);
   }
 
   searchHskReference(query: string): Promise<HsReferenceSearch> {

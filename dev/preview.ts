@@ -208,6 +208,31 @@ const api = {
       },
     ],
   }),
+  searchLaws: async (query: string) => ({
+    query: query.trim(),
+    as_of: "2026-08-05",
+    results: [
+      {
+        law_id: "LAW-226",
+        law_name: "관세법",
+        article_no: "제226조",
+        title: "관세법 제226조(허가ㆍ승인 등의 증명 및 확인)",
+        text: "수출입을 할 때 허가ㆍ승인 등의 조건을 갖출 필요가 있는 물품은 이를 증명하여야 한다. (미리보기 고정값)",
+        source_uri: "https://www.law.go.kr/법령/관세법/제226조",
+        valid_from: "2024-01-01",
+        valid_to: null,
+        score: 0.91,
+      },
+    ],
+  }),
+  getLawCatalog: async () => ({
+    as_of: "2026-08-05",
+    laws: [
+      { law_id: "LAW-226", law_name: "관세법", hierarchy: "법률", article_count: 280 },
+      { law_id: "LAW-DEC", law_name: "관세법 시행령", hierarchy: "대통령령", article_count: 190 },
+      { law_id: "LAW-FTA", law_name: "자유무역협정의 이행을 위한 관세법의 특례에 관한 법률", hierarchy: "법률", article_count: 46 },
+    ],
+  }),
   getOperationsMetrics: async () => ({
     generated_at: NOW,
     cases: { total: 3, open: 1, in_review: 1, closed: 1 },

@@ -232,6 +232,16 @@ small { color: var(--krds-muted); }
 .mcols__bar--zero { background: var(--krds-line-3); }
 .mcols__axis { display: flex; justify-content: space-between; max-width: 40rem; margin-top: .3rem; color: var(--krds-muted); font-size: .76rem; }
 
+/* ── 법령 원문 검색 ───────────────────────────────────────────── */
+.law-search-form { display: flex; align-items: flex-end; gap: .7rem; margin-bottom: .9rem; max-width: 44rem; }
+.law-search-form__field { flex: 1 1 auto; min-width: 0; }
+.law-search-form .btn { flex: none; padding: .55rem 1.1rem; }
+.law-catalog { margin-top: 1rem; border-top: 1px solid var(--krds-line); padding-top: .8rem; }
+.law-catalog summary { color: var(--krds-primary-strong); font-size: .85rem; font-weight: 700; cursor: pointer; }
+.law-catalog__grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr)); gap: .5rem .9rem; margin-top: .8rem; }
+.law-catalog__entry { font-size: .84rem; color: var(--krds-text); }
+.law-catalog__entry small { display: block; color: var(--krds-muted); font-size: .74rem; }
+
 /* ── 인용 법령 목록 ───────────────────────────────────────────── */
 .law-group { margin-top: 1.1rem; }
 .law-group__name { margin: 0 0 .5rem; padding-bottom: .35rem; border-bottom: 2px solid var(--krds-primary); font-size: 1rem; font-weight: 700; }

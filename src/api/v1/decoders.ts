@@ -39,6 +39,8 @@ import type {
   HsReferenceSearch,
   HsSelection,
   JobRecord,
+  LawCatalog,
+  LawSearch,
   OperationsMetrics,
   OriginCheck,
   OriginVerification,
@@ -987,6 +989,62 @@ export function decodeHsReferenceSearch(value: unknown): HsReferenceSearch {
       as_of: requiredString(reference.as_of, `${context}.reference.as_of`),
       source: displayText(reference.source, `${context}.reference.source`),
     },
+  };
+}
+
+export function decodeLawSearch(value: unknown): LawSearch {
+  const context = "law search";
+  const raw = record(value, context);
+  return {
+    query: displayText(raw.query, `${context}.query`),
+    as_of: requiredString(raw.as_of, `${context}.as_of`),
+    results: array(raw.results, `${context}.results`).map((item, index) => {
+      const entryContext = `${context}.results[${index}]`;
+      const entry = record(item, entryContext);
+      const sourceUri = requiredString(entry.source_uri, `${entryContext}.source_uri`);
+      if (!sourceUri.startsWith("https://www.law.go.kr/")) {
+        throw new ContractError(`${entryContext}.source_uri must be an official law.go.kr link`);
+      }
+      return {
+        ...(entry.law_id === undefined || entry.law_id === null
+          ? {}
+          : { law_id: requiredString(entry.law_id, `${entryContext}.law_id`) }),
+        law_name: displayText(entry.law_name, `${entryContext}.law_name`),
+        ...(entry.article_no === undefined || entry.article_no === null
+          ? {}
+          : { article_no: displayText(entry.article_no, `${entryContext}.article_no`) }),
+        title: displayText(entry.title, `${entryContext}.title`),
+        text: displayText(entry.text, `${entryContext}.text`),
+        source_uri: sourceUri,
+        ...(entry.valid_from === undefined || entry.valid_from === null
+          ? {}
+          : { valid_from: requiredString(entry.valid_from, `${entryContext}.valid_from`) }),
+        ...(entry.valid_to === undefined || entry.valid_to === null
+          ? {}
+          : { valid_to: requiredString(entry.valid_to, `${entryContext}.valid_to`) }),
+        score: boundedRatio(entry.score, `${entryContext}.score`),
+      };
+    }),
+  };
+}
+
+export function decodeLawCatalog(value: unknown): LawCatalog {
+  const context = "law catalog";
+  const raw = record(value, context);
+  return {
+    as_of: requiredString(raw.as_of, `${context}.as_of`),
+    laws: array(raw.laws, `${context}.laws`).map((item, index) => {
+      const entryContext = `${context}.laws[${index}]`;
+      const entry = record(item, entryContext);
+      return {
+        law_id: requiredString(entry.law_id, `${entryContext}.law_id`),
+        law_name: displayText(entry.law_name, `${entryContext}.law_name`),
+        ...(entry.hierarchy === undefined || entry.hierarchy === null
+          ? {}
+          : { hierarchy: displayText(entry.hierarchy, `${entryContext}.hierarchy`) }),
+        article_count: nonNegativeInteger(entry.article_count, `${entryContext}.article_count`),
+      };
+    }),
   };
 }
 

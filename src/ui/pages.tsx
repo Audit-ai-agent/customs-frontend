@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import type { HsReferenceSearch, HsReferenceSearchResult } from "../api/v1/types";
+import type { HsReferenceSearch, HsReferenceSearchResult, LawSearch } from "../api/v1/types";
 import { FLOW_MAP, type SitePage } from "./constants";
 import { display, formatDate } from "./labels";
 import { DashStat, EmptyCopy, ExternalSourceLink, SectionHeading } from "./primitives";
@@ -80,6 +80,102 @@ const OFFICIAL_LAW_SOURCES: readonly { name: string; copy: string; uri: string }
   { name: "관세청 FTA 포털", copy: "협정별 원산지 기준·증명 서식", uri: "https://www.customs.go.kr/ftaportalkor/main.do" },
 ];
 
+/** Real free-text statute search over the loaded Data law store. */
+function LawSearchSection() {
+  const store = useStore();
+  const state = useWorkbenchState();
+  const [text, setText] = useState("");
+  const [view, setView] = useState<LawSearch | null>(null);
+  const [searching, setSearching] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const catalog = state.lawCatalog;
+
+  const runSearch = () => {
+    const query = text.trim();
+    if (query.length < 2 || searching) return;
+    setSearching(true);
+    setError(null);
+    store
+      .searchLaws(query)
+      .then((result) => setView(result))
+      .catch(() => setError("법령 검색에 실패했습니다. 잠시 후 다시 시도하십시오."))
+      .finally(() => setSearching(false));
+  };
+
+  return (
+    <section className="surface" data-law-search>
+      <SectionHeading
+        title="법령 원문 검색"
+        description={
+          catalog
+            ? `적재된 법령 저장소 ${catalog.laws.length}개 법령의 조문을 원문 그대로 검색합니다 (${catalog.as_of} 기준 유효 조문).`
+            : "적재된 법령 저장소의 조문을 원문 그대로 검색합니다."
+        }
+      />
+      <form
+        className="law-search-form"
+        onSubmit={(event) => {
+          event.preventDefault();
+          runSearch();
+        }}
+      >
+        <label className="field law-search-form__field">
+          <span className="field__label">검색어</span>
+          <input
+            name="law_search_query"
+            type="text"
+            autoComplete="off"
+            maxLength={200}
+            placeholder="예: 원산지증명서 제출 · 통관 보류 · 수입신고 서류"
+            value={text}
+            onChange={(event) => setText(event.target.value)}
+          />
+        </label>
+        <button className="btn primary" type="submit" disabled={searching || text.trim().length < 2}>
+          {searching ? "검색 중…" : "법령 검색"}
+        </button>
+      </form>
+      {error !== null ? <p className="unsupported-inline">{error}</p> : null}
+      {view !== null ? (
+        view.results.length === 0 ? (
+          <EmptyCopy>{`"${view.query}"와 일치하는 조문을 찾지 못했습니다. 다른 단어로 검색해 보십시오.`}</EmptyCopy>
+        ) : (
+          <div className="law-group" data-law-search-results>
+            <h3 className="law-group__name">{`"${view.query}" 검색 결과 ${view.results.length}건`}</h3>
+            {view.results.map((result) => (
+              <article className="law-item" key={`${result.law_id ?? result.law_name}:${result.title}`}>
+                <div className="law-item__head">
+                  <strong>{result.title}</strong>
+                  <ExternalSourceLink uri={result.source_uri} />
+                </div>
+                <p className="law-item__text">{result.text}</p>
+                <p className="law-item__cites">
+                  {`${result.law_name}${result.valid_from ? ` · 시행 ${result.valid_from}` : ""}${result.valid_to ? ` ~ ${result.valid_to}` : " ~ 현재"} · 관련도 ${result.score.toFixed(2)}`}
+                </p>
+              </article>
+            ))}
+          </div>
+        )
+      ) : null}
+      {catalog !== null ? (
+        <details className="law-catalog" data-law-catalog>
+          <summary>{`검색 가능한 법령 ${catalog.laws.length}개 전체 보기`}</summary>
+          <div className="law-catalog__grid">
+            {catalog.laws.map((law) => (
+              <span className="law-catalog__entry" key={law.law_id}>
+                {law.law_name}
+                <small>{`${law.hierarchy ? `${law.hierarchy} · ` : ""}${law.article_count.toLocaleString("en-US")}개 조문`}</small>
+              </span>
+            ))}
+          </div>
+        </details>
+      ) : state.lawCatalogError !== null ? (
+        <p className="unsupported-inline">{state.lawCatalogError}</p>
+      ) : null}
+    </section>
+  );
+}
+
 export function LawsPage() {
   const store = useStore();
   const state = useWorkbenchState();
@@ -99,6 +195,7 @@ export function LawsPage() {
 
   return (
     <section className="page-grid" data-laws-page>
+      <LawSearchSection />
       <section className="surface">
         <div className="dash-head">
           <SectionHeading

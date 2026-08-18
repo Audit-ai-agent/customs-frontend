@@ -19,6 +19,8 @@ import type {
   HsReferenceEntry,
   HsReferenceSearch,
   JobRecord,
+  LawCatalog,
+  LawSearch,
   OperationsMetrics,
   OriginVerification,
   ReviewComparison,
@@ -97,6 +99,10 @@ export interface WorkbenchState {
   laws: LawEvidenceEntry[] | null;
   lawsLoading: boolean;
   lawsError: string | null;
+  /** The searchable-statute catalog from the Data store; null until first load. */
+  lawCatalog: LawCatalog | null;
+  lawCatalogLoading: boolean;
+  lawCatalogError: string | null;
   /** Server-computed operations metrics; null until the metrics page first loads them. */
   metrics: OperationsMetrics | null;
   metricsLoading: boolean;
@@ -177,6 +183,9 @@ const INITIAL_STATE: WorkbenchState = {
   laws: null,
   lawsLoading: false,
   lawsError: null,
+  lawCatalog: null,
+  lawCatalogLoading: false,
+  lawCatalogError: null,
   metrics: null,
   metricsLoading: false,
   metricsError: null,
@@ -498,7 +507,10 @@ export class WorkbenchStore {
         selectedCorrectionProposalIds: new Set<string>(),
       });
       if (route.page === "records") await this.ensureRecordsLoaded();
-      if (route.page === "laws") await this.ensureLawsLoaded();
+      if (route.page === "laws") {
+        await this.ensureLawCatalogLoaded();
+        await this.ensureLawsLoaded();
+      }
       if (route.page === "metrics") await this.ensureMetricsLoaded();
       return;
     }
@@ -603,6 +615,25 @@ export class WorkbenchStore {
       this.patch({ metricsError: userMessage(error, "운영 지표를 불러오지 못했습니다.") });
     } finally {
       this.patch({ metricsLoading: false });
+    }
+  }
+
+  /* ── statute reference (real search over the Data law store) ─── */
+
+  searchLaws(query: string): Promise<LawSearch> {
+    // Read-only reference search; the caller renders its own results.
+    return this.api.searchLaws(query);
+  }
+
+  async ensureLawCatalogLoaded(): Promise<void> {
+    if (this.state.lawCatalog !== null || this.state.lawCatalogLoading) return;
+    this.patch({ lawCatalogLoading: true, lawCatalogError: null });
+    try {
+      this.patch({ lawCatalog: await this.api.getLawCatalog() });
+    } catch (error) {
+      this.patch({ lawCatalogError: userMessage(error, "검색 가능한 법령 목록을 불러오지 못했습니다.") });
+    } finally {
+      this.patch({ lawCatalogLoading: false });
     }
   }
 
