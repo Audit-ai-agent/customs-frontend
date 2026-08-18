@@ -670,7 +670,9 @@ export class WorkbenchStore {
       for (const loaded of latestRuns) {
         if (!loaded) continue;
         for (const item of loaded.run.evidence) {
-          if (item.source_type !== "law") continue;
+          // The live store labels statute citations "law_article"; the older
+          // dev fixture used "law". Requirements and notices stay out.
+          if (item.source_type !== "law_article" && item.source_type !== "law") continue;
           const key = `${item.source_hash}:${item.title}`;
           const existing = byKey.get(key);
           if (existing) {

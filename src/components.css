@@ -234,8 +234,12 @@ small { color: var(--krds-muted); }
 
 /* ── 법령 원문 검색 ───────────────────────────────────────────── */
 .law-search-form { display: flex; align-items: flex-end; gap: .7rem; margin-bottom: .9rem; max-width: 44rem; }
-.law-search-form__field { flex: 1 1 auto; min-width: 0; }
-.law-search-form .btn { flex: none; padding: .55rem 1.1rem; }
+/* The shared .field carries a 14px bottom margin that would push the input
+   above the flex-end baseline; zero it (the double selector outranks the
+   later-loaded krds.css .field rule) and give the button the input's own
+   height so the pair reads as one control row. */
+.law-search-form .law-search-form__field { flex: 1 1 auto; min-width: 0; margin: 0; }
+.law-search-form .btn { flex: none; height: 45px; padding: 0 1.2rem; font-size: .9rem; }
 .law-catalog { margin-top: 1rem; border-top: 1px solid var(--krds-line); padding-top: .8rem; }
 .law-catalog summary { color: var(--krds-primary-strong); font-size: .85rem; font-weight: 700; cursor: pointer; }
 .law-catalog__grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr)); gap: .5rem .9rem; margin-top: .8rem; }
