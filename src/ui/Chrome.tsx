@@ -172,7 +172,7 @@ const PAGE_HERO: Record<SitePage, { title: string; subtitle: string }> = {
   home: { title: "통관 AI 사전심사", subtitle: "수입 통관 서류를 등록하면 AI가 근거를 갖춰 사전심사하고, 판단은 항상 담당자가 확정합니다." },
   cases: { title: "심사 업무함", subtitle: "" },
   hsk: { title: "HSK 분류 참조", subtitle: "관세청 HS부호 품목명 참조표를 코드·품명으로 검색합니다." },
-  laws: { title: "법령 조회", subtitle: "심사 실행이 실제 인용한 법령 근거를 모아 보고, 공식 출처로 이동합니다." },
+  laws: { title: "법령 조회", subtitle: "적재된 65개 법령의 조문을 원문으로 검색하고, 심사가 인용한 근거를 모아 봅니다." },
   records: { title: "심사 기록", subtitle: "모든 Case의 AI 심사 실행 이력을 한 목록으로 봅니다." },
   metrics: { title: "운영 지표", subtitle: "저장된 Case·심사 실행을 서버가 집계한 수치입니다. 추정치 없음." },
   guide: { title: "이용안내", subtitle: "서비스 절차·역할·단축키와 책임 범위를 안내합니다." },

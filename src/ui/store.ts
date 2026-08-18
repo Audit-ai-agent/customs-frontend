@@ -772,6 +772,7 @@ export class WorkbenchStore {
     await this.withBusy(async () => {
       const created = await this.api.createCase({ title: input.title, external_reference: input.reference || null });
       await this.refreshCases();
+      this.invalidateCaseAggregates();
       await this.loadCase(created.case_id);
       this.patch({
         activeView: "documents",
@@ -989,10 +990,41 @@ export class WorkbenchStore {
           this.scheduleJobPoll(job);
         }
       } finally {
-        this.stopProgressPolling();
-        this.patch({ reviewInFlight: false, reviewProgress: null });
+        // A queued/running job keeps the in-flight trace and live progress
+        // polling alive; pollJob ends them when the job actually finishes.
+        this.settleReviewFlightIfIdle();
       }
     });
+  }
+
+  /**
+   * The cross-case pages (records, cited laws, metrics) cache their
+   * aggregates. Any mutation that changes cases or review runs drops those
+   * caches; a page currently showing one reloads right away so it never sits
+   * on a wrong empty state.
+   */
+  private invalidateCaseAggregates(): void {
+    this.patch({
+      records: null,
+      recordsError: null,
+      laws: null,
+      lawsError: null,
+      metrics: null,
+      metricsError: null,
+    });
+    if (this.state.activePage === "records") void this.loadRecords();
+    if (this.state.activePage === "laws") void this.loadLaws();
+    if (this.state.activePage === "metrics") void this.loadMetrics();
+  }
+
+  /** Ends the in-flight presentation unless a review job is still active. */
+  private settleReviewFlightIfIdle(): void {
+    const jobActive =
+      this.state.activeJob !== null && ACTIVE_JOB_STATES.has(this.state.activeJob.status);
+    if (!jobActive) {
+      this.stopProgressPolling();
+      this.patch({ reviewInFlight: false, reviewProgress: null });
+    }
   }
 
   /** Poll the Backend's display-only progress proxy while a review runs. */
@@ -1035,12 +1067,23 @@ export class WorkbenchStore {
     try {
       const job = await this.api.getJob(jobId);
       this.patch({ activeJob: job });
-      if (ACTIVE_JOB_STATES.has(job.status)) this.scheduleJobPoll(job);
-      else if (job.status === "succeeded") await this.showSucceededReview(job);
+      if (ACTIVE_JOB_STATES.has(job.status)) {
+        this.scheduleJobPoll(job);
+        return;
+      }
+      if (job.status === "succeeded") await this.showSucceededReview(job);
       else this.patch({ error: "심사가 완료되지 않았습니다. Job 상태와 서비스 로그를 확인하십시오." });
     } catch (error) {
-      this.patch({ error: userMessage(error, "Job 상태를 확인하지 못했습니다.") });
+      // Polling stops here, so the in-flight presentation must not outlive it.
+      this.stopProgressPolling();
+      this.patch({
+        reviewInFlight: false,
+        reviewProgress: null,
+        error: userMessage(error, "Job 상태를 확인하지 못했습니다."),
+      });
+      return;
     }
+    this.settleReviewFlightIfIdle();
   }
 
   /**
@@ -1070,6 +1113,8 @@ export class WorkbenchStore {
           ? `심사가 완료되었습니다. 판단이 필요한 확인 사항 ${open}건 — 통관 심사 단계에서 검토하십시오. 결과는 자동 승인되지 않습니다.`
           : "심사가 완료되었습니다. 통관 심사 단계에서 결과를 확인하십시오. 결과는 자동 승인되지 않으며 담당자 검토가 필요합니다.",
     });
+    // A finished run changes every cross-case aggregate (records, cited laws, metrics).
+    this.invalidateCaseAggregates();
   }
 
   async decideFinding(findingId: string, decision: { status: FindingDecisionRequest["status"]; reason: string }): Promise<void> {
@@ -1304,6 +1349,7 @@ export class WorkbenchStore {
         ...(this.state.selectedCase?.case_id === caseId ? { selectedCase: null } : {}),
         notice: "Case를 삭제했습니다. 문서·심사 기록이 함께 제거되었습니다.",
       });
+      this.invalidateCaseAggregates();
     });
   }
 
@@ -1323,6 +1369,7 @@ export class WorkbenchStore {
           ? "심사를 종료했습니다. 이 Case는 검토 종결 상태로 기록되었습니다."
           : "심사를 종료했습니다. 이 Case는 반려·보완 요청 상태로 기록되었습니다.",
       });
+      this.invalidateCaseAggregates();
     });
   }
 
@@ -1472,11 +1519,11 @@ export class WorkbenchStore {
         this.patch({ selectedCorrectionProposalIds: new Set<string>(), activeJob: job });
         if (job.status === "succeeded") await this.showSucceededReview(job);
         else {
-          this.patch({ notice: "승인된 정정 제안을 반영하는 자식 심사를 요청했습니다. 완료되면 새 심사 이력으로 이동합니다." });
+          this.patch({ notice: "승인된 정정 제안을 반영하는 자식 심사를 요청했습니다. 완료되면 알림으로 알려 드립니다." });
           this.scheduleJobPoll(job);
         }
       } finally {
-        this.patch({ reviewInFlight: false });
+        this.settleReviewFlightIfIdle();
       }
     });
   }

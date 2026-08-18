@@ -14,6 +14,7 @@ const HOME_TASKS: readonly { page: SitePage; title: string; copy: string }[] = [
   { page: "hsk", title: "HSK 분류 참조", copy: "관세청 참조표에서 코드·품명으로 HSK 분류를 검색합니다." },
   { page: "laws", title: "법령 조회", copy: "심사가 실제 인용한 법령 근거를 모아 확인합니다." },
   { page: "records", title: "심사 기록", copy: "모든 Case의 AI 심사 실행 이력을 봅니다." },
+  { page: "metrics", title: "운영 지표", copy: "Case·심사 실행의 서버 집계 수치를 봅니다." },
   { page: "guide", title: "이용안내", copy: "절차·역할·단축키와 책임 범위를 안내합니다." },
 ];
 
@@ -579,6 +580,7 @@ export function MetricsPage() {
             {state.metricsLoading ? "불러오는 중…" : "새로 고침"}
           </button>
         </div>
+        {state.metricsError !== null ? <p className="unsupported-inline">{state.metricsError}</p> : null}
         <div className="dash-stats">
           <DashStat label="전체 Case" value={metrics.cases.total} hint="업무함에 등록된 전체 건" />
           <DashStat label="진행 전" value={metrics.cases.open} hint="심사를 아직 시작하지 않은 건" tone="open" />

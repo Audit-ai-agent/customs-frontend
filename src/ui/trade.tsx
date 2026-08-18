@@ -23,6 +23,14 @@ export function HsClassificationCard() {
   const [chosen, setChosen] = useState<string | null>(null);
   const [reason, setReason] = useState("");
   const [searchPick, setSearchPick] = useState<HsReferenceSearchResult | null>(null);
+  // A different run means a different candidate set; a pick made against the
+  // previous run must not survive into it.
+  const runId = state.selectedRun?.review_run_id ?? null;
+  useEffect(() => {
+    setChosen(null);
+    setReason("");
+    setSearchPick(null);
+  }, [runId]);
 
   if (!state.selectedRun) {
     return (
