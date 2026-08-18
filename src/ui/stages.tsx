@@ -9,6 +9,7 @@ import {
   documentTypeLabel,
   extractionPreviewText,
   extractionStatusLabel,
+  extractionUnavailableMessage,
   focusDataTarget,
 } from "./labels";
 import { EmptyCopy, EmptyState, Field, Metric, RoleBoundaryNote, SectionHeading, Submit } from "./primitives";
@@ -189,10 +190,7 @@ function AssetRow({ entry }: { entry: AssetWorkbenchEntry }) {
         ) : null}
       </header>
       {extraction && extraction.status === "unavailable" ? (
-        <p className="asset-row__note">
-          읽을 수 있는 텍스트 레이어가 없습니다. 이 환경은 스캔·이미지 OCR을 제공하지 않으므로, 아래 텍스트 등록 양식으로
-          원문을 직접 등록하십시오.
-        </p>
+        <p className="asset-row__note">{extractionUnavailableMessage(extraction.result?.warnings)}</p>
       ) : null}
       {confirmable && preview && store.hasRole("reviewer") ? (
         <ConfirmExtractionPanel

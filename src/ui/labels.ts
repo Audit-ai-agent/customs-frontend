@@ -140,6 +140,19 @@ export function extractionStatusLabel(value: ExtractionJob["status"]): string {
   return labels[value];
 }
 
+/**
+ * "unavailable" covers two very different situations: the Agent's extraction
+ * engine is not activated in this environment (warning code
+ * `preview_engine_unavailable`), or an active engine found no readable text in
+ * this specific file. Blaming the file for an environment gate misleads users.
+ */
+export function extractionUnavailableMessage(warnings: readonly string[] | undefined): string {
+  if (warnings?.includes("preview_engine_unavailable")) {
+    return "이 환경에는 자동 추출 엔진이 아직 활성화되지 않았습니다. 파일 문제가 아닙니다. 아래 텍스트 등록 양식으로 원문을 직접 등록하십시오.";
+  }
+  return "이 파일에서 읽을 수 있는 텍스트를 찾지 못했습니다. 스캔·이미지 OCR은 제공하지 않으므로, 아래 텍스트 등록 양식으로 원문을 직접 등록하십시오.";
+}
+
 /** Joins the preview spans into the editable text the reviewer confirms. */
 export function extractionPreviewText(preview: ExtractionPreview): string {
   return [...preview.pages]

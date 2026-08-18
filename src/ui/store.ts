@@ -53,6 +53,7 @@ import {
   type WorkspaceView,
 } from "./constants";
 import {
+  extractionUnavailableMessage,
   findFact,
   mergeAssistantMessages,
   severityWeight,
@@ -881,10 +882,7 @@ export class WorkbenchStore {
       }
       this.patchAssetEntry(assetId, { extraction: envelope.job });
       if (envelope.job.status === "unavailable") {
-        this.patch({
-          notice:
-            "이 파일에는 읽을 수 있는 텍스트 레이어가 없어 자동 추출을 제공하지 않습니다. 아래 텍스트 등록 양식으로 원문을 직접 등록하십시오.",
-        });
+        this.patch({ notice: extractionUnavailableMessage(envelope.job.result?.warnings) });
       }
     } catch (error) {
       this.patch({ error: userMessage(error, "자동 추출을 실행하지 못했습니다.") });
