@@ -11,12 +11,17 @@ async function bootstrap(): Promise<void> {
 
   const bootstrapClient = new ApiClient();
   try {
+    // The stylesheet loads before the login screen so FRAME 00 wears KRDS too.
+    await import("./styles.css");
+    const { showLoginScreen } = await import("./login");
     let session: BrowserSession;
     if (__CUSTOMS_RUNTIME_MODE__ === "local-development") {
       const localSession = new LocalDevelopmentSession(
         (actor) => bootstrapClient.createLocalDevelopmentSession(actor),
       );
-      await localSession.start();
+      // Signing in is an explicit choice, including which local role to use.
+      const choice = await showLoginScreen(root, "local-development");
+      await localSession.start(choice.actor);
       session = localSession;
     } else {
       const { OidcSession } = await import("./functional-oidc");
@@ -24,13 +29,15 @@ async function bootstrap(): Promise<void> {
       oidc.configure(await bootstrapClient.getAuthConfig());
       const callbackHandled = await oidc.finishCallbackIfPresent();
       if (!callbackHandled && !oidc.isAuthenticated()) {
+        // FRAME 00: the person starts the OIDC redirect, not the page.
+        await showLoginScreen(root, "functional-uat");
         await oidc.login();
         return;
       }
       session = oidc;
     }
+    root.replaceChildren();
     const api = new ApiClient(fetch, session.freshAccessToken);
-    await import("./styles.css");
     const { LightweightWorkbench } = await import("./workbench");
     const workbench = new LightweightWorkbench(root, api, session, __CUSTOMS_RUNTIME_MODE__);
     await workbench.start();

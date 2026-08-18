@@ -193,6 +193,27 @@ small { color: var(--krds-muted); }
 .home-card span { color: var(--krds-muted); font-size: .82rem; line-height: 1.55; }
 .home-card__go { position: absolute; top: .9rem; right: 1rem; color: var(--krds-primary-strong); font-weight: 700; }
 
+/* ── 로그인 화면 (FRAME 00 · KRDS 로그인 서비스 패턴) ─────────── */
+.login-screen {
+  min-height: 100vh; display: grid; place-items: center; padding: 2rem 1rem;
+  background: linear-gradient(180deg, #e9f1fe 0%, #f7f8fa 60%);
+}
+.login-card {
+  width: min(30rem, 100%); display: grid; gap: 1.15rem; padding: 2.2rem 2rem;
+  background: var(--krds-surface); border: 1px solid var(--krds-line-2);
+  border-radius: 1rem; box-shadow: 0 14px 44px rgb(30 33 36 / 10%);
+  animation: card-rise var(--mo-enter, .3s) var(--mo-ease-out, ease-out) both;
+}
+.login-brand { display: flex; align-items: center; gap: .85rem; }
+.login-title h1 { margin: 0; font-size: 1.35rem; font-weight: 700; letter-spacing: -.02em; }
+.login-title p { margin: .15rem 0 0; color: var(--krds-muted); font-size: .82rem; }
+.login-copy { margin: 0; color: var(--krds-text); font-size: .92rem; line-height: 1.7; }
+.login-actions { display: grid; gap: .6rem; }
+.login-button { width: 100%; padding: .85rem 1rem; font-size: .95rem; font-weight: 700; border-radius: .625rem; }
+.login-hint { margin: 0; color: var(--krds-muted); font-size: .8rem; line-height: 1.6; }
+.login-notice { display: grid; gap: .3rem; padding-top: 1rem; border-top: 1px solid var(--krds-line); }
+.login-notice p { margin: 0; color: var(--krds-muted-2); font-size: .76rem; line-height: 1.6; }
+
 /* ── 운영 지표 — 단일 색조 막대·미터·일별 컬럼 ────────────────── */
 .mbar-list { display: grid; gap: .55rem; max-width: 40rem; }
 .mbar { display: grid; grid-template-columns: 8.5rem minmax(0, 1fr) 3.2rem; align-items: center; gap: .7rem; }
