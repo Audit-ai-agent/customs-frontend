@@ -39,11 +39,13 @@ import {
   ACTIVE_JOB_STATES,
   DOCUMENT_TYPES,
   STAGE_IDS,
+  pageHash,
   parseRoute,
   type CaseFilter,
   type CaseSortKey,
   type FontScale,
   type FrontendRuntimeMode,
+  type SitePage,
   type StageView,
   type WorkspaceView,
 } from "./constants";
@@ -65,8 +67,20 @@ export interface AssetWorkbenchEntry {
   extracting: boolean;
 }
 
+/** One review run joined with its case for the cross-case records page. */
+export interface CaseRunRecord {
+  caseSummary: CaseSummary;
+  run: ReviewRunSummary;
+}
+
 export interface WorkbenchState {
   session: Session | null;
+  /** Which KRDS global-navigation page is showing. */
+  activePage: SitePage;
+  /** Cross-case review run records; null until the records page first loads them. */
+  records: CaseRunRecord[] | null;
+  recordsLoading: boolean;
+  recordsError: string | null;
   cases: CaseSummary[];
   selectedCase: CaseDetail | null;
   documents: CaseDocument[];
@@ -136,6 +150,10 @@ export interface AddDocumentInput {
 
 const INITIAL_STATE: WorkbenchState = {
   session: null,
+  activePage: "cases",
+  records: null,
+  recordsLoading: false,
+  recordsError: null,
   cases: [],
   selectedCase: null,
   documents: [],
@@ -266,9 +284,10 @@ export class WorkbenchStore {
   async start(): Promise<void> {
     if (!this.auth.isAuthenticated()) throw new Error("브라우저 인증 세션을 시작하지 못했습니다.");
     // The main workbench home is the default landing: an absent or unknown
-    // hash becomes the explicit dashboard route. A deep link into a case is
-    // still honored so reloading mid-review does not lose the place.
-    if (parseRoute(window.location.hash).caseId === null && window.location.hash !== "#/cases") {
+    // hash becomes the explicit dashboard route. A deep link into a case or
+    // another site page is still honored so reloading does not lose the place.
+    const initialRoute = parseRoute(window.location.hash);
+    if (initialRoute.caseId === null && window.location.hash !== pageHash(initialRoute.page)) {
       history.replaceState(null, "", "#/cases");
     }
     window.addEventListener("hashchange", this.hashChange);
@@ -411,6 +430,15 @@ export class WorkbenchStore {
     void this.followRoute();
   }
 
+  goToPage(page: SitePage): void {
+    const target = pageHash(page);
+    if (window.location.hash !== target) {
+      window.location.hash = target;
+      return;
+    }
+    void this.followRoute();
+  }
+
   /** Mockup shortcuts: `1`–`4` and arrows move between stages. */
   moveStage(delta: number): void {
     const current = this.state.selectedCase;
@@ -431,6 +459,7 @@ export class WorkbenchStore {
     const route = parseRoute(window.location.hash);
     if (route.caseId === null) {
       this.patch({
+        activePage: route.page,
         selectedCase: null,
         documents: [],
         runs: [],
@@ -442,10 +471,12 @@ export class WorkbenchStore {
         ...RUN_ATTACHMENT_RESET,
         selectedCorrectionProposalIds: new Set<string>(),
       });
+      if (route.page === "records") await this.ensureRecordsLoaded();
       return;
     }
     // A route change is a navigation: the source overlay must not survive it.
     this.patch({
+      activePage: "cases",
       ...(this.state.activeView !== route.view ? { documentModalOpen: false } : {}),
       activeView: route.view,
     });
@@ -488,6 +519,40 @@ export class WorkbenchStore {
 
   private async refreshCases(): Promise<void> {
     this.patch({ cases: (await this.api.listCases()).items });
+  }
+
+  /* ── cross-case review records ───────────────────────────────── */
+
+  async ensureRecordsLoaded(): Promise<void> {
+    if (this.state.records !== null || this.state.recordsLoading) return;
+    await this.loadRecords();
+  }
+
+  async refreshRecords(): Promise<void> {
+    if (this.state.recordsLoading) return;
+    await this.loadRecords();
+  }
+
+  /** Joins every case with its review runs; read-only aggregation of v1 lists. */
+  private async loadRecords(): Promise<void> {
+    this.patch({ recordsLoading: true, recordsError: null });
+    try {
+      await this.refreshCases();
+      const perCase = await Promise.all(
+        this.state.cases.map(async (caseSummary) => ({
+          caseSummary,
+          runs: await this.api.listReviewRuns(caseSummary.case_id),
+        })),
+      );
+      const records = perCase
+        .flatMap(({ caseSummary, runs }) => runs.map((run) => ({ caseSummary, run })))
+        .sort((left, right) => right.run.created_at.localeCompare(left.run.created_at));
+      this.patch({ records });
+    } catch (error) {
+      this.patch({ recordsError: userMessage(error, "심사 기록을 불러오지 못했습니다.") });
+    } finally {
+      this.patch({ recordsLoading: false });
+    }
   }
 
   async openCase(caseId: string, view: WorkspaceView = "documents"): Promise<void> {

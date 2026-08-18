@@ -1,5 +1,13 @@
 import type { ReactNode } from "react";
-import { FONT_SCALES, STAGE_IDS, type FrontendRuntimeMode, type StageView, type WorkspaceView } from "./constants";
+import {
+  FONT_SCALES,
+  SITE_PAGES,
+  STAGE_IDS,
+  type FrontendRuntimeMode,
+  type SitePage,
+  type StageView,
+  type WorkspaceView,
+} from "./constants";
 import { display, roleLabel } from "./labels";
 import { useStore, useWorkbenchState } from "./useStore";
 
@@ -103,55 +111,84 @@ export function Topbar({ right }: { right?: ReactNode }) {
   );
 }
 
+/** KRDS global navigation: every top-level site page, always visible. */
 export function GlobalNav() {
   const store = useStore();
   const state = useWorkbenchState();
+  return (
+    <nav className="g-gnb" aria-label="주요 메뉴">
+      <div className="g-inner">
+        {SITE_PAGES.map((page) => {
+          const active = state.activePage === page.id;
+          return (
+            <button
+              key={page.id}
+              type="button"
+              className={`g-gnb__item${active ? " is-active" : ""}`}
+              {...(active ? { "aria-current": "page" as const } : {})}
+              onClick={() => store.goToPage(page.id)}
+            >
+              {page.label}
+            </button>
+          );
+        })}
+      </div>
+    </nav>
+  );
+}
+
+/** Second-depth navigation inside one case: workspace stages, assistant, trail. */
+export function CaseSubNav() {
+  const store = useStore();
+  const state = useWorkbenchState();
   const current = state.selectedCase;
+  if (!current) return null;
   const sections: readonly { id: WorkspaceView; label: string; matches: (view: WorkspaceView) => boolean }[] = [
     { id: "documents", label: "심사 워크스페이스", matches: (view) => STAGE_IDS.includes(view as StageView) },
     { id: "assistant", label: "AI 도우미", matches: (view) => view === "assistant" },
     { id: "history", label: "심사 이력", matches: (view) => view === "history" },
   ];
   return (
-    <nav className="g-gnb" aria-label="주요 메뉴">
-      <div className="g-inner">
-        <button
-          type="button"
-          className={`g-gnb__item${current ? "" : " is-active"}`}
-          {...(current ? {} : { "aria-current": "page" as const })}
-          onClick={() => store.setRoute(null)}
-        >
-          심사 업무함
-        </button>
-        {current
-          ? sections.map((section) => {
-            const active = section.matches(state.activeView);
-            return (
-              <button
-                key={section.id}
-                type="button"
-                className={`g-gnb__item${active ? " is-active" : ""}`}
-                {...(active ? { "aria-current": "page" as const } : {})}
-                onClick={() => store.setRoute(current.case_id, section.id)}
-              >
-                {section.label}
-              </button>
-            );
-          })
-          : null}
-      </div>
+    <nav className="case-subnav" aria-label="Case 화면 이동">
+      {sections.map((section) => {
+        const active = section.matches(state.activeView);
+        return (
+          <button
+            key={section.id}
+            type="button"
+            className={`case-subnav__item${active ? " is-active" : ""}`}
+            {...(active ? { "aria-current": "page" as const } : {})}
+            onClick={() => store.setRoute(current.case_id, section.id)}
+          >
+            {section.label}
+          </button>
+        );
+      })}
     </nav>
   );
 }
+
+/** Per-page breadcrumb + title copy. Case screens override with the case itself. */
+const PAGE_HERO: Record<SitePage, { title: string; subtitle: string }> = {
+  cases: { title: "심사 업무함", subtitle: "" },
+  hsk: { title: "HSK 분류 참조", subtitle: "관세청 HS부호 품목명 참조표를 코드·품명으로 검색합니다." },
+  records: { title: "심사 기록", subtitle: "모든 Case의 AI 심사 실행 이력을 한 목록으로 봅니다." },
+  metrics: { title: "운영 지표", subtitle: "Backend 집계 계약 준비 중 — 근거 없는 수치는 표시하지 않습니다." },
+  guide: { title: "이용안내", subtitle: "서비스 절차·역할·단축키와 책임 범위를 안내합니다." },
+};
 
 export function Hero() {
   const store = useStore();
   const state = useWorkbenchState();
   const current = state.selectedCase;
-  const trail = current ? ["홈", "심사 업무함", current.title] : ["홈", "통관심사", "심사 업무함"];
+  const hero = PAGE_HERO[state.activePage];
+  const pageLabel = SITE_PAGES.find((page) => page.id === state.activePage)?.label ?? "심사 업무함";
+  const trail = current ? ["홈", "심사 업무함", current.title] : ["홈", "통관심사", pageLabel];
   const subtitle = current
     ? `${current.external_reference ?? current.case_id} · ${display(current.status)} · 활성 문서 ${store.activeDocuments().length}건`
-    : `등록된 Case ${state.cases.length}건 · 문서와 근거를 한 화면에서 검토합니다.`;
+    : state.activePage === "cases"
+      ? `등록된 Case ${state.cases.length}건 · 문서와 근거를 한 화면에서 검토합니다.`
+      : hero.subtitle;
   return (
     <div className="g-hero">
       <div className="g-inner">
@@ -169,7 +206,7 @@ export function Hero() {
         </p>
         <div className="g-hero__row">
           <div className="g-hero__text">
-            <h1 className="g-title">{current ? current.title : "심사 업무함"}</h1>
+            <h1 className="g-title">{current ? current.title : hero.title}</h1>
             <p className="g-title-sub">{subtitle}</p>
           </div>
           {current ? (

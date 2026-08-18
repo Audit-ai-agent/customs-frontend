@@ -1,10 +1,11 @@
 import { useEffect } from "react";
 import { ACTIVE_JOB_STATES, STAGES, STAGE_IDS, type StageView } from "./constants";
 import { AssistantScreen } from "./Assistant";
-import { GlobalNav, Hero, SiteFooter, Topbar, UtilityBar } from "./Chrome";
+import { CaseSubNav, GlobalNav, Hero, SiteFooter, Topbar, UtilityBar } from "./Chrome";
 import { Dashboard } from "./Dashboard";
 import { DocumentModal } from "./DocumentModal";
 import { HistoryScreen } from "./History";
+import { GuidePage, HskReferencePage, MetricsPage, RecordsPage } from "./pages";
 import { display } from "./labels";
 import { Message } from "./primitives";
 import { DocumentRail, TraceRail } from "./Rails";
@@ -63,13 +64,30 @@ export function App() {
         <div className="g-inner g-body">
           {state.error ? <Message kind="error" text={state.error} /> : null}
           {state.notice ? <Message kind="notice" text={state.notice} /> : null}
-          {state.selectedCase ? <CaseScreen /> : <Dashboard />}
+          <PageScreen />
         </div>
       </main>
       <SiteFooter mode={store.mode} />
       {state.documentModalOpen ? <DocumentModal /> : null}
     </div>
   );
+}
+
+/** Routes each KRDS global-navigation page; the cases page nests the workspace. */
+function PageScreen() {
+  const state = useWorkbenchState();
+  switch (state.activePage) {
+    case "hsk":
+      return <HskReferencePage />;
+    case "records":
+      return <RecordsPage />;
+    case "metrics":
+      return <MetricsPage />;
+    case "guide":
+      return <GuidePage />;
+    default:
+      return state.selectedCase ? <CaseScreen /> : <Dashboard />;
+  }
 }
 
 function CaseChip() {
@@ -92,6 +110,7 @@ function CaseScreen() {
   if (state.activeView === "assistant") {
     return (
       <section className="case-screen">
+        <CaseSubNav />
         {processing}
         <AssistantScreen />
       </section>
@@ -100,6 +119,7 @@ function CaseScreen() {
   if (state.activeView === "history") {
     return (
       <section className="case-screen">
+        <CaseSubNav />
         {processing}
         <HistoryScreen />
       </section>
@@ -107,6 +127,7 @@ function CaseScreen() {
   }
   return (
     <section className="case-screen">
+      <CaseSubNav />
       {processing}
       <StageBar />
       <div className={`workspace${state.traceRailOpen ? "" : " workspace--rail-closed"}`}>

@@ -58,15 +58,36 @@ export const FLOW_MAP: readonly { step: string; label: string; hint: string }[] 
   { step: "5", label: "담당자 확정", hint: "판단 기록 · 정정 승인" },
 ];
 
-export function parseRoute(hash: string): { caseId: string | null; view: WorkspaceView } {
+/**
+ * Site pages behind the KRDS global navigation. Every page is either backed by
+ * real Backend v1 calls or explains exactly why it is not (metrics).
+ */
+export type SitePage = "cases" | "hsk" | "records" | "metrics" | "guide";
+
+export const SITE_PAGES: readonly { id: SitePage; label: string; hash: string }[] = [
+  { id: "cases", label: "심사 업무함", hash: "#/cases" },
+  { id: "hsk", label: "HSK 분류 참조", hash: "#/reference/hsk" },
+  { id: "records", label: "심사 기록", hash: "#/records" },
+  { id: "metrics", label: "운영 지표", hash: "#/metrics" },
+  { id: "guide", label: "이용안내", hash: "#/guide" },
+];
+
+export function pageHash(page: SitePage): string {
+  return SITE_PAGES.find((item) => item.id === page)?.hash ?? "#/cases";
+}
+
+export function parseRoute(hash: string): { page: SitePage; caseId: string | null; view: WorkspaceView } {
+  const fallback = { page: "cases" as SitePage, caseId: null, view: "documents" as WorkspaceView };
+  const staticPage = SITE_PAGES.find((item) => item.hash === hash);
+  if (staticPage) return { ...fallback, page: staticPage.id };
   const match = /^#\/cases\/([^/]+)(?:\/([a-z]+))?$/u.exec(hash);
-  if (!match) return { caseId: null, view: "documents" };
+  if (!match) return fallback;
   try {
     const caseId = decodeURIComponent(match[1] ?? "");
-    if (!caseId) return { caseId: null, view: "documents" };
-    return { caseId, view: resolveView(match[2]) };
+    if (!caseId) return fallback;
+    return { page: "cases", caseId, view: resolveView(match[2]) };
   } catch {
-    return { caseId: null, view: "documents" };
+    return fallback;
   }
 }
 
