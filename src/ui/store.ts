@@ -978,14 +978,33 @@ export class WorkbenchStore {
     }
   }
 
+  /**
+   * A finished review refreshes the data in place but never moves the user:
+   * with the real model a run takes minutes, and the person may be reading a
+   * document or typing on another stage by then — a forced jump to stage 3
+   * would discard that context. The stage badge and the issue bar's
+   * "통관 심사로 →" chip carry the navigation instead.
+   */
   private async showSucceededReview(job: JobRecord): Promise<void> {
-    await this.loadCase(job.case_id);
-    await this.openRun(job.review_run_id);
+    const stillOnCase = this.state.selectedCase?.case_id === job.case_id;
+    if (stillOnCase) {
+      await this.loadCase(job.case_id);
+      await this.openRun(job.review_run_id);
+      // loadCase drops the per-run attachments; the screen the user is on
+      // reloads its own so it does not sit empty (same rule as a role switch).
+      if (this.state.activeView === "documents") await this.ensureHsClassificationLoaded();
+      if (this.state.activeView === "crosscheck") await this.ensureOriginVerificationLoaded();
+      if (this.state.activeView === "duty") await this.ensureDutyAssessmentLoaded();
+      if (this.state.activeView === "assistant") await this.ensureAssistantLoaded();
+      if (this.state.activeView === "history") await this.ensureCorrectionProposalsLoaded();
+    }
+    const open = stillOnCase ? this.openFindings().length : 0;
     this.patch({
-      activeView: "review",
-      notice: "심사가 완료되었습니다. 결과는 자동 승인되지 않으며 담당자 검토가 필요합니다.",
+      notice:
+        open > 0
+          ? `심사가 완료되었습니다. 판단이 필요한 확인 사항 ${open}건 — 통관 심사 단계에서 검토하십시오. 결과는 자동 승인되지 않습니다.`
+          : "심사가 완료되었습니다. 통관 심사 단계에서 결과를 확인하십시오. 결과는 자동 승인되지 않으며 담당자 검토가 필요합니다.",
     });
-    this.setRoute(job.case_id, "review");
   }
 
   async decideFinding(findingId: string, decision: { status: FindingDecisionRequest["status"]; reason: string }): Promise<void> {

@@ -177,6 +177,15 @@ describe("commercial review workspace", () => {
 
     expect(api.getJob).not.toHaveBeenCalled();
     expect(api.getReviewRun).toHaveBeenCalledWith("run-1");
+    // A finished review announces itself but must not yank the user off the
+    // stage they are on; the issue bar offers the jump to stage 3 instead.
+    expect(root.textContent).toContain("심사가 완료되었습니다");
+    expect(root.textContent).toContain("HSK 분류");
+    const goToReview = Array.from(root.querySelectorAll<HTMLButtonElement>(".issuebar__chip"))
+      .find((item) => item.textContent?.includes("통관 심사로"));
+    expect(goToReview).toBeDefined();
+    await click(goToReview);
+
     expect(root.textContent).toContain("처리 과정과 실행 상태");
     expect(root.textContent).toContain("문서 간 비교");
     expect(root.textContent).toContain("담당자 판단 기록");
