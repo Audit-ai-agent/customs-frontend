@@ -3,7 +3,6 @@ import {
   FONT_SCALES,
   SITE_PAGES,
   STAGE_IDS,
-  type FrontendRuntimeMode,
   type SitePage,
   type StageView,
   type WorkspaceView,
@@ -260,17 +259,11 @@ export function StartReviewButton() {
   );
 }
 
-export function SiteFooter({ mode }: { mode: FrontendRuntimeMode }) {
+export function SiteFooter() {
   return (
     <footer className="g-footer">
       <div className="g-inner">
         <p className="g-footer__title">통관 AI 사전심사 작업대</p>
-        <p>
-          {mode === "functional-uat"
-            ? "이 화면은 Backend API v1만 호출합니다. Agent·Data·저장소 주소와 비밀값은 브라우저에 전달되지 않습니다."
-            : "팀 개발 모드입니다. 세션과 토큰은 메모리에만 두며 브라우저 저장소에 남기지 않습니다."}
-        </p>
-        <p>모든 결과는 항상 담당자 검토 대상이며 통관 승인 판단이 아닙니다. 화면에 비밀정보를 입력하지 마십시오.</p>
         <p className="g-footer__note">KRDS(대한민국 정부 디자인 시스템) 문법을 적용한 업무 화면입니다.</p>
       </div>
     </footer>

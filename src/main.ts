@@ -53,7 +53,7 @@ async function bootstrap(): Promise<void> {
       "작업대를 안전하게 시작하지 못했습니다. 잠시 후 다시 시도해 주십시오.",
     );
     const hint = document.createElement("p");
-    hint.textContent = "문제가 계속되면 화면에 비밀정보를 입력하지 말고 시스템 관리자에게 문의해 주십시오.";
+    hint.textContent = "문제가 계속되면 시스템 관리자에게 문의해 주십시오.";
     main.append(title, detail, hint);
     root.replaceChildren(main);
   }

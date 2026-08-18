@@ -67,7 +67,7 @@ export function App() {
           <PageScreen />
         </div>
       </main>
-      <SiteFooter mode={store.mode} />
+      <SiteFooter />
       {state.documentModalOpen ? <DocumentModal /> : null}
     </div>
   );
