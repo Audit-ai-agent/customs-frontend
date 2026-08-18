@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { ACTIVE_JOB_STATES, STAGES, STAGE_IDS, type StageView } from "./constants";
 import { AssistantScreen } from "./Assistant";
 import { CaseSubNav, GlobalNav, Hero, SiteFooter, Topbar, UtilityBar } from "./Chrome";
@@ -109,6 +109,17 @@ function CaseChip() {
 
 function CaseScreen() {
   const state = useWorkbenchState();
+  // Stage moves have direction: forward slides in from the right, back from
+  // the left. Direction is decided once per actual stage change so unrelated
+  // re-renders (loading flags etc.) cannot flip it mid-animation.
+  const stageIndex = STAGE_IDS.indexOf(state.activeView as StageView);
+  const previousStageIndex = useRef(stageIndex);
+  const directionRef = useRef<"fwd" | "back">("fwd");
+  if (stageIndex >= 0 && stageIndex !== previousStageIndex.current) {
+    directionRef.current = stageIndex < previousStageIndex.current ? "back" : "fwd";
+    previousStageIndex.current = stageIndex;
+  }
+  const direction = directionRef.current;
   const processing = state.activeJob && ACTIVE_JOB_STATES.has(state.activeJob.status) ? <ProcessingNotice /> : null;
 
   if (state.activeView === "assistant") {
@@ -138,7 +149,9 @@ function CaseScreen() {
         <DocumentRail />
         <section className="workspace__canvas">
           <IssueBar />
-          <StageContent />
+          <div className={`stage-anim dir-${direction}`} key={state.activeView}>
+            <StageContent />
+          </div>
         </section>
         <TraceRail />
       </div>

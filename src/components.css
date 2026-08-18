@@ -147,20 +147,30 @@ small { color: var(--krds-muted); }
 .g-gnb { background: var(--krds-surface); border-bottom: 1px solid var(--krds-line); }
 .g-gnb .g-inner { display: flex; flex-wrap: wrap; gap: .25rem; }
 .g-gnb__item {
-  padding: .85rem 1.05rem; color: var(--krds-muted); background: none; border: 0;
+  position: relative; padding: .85rem 1.05rem; color: var(--krds-muted); background: none; border: 0;
   border-bottom: 3px solid transparent; font-size: .98rem; font-weight: 700;
 }
+.g-gnb__item::after {
+  content: ""; position: absolute; left: .9rem; right: .9rem; bottom: 0; height: 3px;
+  background: var(--krds-primary); border-radius: 2px; transform: scaleX(0);
+}
 .g-gnb__item:hover { color: var(--krds-ink); }
-.g-gnb__item.is-active { color: var(--krds-primary-strong); border-bottom-color: var(--krds-primary); }
+.g-gnb__item.is-active { color: var(--krds-primary-strong); }
+.g-gnb__item.is-active::after { transform: scaleX(1); }
 
 /* ── Case 2단계 서브 내비게이션 (KRDS 탭 문법) ─────────────────── */
 .case-subnav { display: flex; flex-wrap: wrap; gap: .25rem; border-bottom: 1px solid var(--krds-line); }
 .case-subnav__item {
-  padding: .6rem .95rem; color: var(--krds-muted); background: none; border: 0;
+  position: relative; padding: .6rem .95rem; color: var(--krds-muted); background: none; border: 0;
   border-bottom: 3px solid transparent; font-size: .92rem; font-weight: 700;
 }
+.case-subnav__item::after {
+  content: ""; position: absolute; left: .8rem; right: .8rem; bottom: 0; height: 3px;
+  background: var(--krds-primary); border-radius: 2px; transform: scaleX(0);
+}
 .case-subnav__item:hover { color: var(--krds-ink); }
-.case-subnav__item.is-active { color: var(--krds-primary-strong); border-bottom-color: var(--krds-primary); }
+.case-subnav__item.is-active { color: var(--krds-primary-strong); }
+.case-subnav__item.is-active::after { transform: scaleX(1); }
 
 /* ── 사이트 페이지 공통 ───────────────────────────────────────── */
 .page-grid { display: grid; gap: 1rem; min-width: 0; }

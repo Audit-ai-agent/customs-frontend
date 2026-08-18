@@ -45,8 +45,8 @@
 /* 통계 카드: 순차 등장 + hover lift + 상단 액센트 그라디언트 */
 .dash-stat{
   position:relative;
-  transition:transform .18s ease,box-shadow .18s ease,border-color .18s ease;
-  animation:card-rise .4s cubic-bezier(.22,.9,.36,1) both;
+  transition:transform var(--mo-hover) ease,box-shadow var(--mo-hover) ease,border-color var(--mo-hover) ease;
+  animation:card-rise var(--mo-enter) var(--mo-ease-out) both;
 }
 .dash-stats .dash-stat:nth-child(1){animation-delay:.02s}
 .dash-stats .dash-stat:nth-child(2){animation-delay:.07s}
@@ -56,7 +56,7 @@
 .dash-stat__value{font-variant-numeric:tabular-nums}
 
 /* 처리 흐름·표 패널: 은은한 등장 */
-.dash-flow,.dash-table-panel,.case-screen .surface{animation:card-rise .38s cubic-bezier(.22,.9,.36,1) both}
+.dash-flow,.dash-table-panel,.case-screen .surface{animation:card-rise var(--mo-enter) var(--mo-ease-out) both}
 
 /* 새 Case 버튼: hover 시 shine sweep */
 .new-btn{position:relative;overflow:hidden}
@@ -72,16 +72,16 @@
 .notice::before{animation:icon-pop .4s cubic-bezier(.34,1.6,.5,1) .12s both}
 
 /* Case 행: hover 시 살짝 밀리고 화살표가 따라옴 */
-.case-row{transition:background .15s ease,transform .15s ease}
+.case-row{transition:background var(--mo-hover) ease,transform var(--mo-hover) ease}
 .case-row:hover{transform:translateX(3px)}
-.case-row__go{transition:transform .18s ease,color .18s ease}
+.case-row__go{transition:transform var(--mo-hover) ease,color var(--mo-hover) ease}
 .case-row:hover .case-row__go{transform:translateX(3px);color:var(--krds-primary-strong)}
 
 /* 지표·트레이스 숫자: 값 갱신 시 살짝 강조 */
 .metric strong,.trace-count strong{font-variant-numeric:tabular-nums}
 
 /* 확인 사항 카드: 등장 + hover 경계 강조 */
-.finding-card{transition:box-shadow .18s ease,border-color .18s ease;animation:card-rise .36s ease both}
+.finding-card{transition:box-shadow var(--mo-hover) ease,border-color var(--mo-hover) ease;animation:card-rise var(--mo-enter) var(--mo-ease-out) both}
 .finding-card:hover{box-shadow:0 6px 18px rgb(30 33 36 / 8%)}
 
 /* 업로드 자산 행: 상태 칩 갱신 시 pop */
