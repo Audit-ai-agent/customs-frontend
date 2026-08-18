@@ -39,6 +39,7 @@ import type {
   HsReferenceSearch,
   HsSelection,
   JobRecord,
+  OperationsMetrics,
   OriginCheck,
   OriginVerification,
   PlannerAction,
@@ -986,6 +987,52 @@ export function decodeHsReferenceSearch(value: unknown): HsReferenceSearch {
       as_of: requiredString(reference.as_of, `${context}.reference.as_of`),
       source: displayText(reference.source, `${context}.reference.source`),
     },
+  };
+}
+
+export function decodeOperationsMetrics(value: unknown): OperationsMetrics {
+  const context = "operations metrics";
+  const raw = record(value, context);
+  const cases = record(raw.cases, `${context}.cases`);
+  const reviews = record(raw.reviews, `${context}.reviews`);
+  const findings = record(raw.findings, `${context}.findings`);
+  const closures = record(raw.closures, `${context}.closures`);
+  const count = (holder: Record<string, unknown>, key: string, scope: string): number =>
+    nonNegativeInteger(holder[key], `${context}.${scope}.${key}`);
+  return {
+    generated_at: requiredString(raw.generated_at, `${context}.generated_at`),
+    cases: {
+      total: count(cases, "total", "cases"),
+      open: count(cases, "open", "cases"),
+      in_review: count(cases, "in_review", "cases"),
+      closed: count(cases, "closed", "cases"),
+    },
+    reviews: {
+      total: count(reviews, "total", "reviews"),
+      revisions: count(reviews, "revisions", "reviews"),
+      no_issue_detected: count(reviews, "no_issue_detected", "reviews"),
+      issues_detected: count(reviews, "issues_detected", "reviews"),
+      indeterminate: count(reviews, "indeterminate", "reviews"),
+      succeeded: count(reviews, "succeeded", "reviews"),
+      partial: count(reviews, "partial", "reviews"),
+      failed: count(reviews, "failed", "reviews"),
+    },
+    findings: {
+      total: count(findings, "total", "findings"),
+      decided: count(findings, "decided", "findings"),
+      open: count(findings, "open", "findings"),
+    },
+    closures: {
+      cleared: count(closures, "cleared", "closures"),
+      returned: count(closures, "returned", "closures"),
+    },
+    daily_reviews: array(raw.daily_reviews, `${context}.daily_reviews`).map((item, index) => {
+      const entry = record(item, `${context}.daily_reviews[${index}]`);
+      return {
+        date: requiredString(entry.date, `${context}.daily_reviews[${index}].date`),
+        count: nonNegativeInteger(entry.count, `${context}.daily_reviews[${index}].count`),
+      };
+    }),
   };
 }
 

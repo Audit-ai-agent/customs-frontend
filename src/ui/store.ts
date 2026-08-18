@@ -19,6 +19,7 @@ import type {
   HsReferenceEntry,
   HsReferenceSearch,
   JobRecord,
+  OperationsMetrics,
   OriginVerification,
   ReviewComparison,
   ReviewProgress,
@@ -96,6 +97,10 @@ export interface WorkbenchState {
   laws: LawEvidenceEntry[] | null;
   lawsLoading: boolean;
   lawsError: string | null;
+  /** Server-computed operations metrics; null until the metrics page first loads them. */
+  metrics: OperationsMetrics | null;
+  metricsLoading: boolean;
+  metricsError: string | null;
   cases: CaseSummary[];
   selectedCase: CaseDetail | null;
   documents: CaseDocument[];
@@ -172,6 +177,9 @@ const INITIAL_STATE: WorkbenchState = {
   laws: null,
   lawsLoading: false,
   lawsError: null,
+  metrics: null,
+  metricsLoading: false,
+  metricsError: null,
   cases: [],
   selectedCase: null,
   documents: [],
@@ -491,6 +499,7 @@ export class WorkbenchStore {
       });
       if (route.page === "records") await this.ensureRecordsLoaded();
       if (route.page === "laws") await this.ensureLawsLoaded();
+      if (route.page === "metrics") await this.ensureMetricsLoaded();
       return;
     }
     // A route change is a navigation: the source overlay must not survive it.
@@ -571,6 +580,29 @@ export class WorkbenchStore {
       this.patch({ recordsError: userMessage(error, "심사 기록을 불러오지 못했습니다.") });
     } finally {
       this.patch({ recordsLoading: false });
+    }
+  }
+
+  /* ── operations metrics ──────────────────────────────────────── */
+
+  async ensureMetricsLoaded(): Promise<void> {
+    if (this.state.metrics !== null || this.state.metricsLoading) return;
+    await this.loadMetrics();
+  }
+
+  async refreshMetrics(): Promise<void> {
+    if (this.state.metricsLoading) return;
+    await this.loadMetrics();
+  }
+
+  private async loadMetrics(): Promise<void> {
+    this.patch({ metricsLoading: true, metricsError: null });
+    try {
+      this.patch({ metrics: await this.api.getOperationsMetrics() });
+    } catch (error) {
+      this.patch({ metricsError: userMessage(error, "운영 지표를 불러오지 못했습니다.") });
+    } finally {
+      this.patch({ metricsLoading: false });
     }
   }
 

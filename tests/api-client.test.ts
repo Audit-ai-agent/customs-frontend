@@ -240,6 +240,29 @@ describe("Backend API client", () => {
     expect(JSON.parse(String(calls[1]?.init?.body))).toEqual({ code: "0303540000", reason: "문서 근거 일치" });
   });
 
+  it("reads server-computed operations metrics from the planned v1 route", async () => {
+    const metrics = {
+      generated_at: "2026-08-18T03:00:00+00:00",
+      cases: { total: 3, open: 1, in_review: 1, closed: 1 },
+      reviews: { total: 4, revisions: 1, no_issue_detected: 1, issues_detected: 3, indeterminate: 0, succeeded: 4, partial: 0, failed: 0 },
+      findings: { total: 2, decided: 1, open: 1 },
+      closures: { cleared: 1, returned: 0 },
+      daily_reviews: [{ date: "2026-08-18", count: 2 }],
+    };
+    const calls: string[] = [];
+    const fetcher: typeof fetch = async (input) => {
+      calls.push(String(input));
+      return json(metrics);
+    };
+    const api = new ApiClient(fetcher, async () => "local-token");
+    const result = await api.getOperationsMetrics();
+    expect(result.cases.total).toBe(3);
+    expect(result.reviews.revisions).toBe(1);
+    expect(result.findings.open).toBe(1);
+    expect(result.daily_reviews[0]?.count).toBe(2);
+    expect(calls).toEqual(["/api/v1/operations-metrics"]);
+  });
+
   it("searches the HSK reference by code prefix or item name", async () => {
     const search = {
       query: "티셔츠",

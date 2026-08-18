@@ -414,28 +414,141 @@ export function RecordsPage() {
 }
 
 /* ── 운영 지표 (#/metrics) ───────────────────────────────────────
- * Backend 집계 계약이 없는 동안 근거 없는 수치를 만들지 않는다는 원칙에
- * 따라, 미지원 사유와 요구사항 위치를 안내한다. */
+ * 모든 수치는 Backend가 저장된 Case·심사 실행에서 그대로 센 값이다
+ * (GET /operations-metrics). 추정·샘플링 없음. 시각 문법: 단일 색조
+ * 막대(크기 비교), 상태·범례는 색이 아니라 텍스트 라벨이 식별한다. */
+
+function MetricBarRow({ label, value, max }: { label: string; value: number; max: number }) {
+  const width = max > 0 ? Math.max(value > 0 ? 3 : 0, Math.round((value / max) * 100)) : 0;
+  return (
+    <div className="mbar">
+      <span className="mbar__label">{label}</span>
+      <span className="mbar__track">
+        <span className="mbar__fill" style={{ width: `${width}%` }} />
+      </span>
+      <span className="mbar__value mono">{value.toLocaleString("en-US")}</span>
+    </div>
+  );
+}
 
 export function MetricsPage() {
+  const store = useStore();
+  const state = useWorkbenchState();
+  const metrics = state.metrics;
+
+  if (state.metricsError !== null && metrics === null) {
+    return (
+      <section className="page-grid" data-metrics-page>
+        <section className="surface">
+          <SectionHeading title="운영 지표" description="저장된 Case·심사 실행을 서버가 집계한 수치입니다." />
+          <p className="unsupported-inline">{state.metricsError}</p>
+          <button className="btn" type="button" onClick={() => void store.refreshMetrics()}>다시 시도</button>
+        </section>
+      </section>
+    );
+  }
+  if (metrics === null) {
+    return (
+      <section className="page-grid" data-metrics-page>
+        <section className="surface">
+          <SectionHeading title="운영 지표" description="저장된 Case·심사 실행을 서버가 집계한 수치입니다." />
+          <EmptyCopy>운영 지표를 불러오는 중…</EmptyCopy>
+        </section>
+      </section>
+    );
+  }
+
+  const assessmentMax = Math.max(
+    metrics.reviews.issues_detected,
+    metrics.reviews.no_issue_detected,
+    metrics.reviews.indeterminate,
+  );
+  const decidedShare =
+    metrics.findings.total > 0 ? Math.round((metrics.findings.decided / metrics.findings.total) * 100) : null;
+  const dailyMax = Math.max(...metrics.daily_reviews.map((entry) => entry.count), 1);
+  const firstDay = metrics.daily_reviews[0]?.date ?? "";
+  const lastDay = metrics.daily_reviews[metrics.daily_reviews.length - 1]?.date ?? "";
+  const asMonthDay = (value: string) => value.slice(5).replace("-", ".");
+
   return (
     <section className="page-grid" data-metrics-page>
       <section className="surface">
+        <div className="dash-head">
+          <SectionHeading
+            title="Case 현황"
+            description={`저장된 Case·심사 실행을 서버가 그대로 센 값입니다 (${formatDate(metrics.generated_at)} 기준). 추정치 없음.`}
+          />
+          <button className="btn" type="button" disabled={state.metricsLoading} onClick={() => void store.refreshMetrics()}>
+            {state.metricsLoading ? "불러오는 중…" : "새로 고침"}
+          </button>
+        </div>
+        <div className="dash-stats">
+          <DashStat label="전체 Case" value={metrics.cases.total} hint="업무함에 등록된 전체 건" />
+          <DashStat label="진행 전" value={metrics.cases.open} hint="심사를 아직 시작하지 않은 건" tone="open" />
+          <DashStat label="검토 중" value={metrics.cases.in_review} hint="담당자 판단이 필요한 건" tone="review" />
+          <DashStat label="종료" value={metrics.cases.closed} hint="검토가 끝난 건" tone="done" />
+        </div>
+      </section>
+
+      <section className="surface">
         <SectionHeading
-          title="운영 지표"
-          description="기간별 처리 건수·판정 분포 같은 운영 지표 화면은 Backend 집계 계약이 준비되면 제공됩니다."
+          title="심사 실행"
+          description={`AI 심사 실행 ${metrics.reviews.total.toLocaleString("en-US")}건 (이 중 정정 반영 재심사 ${metrics.reviews.revisions}건) · 실행 상태 — 성공 ${metrics.reviews.succeeded} · 부분 ${metrics.reviews.partial} · 실패 ${metrics.reviews.failed}`}
         />
-        <p className="unsupported-stage__lead">
-          근거 없는 수치를 화면에 만들지 않는다는 원칙에 따라, 집계 API가 없는 동안 지표를 표시하지 않습니다.
-        </p>
-        <ul className="unsupported-stage__list">
-          <li>필요한 계약 — Case·심사 실행 집계 API: 기간별 처리 건수, 판정 분포, 확인 사항 처리율</li>
-          <li>요구사항 기록 위치 — customs-backend/docs/FRONTEND_UX_BACKEND_GAP.ko.md</li>
-          <li>지금 확인할 수 있는 수치 — 심사 업무함의 상태별 Case 카운트, 심사 기록의 실행 목록</li>
-        </ul>
-        <p className="unsupported-stage__note">
-          이 페이지가 비어 있는 것은 오류가 아니라 설계입니다. 집계 계약이 병합되면 같은 주소에서 실제 수치가 열립니다.
-        </p>
+        {metrics.reviews.total === 0 ? (
+          <EmptyCopy>기록된 심사 실행이 없습니다. 심사 업무함에서 AI 심사를 시작하면 여기 집계됩니다.</EmptyCopy>
+        ) : (
+          <div className="mbar-list" aria-label="판정 분포">
+            <MetricBarRow label="확인 사항 있음" value={metrics.reviews.issues_detected} max={assessmentMax} />
+            <MetricBarRow label="주요 이슈 없음" value={metrics.reviews.no_issue_detected} max={assessmentMax} />
+            <MetricBarRow label="판단 보류" value={metrics.reviews.indeterminate} max={assessmentMax} />
+          </div>
+        )}
+      </section>
+
+      <section className="surface">
+        <SectionHeading
+          title="확인 사항 처리"
+          description="각 Case의 최신 심사 실행에 남아 있는 확인 사항 기준입니다. 지난 실행의 확인 사항은 재심사로 대체되어 세지 않습니다."
+        />
+        {decidedShare === null ? (
+          <EmptyCopy>판단 대상 확인 사항이 없습니다.</EmptyCopy>
+        ) : (
+          <div className="mmeter">
+            <div className="mmeter__row">
+              <strong className="mono">{`${decidedShare}%`}</strong>
+              <span>
+                {`판단 기록 완료 — 전체 ${metrics.findings.total}건 중 ${metrics.findings.decided}건 기록, `}
+                <b>{`미판단 ${metrics.findings.open}건`}</b>
+              </span>
+            </div>
+            <div className="mmeter__track">
+              <div className="mmeter__fill" style={{ width: `${decidedShare}%` }} />
+            </div>
+          </div>
+        )}
+        <div className="form-hint" data-metrics-closures>
+          {`심사 종료 처리 — 검토 종결 ${metrics.closures.cleared}건 · 반려·보완 요청 ${metrics.closures.returned}건`}
+        </div>
+      </section>
+
+      <section className="surface">
+        <SectionHeading title="최근 14일 심사 실행" description="하루 단위 실행 건수입니다. 빈 날도 0으로 표시합니다." />
+        <div className="mcols" role="img" aria-label={`최근 14일 심사 실행, 최대 하루 ${dailyMax}건`}>
+          {metrics.daily_reviews.map((entry) => (
+            <div className="mcols__col" key={entry.date} title={`${entry.date} · 실행 ${entry.count}건`}>
+              {entry.count > 0 ? <span className="mcols__value mono">{entry.count}</span> : null}
+              <span
+                className={`mcols__bar${entry.count === 0 ? " mcols__bar--zero" : ""}`}
+                style={{ height: `${Math.max(2, Math.round((entry.count / dailyMax) * 64))}px` }}
+              />
+            </div>
+          ))}
+        </div>
+        <div className="mcols__axis">
+          <span>{asMonthDay(firstDay)}</span>
+          <span>{asMonthDay(lastDay)}</span>
+        </div>
       </section>
     </section>
   );

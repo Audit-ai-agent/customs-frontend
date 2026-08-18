@@ -662,6 +662,27 @@ export interface HsSelectionRequest {
   reason: string;
 }
 
+// ── Operations metrics (org-scoped counts over stored state) ────
+
+export interface OperationsMetrics {
+  generated_at: string;
+  cases: { total: number; open: number; in_review: number; closed: number };
+  reviews: {
+    total: number;
+    revisions: number;
+    no_issue_detected: number;
+    issues_detected: number;
+    indeterminate: number;
+    succeeded: number;
+    partial: number;
+    failed: number;
+  };
+  /** Findings on each case's latest run only — the judgement workload that still exists. */
+  findings: { total: number; decided: number; open: number };
+  closures: { cleared: number; returned: number };
+  daily_reviews: { date: string; count: number }[];
+}
+
 export type OriginCheckField = "certificate_no" | "origin_country" | "hs_code";
 export type OriginCheckStatus = "match" | "mismatch" | "missing";
 

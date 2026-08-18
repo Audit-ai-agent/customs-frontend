@@ -208,6 +208,17 @@ const api = {
       },
     ],
   }),
+  getOperationsMetrics: async () => ({
+    generated_at: NOW,
+    cases: { total: 3, open: 1, in_review: 1, closed: 1 },
+    reviews: { total: 4, revisions: 1, no_issue_detected: 1, issues_detected: 3, indeterminate: 0, succeeded: 4, partial: 0, failed: 0 },
+    findings: { total: 2, decided: 0, open: 2 },
+    closures: { cleared: 1, returned: 0 },
+    daily_reviews: [
+      "2026-07-23", "2026-07-24", "2026-07-25", "2026-07-26", "2026-07-27", "2026-07-28", "2026-07-29",
+      "2026-07-30", "2026-07-31", "2026-08-01", "2026-08-02", "2026-08-03", "2026-08-04", "2026-08-05",
+    ].map((date, index) => ({ date, count: [0, 1, 0, 0, 2, 0, 1, 0, 0, 0, 1, 0, 0, 3][index] ?? 0 })),
+  }),
   searchHskReference: async (query: string) => {
     const trimmed = query.trim();
     const compact = trimmed.replace(/ /gu, "");

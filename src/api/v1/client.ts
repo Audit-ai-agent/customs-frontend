@@ -16,6 +16,7 @@ import {
   decodeHsReferenceSearch,
   decodeHsSelection,
   decodeJob,
+  decodeOperationsMetrics,
   decodeOriginVerification,
   decodeProblem,
   decodeReviewProgress,
@@ -54,6 +55,7 @@ import type {
   HsSelection,
   HsSelectionRequest,
   JobRecord,
+  OperationsMetrics,
   OriginVerification,
   ReviewProgress,
   ReviewerDecision,
@@ -354,6 +356,10 @@ export class ApiClient {
       this.assertIdentity(entry.code, code, "HSK reference code");
       return entry;
     });
+  }
+
+  getOperationsMetrics(): Promise<OperationsMetrics> {
+    return this.request("/operations-metrics", { method: "GET" }, decodeOperationsMetrics);
   }
 
   searchHskReference(query: string): Promise<HsReferenceSearch> {
