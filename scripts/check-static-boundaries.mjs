@@ -8,11 +8,14 @@ const source = new URL("../src/", import.meta.url);
 const files = await walk(source);
 const violations = [];
 
-for (const file of files.filter((name) => [".ts", ".css"].includes(extname(name)))) {
+for (const file of files.filter((name) => [".ts", ".tsx", ".css"].includes(extname(name)))) {
   const content = await readFile(file, "utf8");
   const label = relative(rootPath, file).replaceAll("\\", "/");
   for (const [pattern, reason] of [
     [/\.innerHTML\s*=/u, "unsafe innerHTML assignment"],
+    // ADR-0002 bans rendering HTML strings. In JSX that hazard is spelled
+    // dangerouslySetInnerHTML, which the assignment pattern above cannot see.
+    [/dangerouslySetInnerHTML/u, "unsafe HTML string rendering"],
     [/\blocalStorage\b/u, "persistent browser storage"],
     [/["'\x60]\/(?:internal\/agent|internal\/rag|evidence)(?:\/|["'\x60])/iu, "direct Agent/Data API reference"],
     [/(?:qdrant|neo4j|postgres(?:ql)?):\/\//iu, "direct data-store connection"],
@@ -29,66 +32,20 @@ if (!main.includes('import("./workbench")')) {
 if (main.includes("/api/v2")) violations.push("main entry must not use the retired v2 experience API");
 const viteConfig = await readFile(new URL("../vite.config.ts", import.meta.url), "utf8");
 if (viteConfig.includes("/api/v2")) violations.push("Vite must not proxy the retired v2 experience API");
-const playwrightConfig = await readFile(new URL("../playwright.functional-uat.config.ts", import.meta.url), "utf8");
-for (const required of [
-  'channel: "msedge"',
-  'headless: true',
-  'screenshot: "off"',
-  'video: "off"',
-  'trace: "off"',
-  "workers: 1",
-]) {
-  if (!playwrightConfig.includes(required)) {
-    violations.push("Functional-UAT Browser config must remain local, single-worker, and capture-free");
-    break;
-  }
-}
-const browserE2e = await readFile(new URL("../e2e/functional-uat-browser.spec.ts", import.meta.url), "utf8");
-for (const forbidden of [/\bpage\.request\b/u, /\brequest\.newContext\b/u, /\bAPIRequestContext\b/u, /\bfetch\s*\(/u]) {
-  if (forbidden.test(browserE2e)) {
-    violations.push("Functional-UAT Browser spec must use the visible Browser UI only");
-    break;
-  }
-}
-const reviewPresentationWait = browserE2e.match(/async function waitForReviewPresentation[\s\S]*?\n\}\n/u)?.[0];
-if (
-  !reviewPresentationWait?.includes('analysis.or(alert).first().waitFor({ state: "visible", timeout: 90_000 })')
-  || reviewPresentationWait.includes("Promise.race(")
-) {
-  violations.push("Functional-UAT Browser result wait must use one locator union without competing waits");
-}
-const knowledgeAnswerWait = browserE2e.match(/async function waitForKnowledgeAnswer[\s\S]*?\n\}\n/u)?.[0];
-if (
-  !knowledgeAnswerWait?.includes("expectedAnswer.or(alert).first().waitFor({")
-  || !knowledgeAnswerWait.includes("timeout: KNOWLEDGE_ANSWER_WAIT_TIMEOUT_MS")
-  || knowledgeAnswerWait.includes("Promise.race(")
-  || knowledgeAnswerWait.includes("textContent(")
-) {
-  violations.push("Functional-UAT Browser knowledge wait must use one safe locator union without alert diagnostics");
-}
 const apiClient = await readFile(new URL("../src/api/v1/client.ts", import.meta.url), "utf8");
 if (apiClient.includes("/api/v2") || !apiClient.includes('const API_BASE = "/api/v1"')) {
   violations.push("Browser client must use Backend API v1 only");
 }
-const knowledgeSend = apiClient.match(/sendKnowledgeMessage\([\s\S]*?\n  \}\n\n  listAssistantMessages/u)?.[0];
-if (
-  !apiClient.includes("const KNOWLEDGE_ANSWER_TIMEOUT_MS = 190_000")
-  || !knowledgeSend?.includes("KNOWLEDGE_ANSWER_TIMEOUT_MS")
-) {
-  violations.push("Browser knowledge send must retain the documented Backend response budget");
-}
 
 const packageJson = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
-for (const forbidden of ["react", "react-dom", "react-router", "@vitejs/plugin-react"]) {
+// react and react-dom are the view layer as of ADR-0007. react-router stays out: its
+// 7.18.1 RSC action CSRF advisory is what ADR-0006 tripped over, and the hash routing in
+// workbench covers what this workbench needs. @vitejs/plugin-react stays out too, since
+// esbuild's automatic JSX runtime builds the same output without the extra dependency.
+for (const forbidden of ["react-router", "@playwright/test", "@vitejs/plugin-react"]) {
   if (packageJson.dependencies?.[forbidden] || packageJson.devDependencies?.[forbidden]) {
     violations.push("unused dependency remains: " + forbidden);
   }
-}
-if (packageJson.devDependencies?.["@playwright/test"] !== "1.62.1") {
-  violations.push("local Functional-UAT browser runner must pin @playwright/test 1.62.1 exactly");
-}
-if (packageJson.scripts?.["functional-uat:browser"] !== "playwright test --config playwright.functional-uat.config.ts") {
-  violations.push("Functional-UAT browser command must remain local-only and explicit");
 }
 for (const script of ["build:uat", "uat:export:scenarios", "uat:evaluate:scenario", "test:e2e", "test:coverage"]) {
   if (packageJson.scripts?.[script]) violations.push("retired script remains: " + script);
@@ -106,9 +63,6 @@ if (packageJson.scripts?.["check:quick"] !== "npm run lint && npm run typecheck 
 }
 if (packageJson.scripts?.["check:contract"] !== "npm run contract:check") {
   violations.push("check:contract must remain the Backend API byte check");
-}
-if (!viteConfig.includes('exclude: ["node_modules/**", "dist/**", "e2e/**"]')) {
-  violations.push("Vitest must exclude the explicit local Browser E2E path");
 }
 
 if (violations.length) {

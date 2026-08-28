@@ -1,0 +1,161 @@
+/*
+ * 모션 시스템 — KRDS 업무 화면.
+ *
+ * 속도 스케일 (토큰):
+ *   --mo-press  90ms   누름 피드백. 손가락보다 빨라야 반응으로 느껴집니다.
+ *   --mo-hover 140ms   호버·포커스의 색/그림자/밑줄.
+ *   --mo-state 220ms   상태 전환 — 활성 탭 밑줄, 단계 완료, 도장 색.
+ *   --mo-enter 300ms   진입 — 화면·카드·행이 자리를 잡는 시간.
+ *   --mo-emph  480ms   1회성 강조 — 도장 찍기, 등장 pop. 화면당 한 곳만.
+ *
+ * 이징:
+ *   --mo-ease-out    감속 곡선. 진입·이동 전부 — 요소가 화면에 "도착"합니다.
+ *   --mo-ease-spring 가벼운 오버슛. 1회성 강조에만. 루프·이동에는 금지.
+ *
+ * 트리거 규칙:
+ *   1) 라우트 변경·데이터 도착 → 진입(rise). 형제 카드는 45ms 간격 스태거, 최대 6개.
+ *   2) 상태 변화(판단 기록, 단계 완료, 탭 전환) → 색·밑줄·스케일을 --mo-state로.
+ *   3) 포인터·키보드 → --mo-hover / --mo-press. 이동량은 1~4px를 넘지 않습니다.
+ *   4) 루프는 "진행 중" 표시 세 곳만: g-progress 바, trace pulse-ring, 로딩 dot.
+ *   5) 장식 루프 금지. prefers-reduced-motion이면 아래 전부 즉시 완료됩니다.
+ */
+:root {
+  --mo-press: 90ms;
+  --mo-hover: 140ms;
+  --mo-state: 220ms;
+  --mo-enter: 300ms;
+  --mo-emph: 480ms;
+  --mo-ease-out: cubic-bezier(.22, .61, .36, 1);
+  --mo-ease-spring: cubic-bezier(.34, 1.4, .5, 1);
+}
+
+/* ── 1. 화면 진입 · 카드 스태거 ────────────────────────────────── */
+/* 사이트 페이지(홈·참조·기록 등)의 카드가 위→아래 순서로 자리를 잡습니다.
+   대시보드·Case 화면은 styles.css의 자체 진입(card-rise)을 그대로 씁니다. */
+.page-grid > * { animation: mo-rise var(--mo-enter) var(--mo-ease-out) both; }
+.page-grid > :nth-child(2) { animation-delay: 45ms; }
+.page-grid > :nth-child(3) { animation-delay: 90ms; }
+.page-grid > :nth-child(4) { animation-delay: 135ms; }
+.page-grid > :nth-child(5) { animation-delay: 180ms; }
+.page-grid > :nth-child(6) { animation-delay: 225ms; }
+@keyframes mo-rise { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+
+/* ── 2. 심사 단계 전환 — 방향을 가진 이동 ─────────────────────── */
+/* 다음 단계는 오른쪽에서, 이전 단계는 왼쪽에서 들어옵니다. 이동 중에는
+   내부 카드의 개별 rise를 꺼서 한 덩어리로 움직입니다. */
+.stage-anim { display: grid; gap: 1rem; min-width: 0; }
+.stage-anim.dir-fwd { animation: mo-stage-fwd 260ms var(--mo-ease-out) both; }
+.stage-anim.dir-back { animation: mo-stage-back 260ms var(--mo-ease-out) both; }
+.stage-anim.dir-fwd .surface, .stage-anim.dir-back .surface { animation: none; }
+@keyframes mo-stage-fwd { from { opacity: 0; transform: translateX(20px); } to { opacity: 1; transform: none; } }
+@keyframes mo-stage-back { from { opacity: 0; transform: translateX(-20px); } to { opacity: 1; transform: none; } }
+
+/* ── 3. 내비게이션 — 밑줄이 자라나는 활성 표시 ────────────────── */
+.g-gnb__item, .case-subnav__item { transition: color var(--mo-hover); }
+.g-gnb__item::after, .case-subnav__item::after {
+  transform-origin: center;
+  transition: transform var(--mo-state) var(--mo-ease-out);
+}
+.g-crumb__link { transition: color var(--mo-hover); }
+
+/* ── 4. 목록 행 진입 — 위에서부터 차례로 ──────────────────────── */
+.case-row-wrap, .records-row, [data-hsk-page-results] .cand, .law-item {
+  animation: mo-rise 260ms var(--mo-ease-out) both;
+}
+.case-row-wrap:nth-child(n+2), .records-row:nth-child(n+3),
+[data-hsk-page-results] .cand:nth-child(n+2), .law-item:nth-child(n+2) { animation-delay: 40ms; }
+.case-row-wrap:nth-child(n+3), .records-row:nth-child(n+4),
+[data-hsk-page-results] .cand:nth-child(n+3), .law-item:nth-child(n+3) { animation-delay: 80ms; }
+.case-row-wrap:nth-child(n+4), .records-row:nth-child(n+5),
+[data-hsk-page-results] .cand:nth-child(n+4), .law-item:nth-child(n+4) { animation-delay: 120ms; }
+.case-row-wrap:nth-child(n+5), .records-row:nth-child(n+6),
+[data-hsk-page-results] .cand:nth-child(n+5), .law-item:nth-child(n+5) { animation-delay: 160ms; }
+.case-row-wrap:nth-child(n+6), .records-row:nth-child(n+7),
+[data-hsk-page-results] .cand:nth-child(n+6), .law-item:nth-child(n+6) { animation-delay: 200ms; }
+
+.records-row { transition: background var(--mo-hover), transform var(--mo-hover); }
+.records-row:hover { transform: translateX(3px); }
+.records-row .case-row__go { transition: transform var(--mo-hover), color var(--mo-hover); }
+.records-row:hover .case-row__go { transform: translateX(3px); color: var(--krds-primary-strong); }
+
+/* ── 5. 홈 바로 가기 · 공식 출처 카드 ─────────────────────────── */
+.home-card {
+  transition: transform var(--mo-hover) var(--mo-ease-out), box-shadow var(--mo-hover),
+    border-color var(--mo-hover), background var(--mo-hover);
+}
+.home-card:hover { transform: translateY(-2px); box-shadow: 0 8px 20px rgb(30 33 36 / 9%); }
+.home-card:active { transform: translateY(0); transition-duration: var(--mo-press); }
+.home-card__go { transition: transform var(--mo-hover) var(--mo-ease-out); }
+.home-card:hover .home-card__go { transform: translateX(4px); }
+
+/* ── 6. HSK 검색 — 드롭다운과 결과 ────────────────────────────── */
+/* 열림은 입력 바로 아래에서 짧게 떨어져 내려옵니다. 타이핑 리듬(디바운스
+   250ms)보다 빨라야 검색이 입력을 따라온다는 감각이 유지됩니다. */
+.hsk-search-list { animation: mo-drop 160ms var(--mo-ease-out) both; transform-origin: top; }
+@keyframes mo-drop { from { opacity: 0; transform: translateY(-4px) scaleY(.98); } to { opacity: 1; transform: none; } }
+.hsk-search-option { transition: background var(--mo-hover); }
+.cand { transition: background var(--mo-hover); }
+.cand .pin { transition: background var(--mo-state), color var(--mo-state), border-color var(--mo-state); }
+
+/* ── 7. 게이지 채움 — 신뢰도 바 · 세율 사다리 ─────────────────── */
+/* 마운트 시 왼쪽에서 채워지고, 값 변경은 폭 전환으로 이어집니다. */
+.conf-bar .fill, .rate .fill {
+  transform-origin: left;
+  animation: mo-fill 600ms var(--mo-ease-out) both;
+  transition: width 500ms var(--mo-ease-out);
+}
+@keyframes mo-fill { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+
+/* ── 8. 판정 도장 — 마지막 판단이 기록되는 순간 ───────────────── */
+.verdict-stamp { transition: border-color var(--mo-state), background var(--mo-state), color var(--mo-state); }
+.verdict-stamp--settled .verdict-stamp__mark { animation: mo-stamp var(--mo-emph) var(--mo-ease-spring) both; }
+@keyframes mo-stamp {
+  0% { transform: scale(1.3); opacity: 0; }
+  55% { transform: scale(.95); opacity: 1; }
+  100% { transform: scale(1); }
+}
+
+/* ── 9. 이슈바 — 전건 판단 완료로 바뀌는 순간의 확인 링 ───────── */
+.issuebar { transition: background var(--mo-state), border-color var(--mo-state), color var(--mo-state); }
+.issuebar--clear { animation: mo-ok-ring 800ms ease-out both; }
+@keyframes mo-ok-ring {
+  from { box-shadow: 0 0 0 0 rgb(34 135 56 / 30%); }
+  to { box-shadow: 0 0 0 12px rgb(34 135 56 / 0%); }
+}
+
+/* ── 10. 스테이지 바 — 번호칩과 배지 ──────────────────────────── */
+.stage { font: inherit; }
+.stage__n { transition: background var(--mo-state), color var(--mo-state), transform var(--mo-state) var(--mo-ease-out); }
+.stage.is-active .stage__n { transform: scale(1.08); }
+.stage__badge {
+  min-width: 1.35rem; margin-left: .1rem; padding: .1rem .4rem; color: #fff;
+  background: var(--krds-danger); border-radius: 999px; font-size: .72rem;
+  font-weight: 800; text-align: center; line-height: 1.5;
+  animation: mo-pop var(--mo-emph) var(--mo-ease-spring) both;
+}
+.stage.is-done .stage__badge, .stage__badge:empty { display: none; }
+@keyframes mo-pop { 0% { transform: scale(.5); opacity: 0; } 60% { transform: scale(1.12); opacity: 1; } 100% { transform: scale(1); } }
+
+/* ── 11. 모달 (새 Case 등록) ──────────────────────────────────── */
+.modal-overlay.on { animation: mo-fade var(--mo-state) ease both; }
+.modal-overlay.on .modal { animation: mo-modal var(--mo-enter) var(--mo-ease-spring) both; }
+@keyframes mo-fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes mo-modal { from { opacity: 0; transform: translateY(14px) scale(.97); } to { opacity: 1; transform: none; } }
+
+/* ── 12. 누름 피드백 — 실행 버튼류 공통 ───────────────────────── */
+.btn, .new-btn, .mini-btn, .dash-filter, .issuebar__chip, .g-chip, .g-zoom__button {
+  transition: background var(--mo-hover), border-color var(--mo-hover), color var(--mo-hover),
+    transform var(--mo-press);
+}
+.btn:active, .new-btn:active, .mini-btn:active, .dash-filter:active, .issuebar__chip:active { transform: translateY(1px); }
+
+/* ── 모션 최소화 — 전부 즉시 완료 ─────────────────────────────── */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: .01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .01ms !important;
+  }
+  .home-card:hover, .records-row:hover, .records-row:hover .case-row__go,
+  .home-card:hover .home-card__go, .stage.is-active .stage__n { transform: none; }
+}

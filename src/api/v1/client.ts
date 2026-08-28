@@ -7,19 +7,25 @@ import {
   decodeCaseSummary,
   decodeCorrectionProposal,
   decodeDocumentAsset,
-  decodeDocumentAssetExtraction,
-  decodeDocumentAssetRasterExtraction,
-  decodeDocumentAssetRasterTextExtraction,
   decodeDocumentListItem,
   decodeDocumentView,
+  decodeDutyAssessment,
+  decodeExtractionJobEnvelope,
+  decodeHsClassification,
+  decodeHsReferenceEntry,
+  decodeHsReferenceSearch,
+  decodeHsSelection,
   decodeJob,
-  decodeKnowledgeConversation,
-  decodeKnowledgeMessage,
-  decodeKnowledgeMessageExchange,
+  decodeLawCatalog,
+  decodeLawSearch,
+  decodeOperationsMetrics,
+  decodeOriginVerification,
   decodeProblem,
+  decodeReviewProgress,
   decodeReviewerDecision,
   decodeReviewRun,
   decodeReviewRunSummary,
+  decodeRasterTextExtractionEnvelope,
   decodeSession,
 } from "./decoders";
 import type {
@@ -28,70 +34,58 @@ import type {
   AssistantMessage,
   AssistantMessageExchange,
   AuthConfig,
+  CaseClosureRequest,
   CaseDetail,
   CaseDocument,
   CaseSummary,
-  ConfirmDocumentExtractionRequest,
+  ConfirmExtractedTextRequest,
   CreateCaseRequest,
   CreateAssistantConversationRequest,
   CreateCorrectionProposalRequest,
   CorrectionDecisionRequest,
   CorrectionProposal,
-  DocumentAsset,
-  DocumentAssetExtraction,
-  DocumentAssetRasterExtraction,
-  DocumentAssetRasterTextExtraction,
-  RasterExtractionPage,
   CreateRevisionRequest,
+  DocumentAsset,
+  DocumentAssetMediaType,
+  DocumentType,
+  DutyAssessment,
   EnqueueReviewRequest,
+  ExtractionJobEnvelope,
   FindingDecisionRequest,
+  HsClassification,
+  HsReferenceEntry,
+  HsReferenceSearch,
+  HsSelection,
+  HsSelectionRequest,
   JobRecord,
-  CreateKnowledgeConversationRequest,
-  KnowledgeConversation,
-  KnowledgeMessage,
-  KnowledgeMessageExchange,
+  LawCatalog,
+  LawSearch,
+  OperationsMetrics,
+  OriginVerification,
+  RasterTextExtractionEnvelope,
+  ReviewProgress,
   ReviewerDecision,
   ReviewRun,
   ReviewRunSummary,
   SendAssistantMessageRequest,
-  SendKnowledgeMessageRequest,
   Session,
-  UploadDocumentAssetRequest,
 } from "./types";
 import type { LocalDevelopmentSessionResponse } from "../../auth";
 import { stableApiErrorMessage, technicalApiErrorDetail } from "../user-facing-errors";
 
 const API_BASE = "/api/v1" as const;
 const MAX_JSON_BODY_BYTES = 4 * 1024 * 1024;
-const REQUEST_TIMEOUT_MS = 30_000;
-// A review can legitimately wait for the bounded Agent workflow and one
-// provider response.  Keep ordinary workbench reads/actions responsive, but
-// do not abandon a real review before the Backend has had a fair chance to
-// return its terminal Job projection.
-const REVIEW_EXECUTION_TIMEOUT_MS = 120_000;
-const DOCUMENT_EXTRACTION_TIMEOUT_MS = 120_000;
-// Raster extraction POSTs only enqueue durable work; OCR runs in Backend's
-// worker under its own 60-second Agent limit.  A stalled enqueue should keep
-// the normal interactive request bound instead of inheriting synchronous v1.
-const RASTER_EXTRACTION_ENQUEUE_TIMEOUT_MS = 30_000;
-// A structured-raster PDF page is bounded by two short profile checks around
-// Backend's 15-second Agent render call.  Thirty seconds leaves handoff margin
-// without carrying the historical 420-second offline-evaluator budget into
-// an interactive Browser request.  Text-only OCR never uses this route.
-const RASTER_PAGE_VIEWER_TIMEOUT_MS = 30_000;
-// A raster page is a transient reviewer preview, not an uploaded source.
-// Keep it bounded even when a small PDF expands into a high-DPI image.
-const MAX_RASTER_PAGE_PREVIEW_BYTES = 32 * 1024 * 1024;
-// Match the Agent's isolated binary-admission default.  Backend revalidates
-// the same bound before any source bytes reach the local preview adapter.
-const MAX_DOCUMENT_ASSET_UPLOAD_BYTES = 16 * 1024 * 1024;
+/** The Backend's document-asset byte bound (16MiB); checked client-side for a fast, clear error. */
+const MAX_ASSET_BODY_BYTES = 16 * 1024 * 1024;
 const MAX_TEXT_DOCUMENT_CHARACTERS = 200_000;
-// A standalone official-knowledge answer may make one bounded Data lookup
-// and one Claude presentation call.  Backend's normal Agent response budget
-// is 180 seconds, so the Browser must not abort the public request first.
-// The small margin is only for the local public-response handoff; it is not
-// another provider attempt.
-const KNOWLEDGE_ANSWER_TIMEOUT_MS = 190_000;
+const REQUEST_TIMEOUT_MS = 30_000;
+/**
+ * Backend runs the whole AI workflow inside the request for review start,
+ * revision, and assistant replies: with the real model connected these
+ * complete in minutes, not seconds. Aborting sooner loses work the server
+ * keeps doing, so those calls get the long bound instead.
+ */
+const AI_WORKFLOW_TIMEOUT_MS = 600_000;
 
 type Decoder<T> = (value: unknown) => T;
 type AccessTokenProvider = () => string | undefined | Promise<string | undefined>;
@@ -159,6 +153,36 @@ export class ApiClient {
     });
   }
 
+  getReviewProgress(caseId: string): Promise<ReviewProgress> {
+    return this.request(
+      `/cases/${segment(caseId)}/review-progress`,
+      { method: "GET" },
+      (value) => decodeReviewProgress(value),
+    );
+  }
+
+  async deleteCase(caseId: string): Promise<void> {
+    await this.request(`/cases/${segment(caseId)}`, { method: "DELETE" }, () => undefined);
+  }
+
+  closeCase(caseId: string, payload: CaseClosureRequest): Promise<CaseDetail> {
+    const reason = payload.reason.trim();
+    if (!reason || reason.length > 4_000) throw new ContractError("closure reason is invalid");
+    if (payload.disposition !== "cleared" && payload.disposition !== "returned") {
+      throw new ContractError("closure disposition is invalid");
+    }
+    return this.request(
+      `/cases/${segment(caseId)}/closure`,
+      this.json("POST", { disposition: payload.disposition, reason }),
+      (value) => {
+        const item = decodeCaseSummary(value);
+        this.assertIdentity(item.case_id, caseId, "Closed Case");
+        this.assertOrg(item.org_id, "Closed Case");
+        return item;
+      },
+    );
+  }
+
   listDocuments(caseId: string): Promise<CaseDocument[]> {
     return this.request(`/cases/${segment(caseId)}/documents`, { method: "GET" }, (value) => {
       const documents = itemsFrom(value, "Document list").map(decodeDocumentListItem);
@@ -175,6 +199,152 @@ export class ApiClient {
     });
   }
 
+  listDocumentAssets(caseId: string): Promise<DocumentAsset[]> {
+    return this.request(`/cases/${segment(caseId)}/document-assets`, { method: "GET" }, (value) => {
+      const assets = itemsFrom(value, "Document asset list").map(decodeDocumentAsset);
+      assets.forEach((item) => this.assertIdentity(item.case_id, caseId, "Document asset Case"));
+      return assets;
+    });
+  }
+
+  /** Uploads one immutable PDF/JPEG/PNG source file for the extraction preview. */
+  addDocumentAsset(
+    caseId: string,
+    input: { documentType: DocumentType; filename: string; mediaType: DocumentAssetMediaType; body: Blob },
+  ): Promise<DocumentAsset> {
+    const filename = input.filename.trim();
+    if (!filename || filename.length > 255 || /[\r\n\0]/u.test(filename)) {
+      throw new ContractError("document asset filename is invalid");
+    }
+    if (input.body.size < 1 || input.body.size > MAX_ASSET_BODY_BYTES) {
+      throw new ContractError("document asset size is outside the allowed limit");
+    }
+    const query = new URLSearchParams({ document_type: input.documentType, filename });
+    return this.request(
+      `/cases/${segment(caseId)}/document-assets?${query.toString()}`,
+      { method: "POST", headers: { "Content-Type": input.mediaType }, body: input.body },
+      (value) => {
+        const asset = decodeDocumentAsset(value);
+        this.assertIdentity(asset.case_id, caseId, "Document asset Case");
+        return asset;
+      },
+    );
+  }
+
+  startExtraction(caseId: string, assetId: string): Promise<ExtractionJobEnvelope> {
+    return this.request(
+      `/cases/${segment(caseId)}/document-assets/${segment(assetId)}/extractions`,
+      { method: "POST" },
+      (value) => {
+        const envelope = decodeExtractionJobEnvelope(value);
+        this.assertIdentity(envelope.job.case_id, caseId, "Extraction Case");
+        this.assertIdentity(envelope.job.asset_id, assetId, "Extraction asset");
+        return envelope;
+      },
+    );
+  }
+
+  getExtraction(caseId: string, assetId: string, extractionJobId: string): Promise<ExtractionJobEnvelope> {
+    return this.request(
+      `/cases/${segment(caseId)}/document-assets/${segment(assetId)}/extractions/${segment(extractionJobId)}`,
+      { method: "GET" },
+      (value) => {
+        const envelope = decodeExtractionJobEnvelope(value);
+        this.assertIdentity(envelope.job.extraction_job_id, extractionJobId, "Extraction job");
+        return envelope;
+      },
+    );
+  }
+
+  /** Enqueues the independently approved text-only OCR profile. */
+  requestRasterTextExtraction(
+    caseId: string,
+    assetId: string,
+    idempotencyKey: string,
+  ): Promise<RasterTextExtractionEnvelope> {
+    if (!isSafeIdempotencyKey(idempotencyKey)) throw new ContractError("raster text extraction Idempotency-Key is invalid");
+    return this.request(
+      `/cases/${segment(caseId)}/document-assets/${segment(assetId)}/raster-text-extractions`,
+      { method: "POST", headers: { "Idempotency-Key": idempotencyKey } },
+      (value) => {
+        const envelope = decodeRasterTextExtractionEnvelope(value);
+        this.assertIdentity(envelope.asset.case_id, caseId, "Raster text extraction Case");
+        this.assertIdentity(envelope.asset.asset_id, assetId, "Raster text extraction asset");
+        return envelope;
+      },
+    );
+  }
+
+  getRasterTextExtraction(
+    caseId: string,
+    assetId: string,
+    rasterTextExtractionJobId: string,
+  ): Promise<RasterTextExtractionEnvelope> {
+    return this.request(
+      `/cases/${segment(caseId)}/document-assets/${segment(assetId)}/raster-text-extractions/${segment(rasterTextExtractionJobId)}`,
+      { method: "GET" },
+      (value) => {
+        const envelope = decodeRasterTextExtractionEnvelope(value);
+        this.assertIdentity(envelope.asset.case_id, caseId, "Raster text extraction Case");
+        this.assertIdentity(envelope.asset.asset_id, assetId, "Raster text extraction asset");
+        this.assertIdentity(envelope.job.raster_text_extraction_job_id, rasterTextExtractionJobId, "Raster text extraction job");
+        return envelope;
+      },
+    );
+  }
+
+  /** Fetches the reviewer-only original into transient memory for inline comparison. */
+  getDocumentAssetSource(caseId: string, asset: DocumentAsset, signal?: AbortSignal): Promise<Blob> {
+    return this.requestBinary(
+      `/cases/${segment(caseId)}/document-assets/${segment(asset.asset_id)}/source`,
+      asset.media_type,
+      asset.byte_size,
+      MAX_ASSET_BODY_BYTES,
+      signal,
+    );
+  }
+
+  /** Human-confirmed extracted text enters the existing text-review workflow. */
+  confirmExtractedText(
+    caseId: string,
+    assetId: string,
+    payload: ConfirmExtractedTextRequest,
+  ): Promise<CaseDocument> {
+    if (!payload.content_text.trim() || payload.content_text.length > MAX_TEXT_DOCUMENT_CHARACTERS) {
+      throw new ContractError("confirmed text is invalid");
+    }
+    const extractionJobId = payload.extraction_job_id === undefined
+      ? undefined
+      : requestIdentifier(payload.extraction_job_id, "extraction job ID");
+    const rasterTextExtractionJobId = payload.raster_text_extraction_job_id === undefined
+      ? undefined
+      : requestIdentifier(payload.raster_text_extraction_job_id, "raster text extraction job ID");
+    if ([extractionJobId, rasterTextExtractionJobId].filter((value) => value !== undefined).length !== 1) {
+      throw new ContractError("exactly one extraction job ID is required");
+    }
+    const filename = payload.filename.trim();
+    if (!filename || filename.length > 255 || /[\\/\r\n\0]/u.test(filename)) {
+      throw new ContractError("confirmed text filename is invalid");
+    }
+    return this.request(
+      `/cases/${segment(caseId)}/document-assets/${segment(assetId)}/confirmed-document`,
+      this.json("POST", {
+        ...(extractionJobId === undefined ? {} : { extraction_job_id: extractionJobId }),
+        ...(rasterTextExtractionJobId === undefined ? {} : { raster_text_extraction_job_id: rasterTextExtractionJobId }),
+        content_text: payload.content_text,
+        filename,
+        ...(payload.replaces_document_id === undefined || payload.replaces_document_id === null
+          ? {}
+          : { replaces_document_id: requestIdentifier(payload.replaces_document_id, "replacement document ID") }),
+      }),
+      (value) => {
+        const item = decodeDocumentView(value);
+        this.assertIdentity(item.record.case_id, caseId, "Document Case");
+        return item.record;
+      },
+    );
+  }
+
   getDocumentContent(caseId: string, documentId: string): Promise<CaseDocument & { content_text: string }> {
     return this.request(
       `/cases/${segment(caseId)}/documents/${segment(documentId)}/content`,
@@ -184,254 +354,6 @@ export class ApiClient {
         this.assertIdentity(item.record.case_id, caseId, "Document Case");
         this.assertIdentity(item.record.document_id, documentId, "Document");
         return { ...item.record, content_text: item.content_text };
-      },
-    );
-  }
-
-  /** Binary assets have a distinct preview-only boundary from text documents. */
-  listDocumentAssets(caseId: string): Promise<DocumentAsset[]> {
-    return this.request(`/cases/${segment(caseId)}/document-assets`, { method: "GET" }, (value) => {
-      const assets = itemsFrom(value, "Document asset list").map(decodeDocumentAsset);
-      assets.forEach((asset, index) => this.assertIdentity(asset.case_id, caseId, `documentAssets[${index}] Case`));
-      return assets;
-    });
-  }
-
-  /**
-   * Sends the selected file as an opaque raw body.  It never turns source
-   * bytes into JSON, base64, Browser storage, or a review request.
-  */
-  uploadDocumentAsset(caseId: string, payload: UploadDocumentAssetRequest): Promise<DocumentAsset> {
-    const assetDocumentType = validDocumentType(payload.document_type);
-    const filename = uploadFilename(payload.filename);
-    const mediaType = documentAssetMediaType(payload.media_type);
-    if (!(payload.content instanceof Blob) || payload.content.size < 1 || payload.content.size > MAX_DOCUMENT_ASSET_UPLOAD_BYTES) {
-      throw new ContractError("document asset binary content is invalid");
-    }
-    const query = new URLSearchParams({ document_type: assetDocumentType, filename });
-    return this.request(
-      `/cases/${segment(caseId)}/document-assets?${query.toString()}`,
-      {
-        method: "POST",
-        headers: { "Content-Type": mediaType },
-        body: payload.content,
-      },
-      (value) => {
-        const asset = decodeDocumentAsset(value);
-        this.assertIdentity(asset.case_id, caseId, "Document asset Case");
-        return asset;
-      },
-      true,
-      DOCUMENT_EXTRACTION_TIMEOUT_MS,
-    );
-  }
-
-  requestDocumentExtraction(caseId: string, assetId: string): Promise<DocumentAssetExtraction> {
-    return this.request(
-      `/cases/${segment(caseId)}/document-assets/${segment(assetId)}/extractions`,
-      { method: "POST" },
-      (value) => {
-        const extraction = decodeDocumentAssetExtraction(value);
-        this.assertIdentity(extraction.asset.case_id, caseId, "Document extraction Case");
-        this.assertIdentity(extraction.asset.asset_id, assetId, "Document extraction asset");
-        return extraction;
-      },
-      true,
-      DOCUMENT_EXTRACTION_TIMEOUT_MS,
-    );
-  }
-
-  getDocumentExtraction(
-    caseId: string,
-    assetId: string,
-    extractionJobId: string,
-  ): Promise<DocumentAssetExtraction> {
-    return this.request(
-      `/cases/${segment(caseId)}/document-assets/${segment(assetId)}/extractions/${segment(extractionJobId)}`,
-      { method: "GET" },
-      (value) => {
-        const extraction = decodeDocumentAssetExtraction(value);
-        this.assertIdentity(extraction.asset.case_id, caseId, "Document extraction Case");
-        this.assertIdentity(extraction.asset.asset_id, assetId, "Document extraction asset");
-        this.assertIdentity(extraction.job.extraction_job_id, extractionJobId, "Document extraction job");
-        return extraction;
-      },
-    );
-  }
-
-  /**
-   * Starts the independently approved raster-OCR/layout v2 profile.  It is
-   * additive to v1 and still produces only a human-review preview.
-   */
-  requestRasterDocumentExtraction(
-    caseId: string,
-    assetId: string,
-    idempotencyKey: string,
-  ): Promise<DocumentAssetRasterExtraction> {
-    if (!isSafeIdempotencyKey(idempotencyKey)) throw new ContractError("raster extraction Idempotency-Key is invalid");
-    return this.request(
-      `/cases/${segment(caseId)}/document-assets/${segment(assetId)}/raster-extractions`,
-      { method: "POST", headers: { "Idempotency-Key": idempotencyKey } },
-      (value) => {
-        const extraction = decodeDocumentAssetRasterExtraction(value);
-        this.assertIdentity(extraction.asset.case_id, caseId, "Raster document extraction Case");
-        this.assertIdentity(extraction.asset.asset_id, assetId, "Raster document extraction asset");
-        return extraction;
-      },
-      true,
-      RASTER_EXTRACTION_ENQUEUE_TIMEOUT_MS,
-    );
-  }
-
-  getRasterDocumentExtraction(
-    caseId: string,
-    assetId: string,
-    rasterExtractionJobId: string,
-  ): Promise<DocumentAssetRasterExtraction> {
-    return this.request(
-      `/cases/${segment(caseId)}/document-assets/${segment(assetId)}/raster-extractions/${segment(rasterExtractionJobId)}`,
-      { method: "GET" },
-      (value) => {
-        const extraction = decodeDocumentAssetRasterExtraction(value);
-        this.assertIdentity(extraction.asset.case_id, caseId, "Raster document extraction Case");
-        this.assertIdentity(extraction.asset.asset_id, assetId, "Raster document extraction asset");
-        this.assertIdentity(extraction.job.raster_extraction_job_id, rasterExtractionJobId, "Raster document extraction job");
-        return extraction;
-      },
-    );
-  }
-
-  /**
-   * Starts the independently approved text-only raster OCR profile.  Unlike
-   * raster v2 this response contains no layout/table/cell projection.
-   */
-  requestRasterTextDocumentExtraction(
-    caseId: string,
-    assetId: string,
-    idempotencyKey: string,
-  ): Promise<DocumentAssetRasterTextExtraction> {
-    if (!isSafeIdempotencyKey(idempotencyKey)) throw new ContractError("raster text extraction Idempotency-Key is invalid");
-    return this.request(
-      `/cases/${segment(caseId)}/document-assets/${segment(assetId)}/raster-text-extractions`,
-      { method: "POST", headers: { "Idempotency-Key": idempotencyKey } },
-      (value) => {
-        const extraction = decodeDocumentAssetRasterTextExtraction(value);
-        this.assertIdentity(extraction.asset.case_id, caseId, "Raster text document extraction Case");
-        this.assertIdentity(extraction.asset.asset_id, assetId, "Raster text document extraction asset");
-        return extraction;
-      },
-      true,
-      RASTER_EXTRACTION_ENQUEUE_TIMEOUT_MS,
-    );
-  }
-
-  getRasterTextDocumentExtraction(
-    caseId: string,
-    assetId: string,
-    rasterTextExtractionJobId: string,
-  ): Promise<DocumentAssetRasterTextExtraction> {
-    return this.request(
-      `/cases/${segment(caseId)}/document-assets/${segment(assetId)}/raster-text-extractions/${segment(rasterTextExtractionJobId)}`,
-      { method: "GET" },
-      (value) => {
-        const extraction = decodeDocumentAssetRasterTextExtraction(value);
-        this.assertIdentity(extraction.asset.case_id, caseId, "Raster text document extraction Case");
-        this.assertIdentity(extraction.asset.asset_id, assetId, "Raster text document extraction asset");
-        this.assertIdentity(extraction.job.raster_text_extraction_job_id, rasterTextExtractionJobId, "Raster text document extraction job");
-        return extraction;
-      },
-    );
-  }
-
-  /**
-   * Fetches an inline reviewer source into transient memory only.  Callers
-   * must revoke any object URL they create; this client never writes source
-   * bytes to JSON, local/session storage, IndexedDB, or application state.
-   */
-  getDocumentAssetSource(caseId: string, asset: DocumentAsset, signal?: AbortSignal): Promise<Blob> {
-    return this.requestBinary(
-      `/cases/${segment(caseId)}/document-assets/${segment(asset.asset_id)}/source`,
-      asset.media_type,
-      asset.byte_size,
-      asset.byte_size,
-      signal,
-      true,
-    );
-  }
-
-  /**
-   * Fetches exactly one Backend-rasterized PDF page for geometry overlay.
-   * The page is created by the same approved raster job, so normalized OCR
-   * coordinates remain meaningful without shipping a PDF renderer to Browser.
-   */
-  getRasterExtractionPage(
-    caseId: string,
-    assetId: string,
-    rasterExtractionJobId: string,
-    pageNumber: number,
-    expectedPage: Pick<RasterExtractionPage, "width" | "height">,
-    signal?: AbortSignal,
-  ): Promise<Blob> {
-    if (!Number.isInteger(pageNumber) || pageNumber < 1 || pageNumber > 20) {
-      throw new ContractError("raster extraction page number is invalid");
-    }
-    if (!isPositiveSafeInteger(expectedPage.width) || !isPositiveSafeInteger(expectedPage.height)) {
-      throw new ContractError("raster extraction expected page dimensions are invalid");
-    }
-    return this.requestBinary(
-      `/cases/${segment(caseId)}/document-assets/${segment(assetId)}/raster-extractions/${segment(rasterExtractionJobId)}/pages/${pageNumber}`,
-      "image/png",
-      undefined,
-      MAX_RASTER_PAGE_PREVIEW_BYTES,
-      signal,
-      false,
-      RASTER_PAGE_VIEWER_TIMEOUT_MS,
-    ).then(async (blob) => {
-      await assertRasterPagePng(blob, expectedPage);
-      return blob;
-    });
-  }
-
-  /** A reviewer-confirmed text copy is the sole OCR-to-review transition. */
-  confirmDocumentExtraction(
-    caseId: string,
-    assetId: string,
-    payload: ConfirmDocumentExtractionRequest,
-  ): Promise<CaseDocument> {
-    const filename = uploadFilename(payload.filename);
-    const contentText = payload.content_text;
-    if (!contentText.trim() || contentText.length > MAX_TEXT_DOCUMENT_CHARACTERS) {
-      throw new ContractError("confirmed extraction text is invalid");
-    }
-    const extractionJobId = payload.extraction_job_id === undefined || payload.extraction_job_id === null
-      ? undefined
-      : requestIdentifier(payload.extraction_job_id, "extraction job ID");
-    const rasterExtractionJobId = payload.raster_extraction_job_id === undefined || payload.raster_extraction_job_id === null
-      ? undefined
-      : requestIdentifier(payload.raster_extraction_job_id, "raster extraction job ID");
-    const rasterTextExtractionJobId = payload.raster_text_extraction_job_id === undefined || payload.raster_text_extraction_job_id === null
-      ? undefined
-      : requestIdentifier(payload.raster_text_extraction_job_id, "raster text extraction job ID");
-    if ([extractionJobId, rasterExtractionJobId, rasterTextExtractionJobId].filter((value) => value !== undefined).length !== 1) {
-      throw new ContractError("exactly one extraction job ID is required");
-    }
-    const replacesDocumentId = payload.replaces_document_id === undefined || payload.replaces_document_id === null
-      ? undefined
-      : requestIdentifier(payload.replaces_document_id, "replacement document ID");
-    return this.request(
-      `/cases/${segment(caseId)}/document-assets/${segment(assetId)}/confirmed-document`,
-      this.json("POST", {
-        ...(extractionJobId === undefined ? {} : { extraction_job_id: extractionJobId }),
-        ...(rasterExtractionJobId === undefined ? {} : { raster_extraction_job_id: rasterExtractionJobId }),
-        ...(rasterTextExtractionJobId === undefined ? {} : { raster_text_extraction_job_id: rasterTextExtractionJobId }),
-        filename,
-        content_text: contentText,
-        ...(replacesDocumentId === undefined ? {} : { replaces_document_id: replacesDocumentId }),
-      }),
-      (value) => {
-        const item = decodeDocumentView(value);
-        this.assertIdentity(item.record.case_id, caseId, "Confirmed document Case");
-        return item.record;
       },
     );
   }
@@ -481,7 +403,7 @@ export class ApiClient {
         return job;
       },
       true,
-      REVIEW_EXECUTION_TIMEOUT_MS,
+      AI_WORKFLOW_TIMEOUT_MS,
     );
   }
 
@@ -489,6 +411,85 @@ export class ApiClient {
     const job = await this.request(`/jobs/${segment(jobId)}`, { method: "GET" }, decodeJobEnvelope);
     this.assertIdentity(job.job_id, jobId, "Job");
     return job;
+  }
+
+  getHsClassification(reviewRunId: string): Promise<HsClassification> {
+    return this.request(
+      `/review-runs/${segment(reviewRunId)}/hs-classification`,
+      { method: "GET" },
+      (value) => {
+        const view = decodeHsClassification(value);
+        this.assertIdentity(view.review_run_id, reviewRunId, "HS classification review run");
+        return view;
+      },
+    );
+  }
+
+  getHskReference(code: string): Promise<HsReferenceEntry> {
+    if (!/^[0-9]{10}$/u.test(code)) throw new ContractError("HSK reference code is invalid");
+    return this.request(`/hsk-reference/${segment(code)}`, { method: "GET" }, (value) => {
+      const entry = decodeHsReferenceEntry(value);
+      this.assertIdentity(entry.code, code, "HSK reference code");
+      return entry;
+    });
+  }
+
+  getOperationsMetrics(): Promise<OperationsMetrics> {
+    return this.request("/operations-metrics", { method: "GET" }, decodeOperationsMetrics);
+  }
+
+  searchLaws(query: string, topK?: number): Promise<LawSearch> {
+    const trimmed = query.trim();
+    if (!trimmed || trimmed.length > 200) throw new ContractError("law search query is invalid");
+    const params = new URLSearchParams({ q: trimmed });
+    if (topK !== undefined) params.set("top_k", String(topK));
+    return this.request(`/law-search?${params.toString()}`, { method: "GET" }, decodeLawSearch);
+  }
+
+  getLawCatalog(): Promise<LawCatalog> {
+    return this.request("/laws", { method: "GET" }, decodeLawCatalog);
+  }
+
+  searchHskReference(query: string): Promise<HsReferenceSearch> {
+    const trimmed = query.trim();
+    if (!trimmed || trimmed.length > 100) throw new ContractError("HSK reference search query is invalid");
+    const params = new URLSearchParams({ q: trimmed });
+    return this.request(`/hsk-reference?${params.toString()}`, { method: "GET" }, decodeHsReferenceSearch);
+  }
+
+  recordHsSelection(reviewRunId: string, payload: HsSelectionRequest): Promise<HsSelection> {
+    const reason = payload.reason.trim();
+    if (!reason || reason.length > 4_000) throw new ContractError("HS selection reason is invalid");
+    if (!/^[0-9]{10}$/u.test(payload.code)) throw new ContractError("HS selection code is invalid");
+    return this.request(
+      `/review-runs/${segment(reviewRunId)}/hs-classification`,
+      this.json("POST", { code: payload.code, reason }),
+      (value) => decodeHsSelection(value),
+    );
+  }
+
+  getOriginVerification(reviewRunId: string): Promise<OriginVerification> {
+    return this.request(
+      `/review-runs/${segment(reviewRunId)}/origin-verification`,
+      { method: "GET" },
+      (value) => {
+        const view = decodeOriginVerification(value);
+        this.assertIdentity(view.review_run_id, reviewRunId, "Origin verification review run");
+        return view;
+      },
+    );
+  }
+
+  getDutyAssessment(reviewRunId: string): Promise<DutyAssessment> {
+    return this.request(
+      `/review-runs/${segment(reviewRunId)}/duty-assessment`,
+      { method: "GET" },
+      (value) => {
+        const view = decodeDutyAssessment(value);
+        this.assertIdentity(view.review_run_id, reviewRunId, "Duty assessment review run");
+        return view;
+      },
+    );
   }
 
   setFindingDecision(
@@ -546,82 +547,6 @@ export class ApiClient {
     );
   }
 
-  /**
-   * Global official-knowledge conversations are deliberately separate from a
-   * Case review.  The Browser still calls only Backend API v1.
-   */
-  listKnowledgeConversations(): Promise<KnowledgeConversation[]> {
-    return this.request(
-      "/knowledge/conversations",
-      { method: "GET" },
-      (value) => itemsFrom(value, "Knowledge conversation list").map(decodeKnowledgeConversation),
-    );
-  }
-
-  createKnowledgeConversation(
-    payload: CreateKnowledgeConversationRequest,
-  ): Promise<KnowledgeConversation> {
-    const title = payload.title?.trim();
-    if (title !== undefined && (!title || title.length > 200)) {
-      throw new ContractError("knowledge conversation title is invalid");
-    }
-    const tradeType = payload.trade_type ?? "both";
-    if (!(["import", "export", "both"] as const).includes(tradeType)) {
-      throw new ContractError("knowledge conversation trade type is invalid");
-    }
-    if (payload.as_of !== undefined && !isIsoDate(payload.as_of)) {
-      throw new ContractError("knowledge conversation date must be an ISO calendar date");
-    }
-    return this.request(
-      "/knowledge/conversations",
-      this.json("POST", {
-        ...(title ? { title } : {}),
-        trade_type: tradeType,
-        ...(payload.as_of === undefined ? {} : { as_of: payload.as_of }),
-      }),
-      decodeKnowledgeConversation,
-    );
-  }
-
-  listKnowledgeMessages(conversationId: string): Promise<KnowledgeMessage[]> {
-    return this.request(
-      `/knowledge/conversations/${segment(conversationId)}/messages`,
-      { method: "GET" },
-      (value) => {
-        const messages = itemsFrom(value, "Knowledge message list").map((item) => decodeKnowledgeMessage(item));
-        messages.forEach((item, index) => {
-          this.assertIdentity(item.conversation_id, conversationId, `knowledge messages[${index}] conversation`);
-        });
-        return messages;
-      },
-    );
-  }
-
-  sendKnowledgeMessage(
-    conversationId: string,
-    payload: SendKnowledgeMessageRequest,
-    idempotencyKey: string,
-  ): Promise<KnowledgeMessageExchange> {
-    const content = payload.content.trim();
-    if (!content || content.length > 4_000) throw new ContractError("knowledge message content is invalid");
-    if (!isSafeIdempotencyKey(idempotencyKey)) throw new ContractError("knowledge message Idempotency-Key is invalid");
-    const init = this.json("POST", { content });
-    const headers = new Headers(init.headers);
-    headers.set("Idempotency-Key", idempotencyKey);
-    return this.request(
-      `/knowledge/conversations/${segment(conversationId)}/messages`,
-      { ...init, headers },
-      (value) => {
-        const exchange = decodeKnowledgeMessageExchange(value);
-        this.assertIdentity(exchange.user_message.conversation_id, conversationId, "Knowledge user message conversation");
-        this.assertIdentity(exchange.assistant_message.conversation_id, conversationId, "Knowledge answer conversation");
-        return exchange;
-      },
-      true,
-      KNOWLEDGE_ANSWER_TIMEOUT_MS,
-    );
-  }
-
   listAssistantMessages(conversationId: string): Promise<AssistantMessage[]> {
     return this.request(
       `/assistant/conversations/${segment(conversationId)}/messages`,
@@ -656,6 +581,8 @@ export class ApiClient {
         this.assertIdentity(exchange.assistant_message.conversation_id, conversationId, "Assistant answer conversation");
         return exchange;
       },
+      true,
+      AI_WORKFLOW_TIMEOUT_MS,
     );
   }
 
@@ -730,7 +657,7 @@ export class ApiClient {
       { ...init, headers },
       decodeJobEnvelope,
       true,
-      REVIEW_EXECUTION_TIMEOUT_MS,
+      AI_WORKFLOW_TIMEOUT_MS,
     );
   }
 
@@ -747,7 +674,7 @@ export class ApiClient {
     init: RequestInit,
     decoder: Decoder<T>,
     authenticate = true,
-    timeoutMs = REQUEST_TIMEOUT_MS,
+    timeoutMs: number = REQUEST_TIMEOUT_MS,
   ): Promise<T> {
     const headers = new Headers(init.headers);
     headers.set("Accept", "application/json");
@@ -781,12 +708,10 @@ export class ApiClient {
 
   private async requestBinary(
     path: string,
-    expectedMediaType: DocumentAsset["media_type"],
-    expectedByteSize: number | undefined,
+    expectedMediaType: DocumentAssetMediaType,
+    expectedByteSize: number,
     maximumByteSize: number,
     callerSignal?: AbortSignal,
-    requireLegacyNoCache = false,
-    timeoutMs = REQUEST_TIMEOUT_MS,
   ): Promise<Blob> {
     const token = await this.accessToken?.();
     if (!token) throw new ApiError("browser token is absent", 401);
@@ -803,7 +728,7 @@ export class ApiClient {
         credentials: "same-origin",
         redirect: "error",
         referrerPolicy: "same-origin",
-        signal: requestSignal(timeoutMs, callerSignal),
+        signal: combinedRequestSignal(REQUEST_TIMEOUT_MS, callerSignal),
       });
     } catch {
       throw new ApiError("Backend source-viewer request failed before a response", 503);
@@ -820,26 +745,18 @@ export class ApiClient {
     if (!/(?:^|,)\s*no-store(?:\s|,|$)/iu.test(response.headers.get("cache-control") ?? "")) {
       throw new ContractError("source viewer response must be no-store");
     }
-    if (requireLegacyNoCache && (response.headers.get("pragma") ?? "").toLowerCase() !== "no-cache") {
-      throw new ContractError("source viewer response must disable legacy caching");
-    }
     if ((response.headers.get("x-content-type-options") ?? "").toLowerCase() !== "nosniff") {
       throw new ContractError("source viewer response must prevent MIME sniffing");
     }
     const contentLength = response.headers.get("content-length");
-    if (
-      contentLength !== null
-      && (!/^\d+$/u.test(contentLength)
-        || Number(contentLength) > maximumByteSize
-        || (expectedByteSize !== undefined && Number(contentLength) !== expectedByteSize))
-    ) {
+    if (contentLength !== null && (!/^\d+$/u.test(contentLength) || Number(contentLength) !== expectedByteSize)) {
       throw new ContractError("source viewer response has an unexpected byte length");
     }
     const blob = await response.blob();
     if (blob.type && blob.type.split(";", 1)[0]?.toLowerCase() !== expectedMediaType) {
       throw new ContractError("source viewer blob has an unexpected media type");
     }
-    if (blob.size > maximumByteSize || (expectedByteSize !== undefined && blob.size !== expectedByteSize)) {
+    if (blob.size !== expectedByteSize || blob.size > maximumByteSize) {
       throw new ContractError("source viewer response has an unexpected byte length");
     }
     return blob;
@@ -933,82 +850,11 @@ async function readJson(response: Response): Promise<unknown> {
   }
 }
 
-/**
- * PNG media type alone is not enough for a coordinate overlay.  Verify the
- * fixed PNG signature and IHDR dimensions before an object URL is created.
- */
-async function assertRasterPagePng(
-  blob: Blob,
-  expectedPage: Pick<RasterExtractionPage, "width" | "height">,
-): Promise<void> {
-  if (blob.size < 24) throw new ContractError("raster extraction page PNG is incomplete");
-  const header = new Uint8Array(await blob.slice(0, 24).arrayBuffer());
-  const signature = [137, 80, 78, 71, 13, 10, 26, 10];
-  if (signature.some((value, index) => header[index] !== value)) {
-    throw new ContractError("raster extraction page is not a PNG");
+function segment(value: string): string {
+  if (!value || value.length > 256 || /[\r\n\0]/u.test(value)) {
+    throw new ContractError("path identifier is invalid");
   }
-  if (
-    header[8] !== 0 || header[9] !== 0 || header[10] !== 0 || header[11] !== 13
-    || header[12] !== 73 || header[13] !== 72 || header[14] !== 68 || header[15] !== 82
-  ) {
-    throw new ContractError("raster extraction page PNG has no valid IHDR");
-  }
-  const width = readPngUint32(header, 16);
-  const height = readPngUint32(header, 20);
-  if (width !== expectedPage.width || height !== expectedPage.height) {
-    throw new ContractError("raster extraction page dimensions do not match the OCR result");
-  }
-}
-
-function readPngUint32(header: Uint8Array, offset: number): number {
-  return (header[offset]! * 0x1_000000) + (header[offset + 1]! << 16) + (header[offset + 2]! << 8) + header[offset + 3]!;
-}
-
-function isPositiveSafeInteger(value: unknown): value is number {
-  return typeof value === "number" && Number.isSafeInteger(value) && value > 0;
-}
-
-/** Merge a caller cancellation with the normal public-request timeout. */
-function requestSignal(timeoutMs: number, callerSignal?: AbortSignal): AbortSignal {
-  const timeout = AbortSignal.timeout(timeoutMs);
-  if (!callerSignal) return timeout;
-  const withAny = AbortSignal as typeof AbortSignal & {
-    any?: (signals: AbortSignal[]) => AbortSignal;
-  };
-  if (typeof withAny.any === "function") return withAny.any([timeout, callerSignal]);
-  const controller = new AbortController();
-  const abort = () => controller.abort();
-  timeout.addEventListener("abort", abort, { once: true });
-  callerSignal.addEventListener("abort", abort, { once: true });
-  if (timeout.aborted || callerSignal.aborted) controller.abort();
-  return controller.signal;
-}
-
-function validDocumentType(value: unknown): UploadDocumentAssetRequest["document_type"] {
-  const allowed = [
-    "CI", "PL", "BL", "CO", "AWB", "EXPORT_DECLARATION", "SUPPORTING_EVIDENCE", "UNKNOWN",
-  ] as const;
-  if (typeof value !== "string" || !allowed.includes(value as (typeof allowed)[number])) {
-    throw new ContractError("document asset type is invalid");
-  }
-  return value as UploadDocumentAssetRequest["document_type"];
-}
-
-function documentAssetMediaType(value: unknown): UploadDocumentAssetRequest["media_type"] {
-  if (value !== "application/pdf" && value !== "image/jpeg" && value !== "image/png") {
-    throw new ContractError("document asset media type is invalid");
-  }
-  return value;
-}
-
-function uploadFilename(value: unknown): string {
-  if (
-    typeof value !== "string" || !value.trim() || value.length > 255 ||
-    /[\\/\r\n\0]/u.test(value)
-  ) {
-    throw new ContractError("document asset filename is invalid");
-  }
-  return value;
+  return encodeURIComponent(value);
 }
 
 function requestIdentifier(value: unknown, label: string): string {
@@ -1018,11 +864,20 @@ function requestIdentifier(value: unknown, label: string): string {
   return value;
 }
 
-function segment(value: string): string {
-  if (!value || value.length > 256 || /[\r\n\0]/u.test(value)) {
-    throw new ContractError("path identifier is invalid");
-  }
-  return encodeURIComponent(value);
+/** Combines caller cancellation with the normal public-request timeout. */
+function combinedRequestSignal(timeoutMs: number, callerSignal?: AbortSignal): AbortSignal {
+  const timeout = AbortSignal.timeout(timeoutMs);
+  if (!callerSignal) return timeout;
+  const abortSignal = AbortSignal as typeof AbortSignal & {
+    any?: (signals: AbortSignal[]) => AbortSignal;
+  };
+  if (typeof abortSignal.any === "function") return abortSignal.any([timeout, callerSignal]);
+  const controller = new AbortController();
+  const abort = () => controller.abort();
+  timeout.addEventListener("abort", abort, { once: true });
+  callerSignal.addEventListener("abort", abort, { once: true });
+  if (timeout.aborted || callerSignal.aborted) controller.abort();
+  return controller.signal;
 }
 
 function isSafeIdempotencyKey(value: string): boolean {

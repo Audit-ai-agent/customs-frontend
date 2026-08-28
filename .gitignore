@@ -13,3 +13,14 @@ dist/
 Thumbs.db
 .idea/
 .vscode/
+.playwright-mcp/
+
+# 로컬 작업 산출물 — 레포 산출물이 아닌 이 PC 전용 자료.
+# UAT 스크린샷, 세션 인수인계 문서, 합성 시연 데이터셋, 목업 포팅 작업본.
+/*.png
+/ORG-CONTEXT.md
+/PROGRESS-REPORT-*.md
+/통관서류_합성데이터셋_2000세트/
+/dev/mockup-react/
+/통심_*.html
+/붙임*

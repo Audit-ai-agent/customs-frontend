@@ -12,7 +12,6 @@
     "dev": "npm run dev:local",
     "dev:local": "vite --host 127.0.0.1 --mode local-development",
     "dev:functional-uat": "vite --host 127.0.0.1 --mode functional-uat",
-    "functional-uat:browser": "playwright test --config playwright.functional-uat.config.ts",
     "build": "vite build --mode local-development",
     "build:functional-uat": "vite build --mode functional-uat",
     "preview": "vite preview --host 127.0.0.1 --mode local-development",
@@ -26,14 +25,17 @@
     "verify": "npm run check:quick && npm run check:contract && npm run build"
   },
   "devDependencies": {
-    "@playwright/test": "1.62.1",
     "@types/node": "^22.15.0",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.4",
     "jsdom": "^26.1.0",
     "typescript": "^5.8.3",
     "vite": "8.1.5",
     "vitest": "4.1.10"
   },
   "dependencies": {
-    "oidc-client-ts": "^3.3.0"
+    "oidc-client-ts": "^3.3.0",
+    "react": "19.2.8",
+    "react-dom": "19.2.8"
   }
 }
