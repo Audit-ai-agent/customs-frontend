@@ -4,6 +4,7 @@ import type { ReviewRun } from "../src/api/v1/types";
 
 afterEach(() => {
   window.location.hash = "#/cases";
+  vi.restoreAllMocks();
 });
 
 function reviewRun() {
@@ -141,6 +142,460 @@ describe("commercial review workspace", () => {
     expect(api.enqueueReview).not.toHaveBeenCalled();
     expect(root.textContent).toContain("심사는 자동으로 시작하지 않았습니다.");
     expect(root.querySelector('[data-e2e="document-row"]')).not.toBeNull();
+    app.destroy();
+  });
+
+  it("renders a separate raster OCR/layout workbench and confirms only reviewer-edited text", async () => {
+    window.location.hash = "#/cases/case-1/documents";
+    const root = document.createElement("div");
+    const caseDetail = { case_id: "case-1", org_id: "local-org", title: "스캔 입항 서류", status: "open" as const, revision: 0, updated_at: "2026-08-23T00:00:00Z" };
+    const asset = {
+      asset_id: "asset-raster-1", case_id: "case-1", document_type: "CI" as const, filename: "scan-invoice.png",
+      media_type: "image/png" as const, byte_size: 5, page_count: 1, pixel_count: 10_000,
+      created_by: "local-reviewer", created_at: "2026-08-23T00:00:00Z",
+    };
+    const textDocument = {
+      document_id: "document-raster-1", case_id: "case-1", document_type: "CI" as const, filename: "scan-invoice.txt", media_type: "text/plain" as const,
+      content_sha256: "a".repeat(64), byte_size: 7, character_count: 7, created_by: "local-reviewer", created_at: "2026-08-23T00:01:00Z",
+    };
+    let confirmed = false;
+    const raster = {
+      asset,
+      idempotency_reused: false,
+      current_profile_revision: "synthetic-raster-v1",
+      profile_superseded: false,
+      job: {
+        raster_extraction_job_id: "raster-job-1", asset_id: asset.asset_id, case_id: asset.case_id,
+        profile_revision: "synthetic-raster-v1", status: "needs_review" as const, attempt_count: 1,
+        result: {
+          status: "needs_review" as const, document_type: "commercial_invoice" as const, classification_confidence: 0.98,
+          pages: [{
+            page_number: 1, width: 100, height: 100, coordinate_unit: "pixels" as const,
+            spans: [{ span_id: "span-raster-1", ordinal: 1, text: "INV-001", bbox: { x: 0.1, y: 0.2, width: 0.2, height: 0.1 }, confidence: 0.97, reading_order: 1 }],
+          }],
+          field_candidates: [{ field_id: "invoice_number", value: "INV-001", confidence: 0.97, evidence_span_ids: ["span-raster-1"], bbox: { x: 0.1, y: 0.2, width: 0.2, height: 0.1 } }],
+          tables: [{
+            table_id: "table-1", page_number: 1, bbox: { x: 0.05, y: 0.35, width: 0.4, height: 0.2 },
+            rows: [{
+              row_index: 0,
+              cells: [{ cell_id: "cell-1", row_index: 0, column_index: 0, text: "Widget", bbox: { x: 0.1, y: 0.4, width: 0.2, height: 0.1 }, confidence: 0.94, evidence_span_ids: ["span-raster-1"] }],
+            }],
+          }],
+          warnings: ["human_confirmation_required"], needs_review_reasons: ["table_structure_uncertain"],
+        },
+        created_by: "local-reviewer", created_at: "2026-08-23T00:00:01Z", updated_at: "2026-08-23T00:00:01Z",
+      },
+    };
+    const api = {
+      getSession: vi.fn(async () => ({ subject: "local-reviewer", org_id: "local-org", roles: ["reviewer"] })),
+      listCases: vi.fn(async () => ({ items: [caseDetail] })), getCase: vi.fn(async () => caseDetail),
+      listDocuments: vi.fn(async () => confirmed ? [textDocument] : []), listDocumentAssets: vi.fn(async () => [asset]), listReviewRuns: vi.fn(async () => []),
+      requestRasterDocumentExtraction: vi.fn(async () => raster),
+      getDocumentAssetSource: vi.fn(async () => new Blob(["image"], { type: "image/png" })),
+      confirmDocumentExtraction: vi.fn(async () => { confirmed = true; return textDocument; }),
+      getDocumentContent: vi.fn(async () => ({ ...textDocument, content_text: "INV-001" })), enqueueReview: vi.fn(),
+    };
+    const auth = { logout: async () => undefined, freshAccessToken: async () => "token", isAuthenticated: () => true };
+    const app = new LightweightWorkbench(root, api as never, auth, "local-development");
+    await app.start();
+
+    root.querySelector<HTMLButtonElement>('[data-e2e="document-asset-row"]')?.click();
+    expect(root.querySelector('[data-e2e="raster-extraction-workbench"]')?.textContent).toContain("Raster OCR·표·위치 검토");
+    expect(api.enqueueReview).not.toHaveBeenCalled();
+    await (app as unknown as { requestRasterDocumentExtraction(value: typeof asset): Promise<void> }).requestRasterDocumentExtraction(asset);
+
+    expect(root.querySelector('[data-e2e="raster-document-extraction-candidate"]')?.textContent).toContain("상업송장(Commercial Invoice)");
+    expect(root.querySelector('[data-e2e="refresh-completed-raster-document-extraction"]')?.textContent).toBe("현재 Raster OCR 결과 새로고침");
+    expect(root.textContent).toContain("송장 번호");
+    expect(root.textContent).toContain("Widget");
+    expect(root.textContent).toContain("아직 심사에 사용되지 않습니다.");
+    await (app as unknown as { openRasterSourceViewer(value: typeof asset): Promise<void> }).openRasterSourceViewer(asset);
+    expect(api.getDocumentAssetSource).toHaveBeenCalledWith("case-1", asset, expect.any(AbortSignal));
+    expect(root.querySelector(".raster-source-viewer__image")).not.toBeNull();
+    const canvas = root.querySelector<HTMLElement>(".raster-source-viewer__canvas");
+    expect(canvas?.querySelector(".raster-source-overlay")).not.toBeNull();
+    expect(root.querySelectorAll(".raster-source-overlay__span")).toHaveLength(1);
+    expect(root.querySelectorAll(".raster-source-overlay__field")).toHaveLength(1);
+    expect(root.querySelectorAll(".raster-source-overlay__table")).toHaveLength(1);
+    expect(root.querySelectorAll(".raster-source-overlay__cell")).toHaveLength(1);
+    expect(root.querySelector(".raster-source-overlay-legend")?.textContent).toContain("표 셀");
+    expect(root.querySelector("iframe")).toBeNull();
+    const fieldEditor = root.querySelector<HTMLTextAreaElement>('[data-e2e="raster-field-editor-0"]');
+    if (!fieldEditor) throw new Error("raster field editor is unavailable");
+    fieldEditor.value = "INV-002";
+    fieldEditor.dispatchEvent(new Event("input", { bubbles: true }));
+    const cellEditor = root.querySelector<HTMLTextAreaElement>('[data-e2e="raster-table-cell-editor-0-cell-1"]');
+    if (!cellEditor) throw new Error("raster table-cell editor is unavailable");
+    cellEditor.value = "Widget corrected";
+    cellEditor.dispatchEvent(new Event("input", { bubbles: true }));
+    const form = root.querySelector<HTMLFormElement>('[data-e2e="raster-document-extraction-confirmation-form"]');
+    const textarea = form?.querySelector<HTMLTextAreaElement>('textarea[name="content_text"]');
+    if (!form || !textarea) throw new Error("raster confirmation form is unavailable");
+    expect(textarea.value).toContain("INV-002");
+    expect(textarea.value).toContain("Widget corrected");
+    expect(textarea.value).toContain("검토자가 수정한 Raster OCR 후보");
+    expect(root.querySelector<HTMLTextAreaElement>('[data-e2e="document-form"] textarea[name="content_text"]')?.value).toBe("");
+    textarea.value = `${textarea.value}\n원본 대조 완료`;
+    textarea.dispatchEvent(new Event("input", { bubbles: true }));
+    await (app as unknown as { confirmRasterDocumentExtraction(value: HTMLFormElement): Promise<void> }).confirmRasterDocumentExtraction(form);
+
+    expect(api.confirmDocumentExtraction).toHaveBeenCalledWith("case-1", asset.asset_id, expect.objectContaining({
+      raster_extraction_job_id: "raster-job-1", content_text: expect.stringContaining("INV-002"),
+    }));
+    expect(api.confirmDocumentExtraction).toHaveBeenCalledWith("case-1", asset.asset_id, expect.objectContaining({
+      content_text: expect.stringContaining("Widget corrected"),
+    }));
+    expect(api.enqueueReview).not.toHaveBeenCalled();
+    expect(root.textContent).toContain("심사는 자동으로 시작하지 않았습니다.");
+    app.destroy();
+  });
+
+  it("keeps text-only raster OCR separate from layout and confirms only an edited whole-text draft", async () => {
+    window.location.hash = "#/cases/case-1/documents";
+    const root = document.createElement("div");
+    const caseDetail = { case_id: "case-1", org_id: "local-org", title: "텍스트 OCR", status: "open" as const, revision: 0, updated_at: "2026-08-25T00:00:00Z" };
+    const asset = {
+      asset_id: "asset-raster-text-1", case_id: "case-1", document_type: "CI" as const, filename: "scan-invoice.jpg",
+      media_type: "image/jpeg" as const, byte_size: 5, page_count: 1, pixel_count: 10_000,
+      created_by: "local-reviewer", created_at: "2026-08-25T00:00:00Z",
+    };
+    const textDocument = {
+      document_id: "document-raster-text-1", case_id: "case-1", document_type: "CI" as const, filename: "scan-invoice.txt", media_type: "text/plain" as const,
+      content_sha256: "a".repeat(64), byte_size: 7, character_count: 7, created_by: "local-reviewer", created_at: "2026-08-25T00:01:00Z",
+    };
+    let confirmed = false;
+    const rasterText = {
+      asset,
+      idempotency_reused: false,
+      current_profile_revision: "synthetic-raster-text-v1",
+      profile_superseded: false,
+      job: {
+        raster_text_extraction_job_id: "raster-text-job-1", asset_id: asset.asset_id, case_id: asset.case_id,
+        profile_revision: "synthetic-raster-text-v1", status: "needs_review" as const, attempt_count: 1,
+        result: {
+          status: "needs_review" as const,
+          canonical_text: "INVOICE 001\nTOTAL USD 100",
+          pages: [{ page_number: 1, text: "INVOICE 001\nTOTAL USD 100", confidence: null }],
+          warnings: ["human_confirmation_required"], needs_review_reasons: ["ocr_low_confidence"],
+        },
+        created_by: "local-reviewer", created_at: "2026-08-25T00:00:01Z", updated_at: "2026-08-25T00:00:01Z",
+      },
+    };
+    const api = {
+      getSession: vi.fn(async () => ({ subject: "local-reviewer", org_id: "local-org", roles: ["reviewer"] })),
+      listCases: vi.fn(async () => ({ items: [caseDetail] })), getCase: vi.fn(async () => caseDetail),
+      listDocuments: vi.fn(async () => confirmed ? [textDocument] : []), listDocumentAssets: vi.fn(async () => [asset]), listReviewRuns: vi.fn(async () => []),
+      requestRasterTextDocumentExtraction: vi.fn(async () => rasterText),
+      getDocumentAssetSource: vi.fn(async () => new Blob(["image"], { type: "image/jpeg" })),
+      confirmDocumentExtraction: vi.fn(async () => { confirmed = true; return textDocument; }),
+      getDocumentContent: vi.fn(async () => ({ ...textDocument, content_text: "INVOICE 001" })), enqueueReview: vi.fn(),
+    };
+    const auth = { logout: async () => undefined, freshAccessToken: async () => "token", isAuthenticated: () => true };
+    const app = new LightweightWorkbench(root, api as never, auth, "local-development");
+    await app.start();
+
+    root.querySelector<HTMLButtonElement>('[data-e2e="document-asset-row"]')?.click();
+    const emptyCard = root.querySelector<HTMLElement>('[data-e2e="raster-text-extraction-workbench"]');
+    expect(emptyCard?.textContent).toContain("Raster OCR 텍스트 초안");
+    expect(emptyCard?.textContent).toContain("표·셀·위치 추정은 포함하지 않습니다.");
+    expect(emptyCard?.querySelector(".raster-source-overlay")).toBeNull();
+    expect(emptyCard?.querySelector(".raster-table")).toBeNull();
+
+    await (app as unknown as { requestRasterTextDocumentExtraction(value: typeof asset): Promise<void> }).requestRasterTextDocumentExtraction(asset);
+    expect(root.querySelector('[data-e2e="raster-text-document-extraction-candidate"]')?.textContent).toContain("1쪽 OCR 텍스트");
+    expect(root.querySelector('[data-e2e="open-raster-text-source-viewer"]')).not.toBeNull();
+    const createObjectUrl = vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:raster-text-source");
+    const revokeObjectUrl = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => undefined);
+    await (app as unknown as {
+      openRasterTextSourceViewer(value: typeof asset, rasterTextJob: typeof rasterText.job): Promise<void>;
+    }).openRasterTextSourceViewer(asset, rasterText.job);
+    expect(api.getDocumentAssetSource).toHaveBeenCalledWith("case-1", asset, expect.any(AbortSignal));
+    expect(root.querySelector<HTMLImageElement>('[data-e2e="raster-text-source-image"]')?.getAttribute("src")).toBe("blob:raster-text-source");
+    const textViewer = root.querySelector<HTMLElement>('[data-e2e="raster-text-source-viewer"]');
+    expect(textViewer?.querySelector(".raster-source-overlay")).toBeNull();
+    expect(textViewer?.querySelector(".raster-table")).toBeNull();
+    root.querySelector<HTMLButtonElement>('[data-e2e="close-raster-text-source-viewer"]')?.click();
+    expect(revokeObjectUrl).toHaveBeenCalledWith("blob:raster-text-source");
+    expect(createObjectUrl).toHaveBeenCalledTimes(1);
+    const form = root.querySelector<HTMLFormElement>('[data-e2e="raster-text-document-extraction-confirmation-form"]');
+    const textarea = form?.querySelector<HTMLTextAreaElement>('textarea[name="content_text"]');
+    if (!form || !textarea) throw new Error("raster text confirmation form is unavailable");
+    expect(textarea.value).toBe("INVOICE 001\nTOTAL USD 100");
+    textarea.value = "INVOICE 002\nTOTAL USD 100";
+    textarea.dispatchEvent(new Event("input", { bubbles: true }));
+    await (app as unknown as { confirmRasterTextDocumentExtraction(value: HTMLFormElement): Promise<void> }).confirmRasterTextDocumentExtraction(form);
+
+    expect(api.confirmDocumentExtraction).toHaveBeenCalledWith("case-1", asset.asset_id, expect.objectContaining({
+      raster_text_extraction_job_id: "raster-text-job-1", content_text: "INVOICE 002\nTOTAL USD 100",
+    }));
+    expect(api.enqueueReview).not.toHaveBeenCalled();
+    expect(root.textContent).toContain("심사는 자동으로 시작하지 않았습니다.");
+    app.destroy();
+  });
+
+  it("uses a transient inline object for a text-only OCR PDF original without an app download link", async () => {
+    window.location.hash = "#/cases/case-1/documents";
+    const root = document.createElement("div");
+    const caseDetail = { case_id: "case-1", org_id: "local-org", title: "PDF 텍스트 OCR", status: "open" as const, revision: 0, updated_at: "2026-08-25T00:00:00Z" };
+    const asset = {
+      asset_id: "asset-raster-text-pdf", case_id: "case-1", document_type: "CI" as const, filename: "scan-invoice.pdf",
+      media_type: "application/pdf" as const, byte_size: 50, page_count: 1, pixel_count: 0,
+      created_by: "local-reviewer", created_at: "2026-08-25T00:00:00Z",
+    };
+    const rasterText = {
+      asset, idempotency_reused: false, current_profile_revision: "synthetic-raster-text-v1", profile_superseded: false,
+      job: {
+        raster_text_extraction_job_id: "raster-text-pdf-job", asset_id: asset.asset_id, case_id: asset.case_id,
+        profile_revision: "synthetic-raster-text-v1", status: "preview_ready" as const, attempt_count: 1,
+        result: {
+          status: "preview_ready" as const, canonical_text: "INVOICE PDF", pages: [{ page_number: 1, text: "INVOICE PDF", confidence: 0.98 }],
+          warnings: ["human_confirmation_required"], needs_review_reasons: [],
+        },
+        created_by: "local-reviewer", created_at: "2026-08-25T00:00:01Z", updated_at: "2026-08-25T00:00:01Z",
+      },
+    };
+    const api = {
+      getSession: vi.fn(async () => ({ subject: "local-reviewer", org_id: "local-org", roles: ["reviewer"] })),
+      listCases: vi.fn(async () => ({ items: [caseDetail] })), getCase: vi.fn(async () => caseDetail),
+      listDocuments: vi.fn(async () => []), listDocumentAssets: vi.fn(async () => [asset]), listReviewRuns: vi.fn(async () => []),
+      requestRasterTextDocumentExtraction: vi.fn(async () => rasterText),
+      getDocumentAssetSource: vi.fn(async () => new Blob(["%PDF"], { type: "application/pdf" })), enqueueReview: vi.fn(),
+    };
+    const auth = { logout: async () => undefined, freshAccessToken: async () => "token", isAuthenticated: () => true };
+    const app = new LightweightWorkbench(root, api as never, auth, "local-development");
+    await app.start();
+    root.querySelector<HTMLButtonElement>('[data-e2e="document-asset-row"]')?.click();
+    await (app as unknown as { requestRasterTextDocumentExtraction(value: typeof asset): Promise<void> }).requestRasterTextDocumentExtraction(asset);
+    const createObjectUrl = vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:raster-text-pdf");
+    const revokeObjectUrl = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => undefined);
+
+    await (app as unknown as {
+      openRasterTextSourceViewer(value: typeof asset, rasterTextJob: typeof rasterText.job): Promise<void>;
+    }).openRasterTextSourceViewer(asset, rasterText.job);
+    expect(root.querySelector<HTMLObjectElement>('[data-e2e="raster-text-source-pdf"]')?.getAttribute("data")).toBe("blob:raster-text-pdf");
+    expect(root.querySelector('[data-e2e="raster-text-source-viewer"] a[download]')).toBeNull();
+    expect(root.querySelector('[data-e2e="raster-text-source-viewer"] .raster-source-overlay')).toBeNull();
+    app.destroy();
+    expect(revokeObjectUrl).toHaveBeenCalledWith("blob:raster-text-pdf");
+  });
+
+  it("bounds raster text polling and leaves an unavailable result out of confirmation", async () => {
+    vi.useFakeTimers();
+    try {
+      window.location.hash = "#/cases/case-1/documents";
+      const root = document.createElement("div");
+      const caseDetail = { case_id: "case-1", org_id: "local-org", title: "텍스트 OCR 대기", status: "open" as const, revision: 0, updated_at: "2026-08-25T00:00:00Z" };
+      const asset = {
+        asset_id: "asset-raster-text-poll", case_id: "case-1", document_type: "CI" as const, filename: "scan-invoice.png",
+        media_type: "image/png" as const, byte_size: 5, page_count: 1, pixel_count: 100,
+        created_by: "local-reviewer", created_at: "2026-08-25T00:00:00Z",
+      };
+      const queued = {
+        asset, idempotency_reused: false, current_profile_revision: "synthetic-raster-text-v1", profile_superseded: false,
+        job: {
+          raster_text_extraction_job_id: "raster-text-poll-job", asset_id: asset.asset_id, case_id: asset.case_id,
+          profile_revision: "synthetic-raster-text-v1", status: "queued" as const, attempt_count: 1,
+          created_by: "local-reviewer", created_at: "2026-08-25T00:00:01Z", updated_at: "2026-08-25T00:00:01Z",
+        },
+      };
+      const unavailable = {
+        ...queued,
+        job: {
+          ...queued.job,
+          status: "unavailable" as const,
+          result: { status: "unavailable" as const, canonical_text: null, pages: [], warnings: ["no_approved_profile"], needs_review_reasons: [] },
+        },
+      };
+      const api = {
+        getSession: vi.fn(async () => ({ subject: "local-reviewer", org_id: "local-org", roles: ["reviewer"] })),
+        listCases: vi.fn(async () => ({ items: [caseDetail] })), getCase: vi.fn(async () => caseDetail),
+        listDocuments: vi.fn(async () => []), listDocumentAssets: vi.fn(async () => [asset]), listReviewRuns: vi.fn(async () => []),
+        requestRasterTextDocumentExtraction: vi.fn(async () => queued),
+        getRasterTextDocumentExtraction: vi.fn(async () => unavailable), enqueueReview: vi.fn(),
+      };
+      const auth = { logout: async () => undefined, freshAccessToken: async () => "token", isAuthenticated: () => true };
+      const app = new LightweightWorkbench(root, api as never, auth, "local-development");
+      await app.start();
+      root.querySelector<HTMLButtonElement>('[data-e2e="document-asset-row"]')?.click();
+      await (app as unknown as { requestRasterTextDocumentExtraction(value: typeof asset): Promise<void> }).requestRasterTextDocumentExtraction(asset);
+
+      await vi.advanceTimersByTimeAsync(3_000);
+      expect(api.getRasterTextDocumentExtraction).toHaveBeenCalledWith("case-1", asset.asset_id, "raster-text-poll-job");
+      expect(root.querySelector('[data-e2e="raster-text-extraction-empty"]')).not.toBeNull();
+      expect(root.querySelector('[data-e2e="raster-text-document-extraction-confirmation-form"]')).toBeNull();
+      expect(root.textContent).toContain("Raster OCR 텍스트 초안 제공 불가");
+      app.destroy();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("separates an idempotent same-profile refresh from a genuinely new request after profile replacement", async () => {
+    window.location.hash = "#/cases/case-1/documents";
+    const root = document.createElement("div");
+    const caseDetail = { case_id: "case-1", org_id: "local-org", title: "Profile replacement", status: "open" as const, revision: 0, updated_at: "2026-08-24T00:00:00Z" };
+    const asset = {
+      asset_id: "asset-profile-1", case_id: "case-1", document_type: "CI" as const, filename: "scan-invoice.png",
+      media_type: "image/png" as const, byte_size: 5, page_count: 1, pixel_count: 100,
+      created_by: "local-reviewer", created_at: "2026-08-24T00:00:00Z",
+    };
+    const raster = (
+      jobId: string,
+      profileRevision: string,
+      currentProfileRevision: string,
+      profileSuperseded: boolean,
+      idempotencyReused: boolean,
+    ) => ({
+      asset,
+      idempotency_reused: idempotencyReused,
+      current_profile_revision: currentProfileRevision,
+      profile_superseded: profileSuperseded,
+      job: {
+        raster_extraction_job_id: jobId, asset_id: asset.asset_id, case_id: asset.case_id,
+        profile_revision: profileRevision, status: "needs_review" as const, attempt_count: 1,
+        result: {
+          status: "needs_review" as const, document_type: "commercial_invoice" as const, classification_confidence: 0.98,
+          pages: [{
+            page_number: 1, width: 100, height: 100, coordinate_unit: "pixels" as const,
+            spans: [{ span_id: `${jobId}-span`, ordinal: 1, text: "INV-PROFILE", bbox: { x: 0, y: 0, width: 1, height: 1 }, confidence: 0.98, reading_order: 1 }],
+          }],
+          field_candidates: [], tables: [], warnings: [], needs_review_reasons: ["human_confirmation_required"],
+        },
+        created_by: "local-reviewer", created_at: "2026-08-24T00:00:00Z", updated_at: "2026-08-24T00:00:00Z",
+      },
+    });
+    const existing = raster("raster-job-a", "synthetic-raster-v1-a", "synthetic-raster-v1-a", false, true);
+    const superseded = raster("raster-job-a", "synthetic-raster-v1-a", "synthetic-raster-v1-b", true, false);
+    const replacement = raster("raster-job-b", "synthetic-raster-v1-b", "synthetic-raster-v1-b", false, false);
+    let requestCount = 0;
+    const api = {
+      getSession: vi.fn(async () => ({ subject: "local-reviewer", org_id: "local-org", roles: ["reviewer"] })),
+      listCases: vi.fn(async () => ({ items: [caseDetail] })), getCase: vi.fn(async () => caseDetail),
+      listDocuments: vi.fn(async () => []), listDocumentAssets: vi.fn(async () => [asset]), listReviewRuns: vi.fn(async () => []),
+      requestRasterDocumentExtraction: vi.fn(async () => (++requestCount === 1 ? existing : replacement)),
+      getRasterDocumentExtraction: vi.fn(async () => superseded),
+      getDocumentAssetSource: vi.fn(), enqueueReview: vi.fn(),
+    };
+    const auth = { logout: async () => undefined, freshAccessToken: async () => "token", isAuthenticated: () => true };
+    const app = new LightweightWorkbench(root, api as never, auth, "local-development");
+    await app.start();
+    root.querySelector<HTMLButtonElement>('[data-e2e="document-asset-row"]')?.click();
+
+    await (app as unknown as { requestRasterDocumentExtraction(value: typeof asset): Promise<void> }).requestRasterDocumentExtraction(asset);
+    expect(root.textContent).toContain("이미 요청된 작업을 다시 표시했습니다");
+    expect(root.textContent).not.toContain("새 추출 작업을 다시 실행한 것");
+
+    await (app as unknown as { refreshRasterDocumentExtraction(): Promise<void> }).refreshRasterDocumentExtraction();
+    expect(root.querySelector('[data-e2e="raster-profile-superseded"]')).not.toBeNull();
+    expect(root.querySelector('[data-e2e="request-current-raster-document-extraction"]')).not.toBeNull();
+    expect(root.querySelector('[data-e2e="open-raster-source-viewer"]')).toBeNull();
+    expect(root.querySelector('[data-e2e="raster-document-extraction-confirmation-form"]')).toBeNull();
+
+    root.querySelector<HTMLButtonElement>('[data-e2e="request-current-raster-document-extraction"]')?.click();
+    await vi.waitFor(() => expect(api.requestRasterDocumentExtraction).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() => expect(root.querySelector('[data-e2e="raster-profile-superseded"]')).toBeNull());
+    expect(root.textContent).toContain("새 추출 작업을 시작했습니다");
+    expect(root.textContent).not.toContain("다시 표시했습니다. 새 작업을 다시 실행한 것");
+    app.destroy();
+  });
+
+  it("overlays one approved rasterized PDF page at a time and revokes stale page URLs", async () => {
+    window.location.hash = "#/cases/case-1/documents";
+    const root = document.createElement("div");
+    const caseDetail = { case_id: "case-1", org_id: "local-org", title: "스캔 PDF", status: "open" as const, revision: 0, updated_at: "2026-08-23T00:00:00Z" };
+    const asset = {
+      asset_id: "asset-raster-pdf-1", case_id: "case-1", document_type: "CI" as const, filename: "scan-invoice.pdf",
+      media_type: "application/pdf" as const, byte_size: 50, page_count: 2, pixel_count: 0,
+      created_by: "local-reviewer", created_at: "2026-08-23T00:00:00Z",
+    };
+    const raster = {
+      asset,
+      idempotency_reused: false,
+      current_profile_revision: "synthetic-raster-v1",
+      profile_superseded: false,
+      job: {
+        raster_extraction_job_id: "raster-pdf-job-1", asset_id: asset.asset_id, case_id: asset.case_id,
+        profile_revision: "synthetic-raster-v1", status: "needs_review" as const, attempt_count: 1,
+        result: {
+          status: "needs_review" as const, document_type: "commercial_invoice" as const, classification_confidence: 0.98,
+          pages: [
+            { page_number: 1, width: 100, height: 200, coordinate_unit: "pixels" as const, spans: [{ span_id: "pdf-span-1", ordinal: 1, text: "PAGE 1", bbox: { x: 0.1, y: 0.2, width: 0.2, height: 0.1 }, confidence: 0.98, reading_order: 1 }] },
+            { page_number: 2, width: 100, height: 200, coordinate_unit: "pixels" as const, spans: [{ span_id: "pdf-span-2", ordinal: 1, text: "PAGE 2", bbox: { x: 0.2, y: 0.3, width: 0.2, height: 0.1 }, confidence: 0.97, reading_order: 1 }] },
+          ],
+          field_candidates: [], tables: [], warnings: ["human_confirmation_required"], needs_review_reasons: ["ocr_low_confidence"],
+        },
+        created_by: "local-reviewer", created_at: "2026-08-23T00:00:01Z", updated_at: "2026-08-23T00:00:01Z",
+      },
+    };
+    const pageRequests: Array<{ pageNumber: number; expectedPage: { width: number; height: number }; signal: AbortSignal | undefined }> = [];
+    const stalePage = { resolve: null as ((blob: Blob) => void) | null };
+    const getRasterExtractionPage = vi.fn((
+      _caseId: string,
+      _assetId: string,
+      _jobId: string,
+      pageNumber: number,
+      expectedPage: { width: number; height: number },
+      signal?: AbortSignal,
+    ) => {
+      pageRequests.push({ pageNumber, expectedPage, signal });
+      if (pageRequests.length === 3) return new Promise<Blob>((resolve) => { stalePage.resolve = resolve; });
+      return Promise.resolve(new Blob([`page-${pageNumber}`], { type: "image/png" }));
+    });
+    const createObjectUrl = vi.spyOn(URL, "createObjectURL")
+      .mockReturnValueOnce("blob:raster-pdf-page-1")
+      .mockReturnValueOnce("blob:raster-pdf-page-2")
+      .mockReturnValueOnce("blob:raster-pdf-stale");
+    const revokeObjectUrl = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => undefined);
+    const api = {
+      getSession: vi.fn(async () => ({ subject: "local-reviewer", org_id: "local-org", roles: ["reviewer"] })),
+      listCases: vi.fn(async () => ({ items: [caseDetail] })), getCase: vi.fn(async () => caseDetail),
+      listDocuments: vi.fn(async () => []), listDocumentAssets: vi.fn(async () => [asset]), listReviewRuns: vi.fn(async () => []),
+      requestRasterDocumentExtraction: vi.fn(async () => raster), getRasterExtractionPage,
+      getDocumentAssetSource: vi.fn(), enqueueReview: vi.fn(),
+    };
+    const auth = { logout: async () => undefined, freshAccessToken: async () => "token", isAuthenticated: () => true };
+    const app = new LightweightWorkbench(root, api as never, auth, "local-development");
+    await app.start();
+
+    root.querySelector<HTMLButtonElement>('[data-e2e="document-asset-row"]')?.click();
+    await (app as unknown as { requestRasterDocumentExtraction(value: typeof asset): Promise<void> }).requestRasterDocumentExtraction(asset);
+    const pageSelect = root.querySelector<HTMLSelectElement>('[data-e2e="raster-pdf-page-select"]');
+    if (!pageSelect) throw new Error("PDF page selector is unavailable");
+    expect(pageSelect.value).toBe("1");
+    expect(root.querySelector('[data-e2e="open-raster-pdf-page-viewer"]')).not.toBeNull();
+    expect(root.querySelector("iframe")).toBeNull();
+
+    await (app as unknown as {
+      openRasterPdfPageViewer(value: typeof asset, rasterJob: typeof raster.job, pageNumber: number): Promise<void>;
+    }).openRasterPdfPageViewer(asset, raster.job, 1);
+    expect(getRasterExtractionPage).toHaveBeenLastCalledWith(
+      "case-1", asset.asset_id, "raster-pdf-job-1", 1, { width: 100, height: 200 }, expect.any(AbortSignal),
+    );
+    expect(root.querySelector<HTMLImageElement>('[data-e2e="raster-pdf-page-image"]')?.getAttribute("src")).toBe("blob:raster-pdf-page-1");
+    expect(root.querySelector(".raster-source-overlay")).not.toBeNull();
+    expect(api.getDocumentAssetSource).not.toHaveBeenCalled();
+
+    pageSelect.value = "2";
+    pageSelect.dispatchEvent(new Event("change", { bubbles: true }));
+    await vi.waitFor(() => expect(getRasterExtractionPage).toHaveBeenLastCalledWith(
+      "case-1", asset.asset_id, "raster-pdf-job-1", 2, { width: 100, height: 200 }, expect.any(AbortSignal),
+    ));
+    expect(root.querySelector<HTMLImageElement>('[data-e2e="raster-pdf-page-image"]')?.getAttribute("src")).toBe("blob:raster-pdf-page-2");
+    expect(revokeObjectUrl).toHaveBeenCalledWith("blob:raster-pdf-page-1");
+
+    const staleRequest = (app as unknown as {
+      openRasterPdfPageViewer(value: typeof asset, rasterJob: typeof raster.job, pageNumber: number): Promise<void>;
+    }).openRasterPdfPageViewer(asset, raster.job, 1);
+    expect(pageRequests[2]?.signal?.aborted).toBe(false);
+    (app as unknown as { clearRasterSourceViewer(): void }).clearRasterSourceViewer();
+    expect(pageRequests[2]?.signal?.aborted).toBe(true);
+    const resolveStalePage = stalePage.resolve;
+    if (!resolveStalePage) throw new Error("stale page request did not start");
+    resolveStalePage(new Blob(["stale"], { type: "image/png" }));
+    await staleRequest;
+    expect(createObjectUrl).toHaveBeenCalledTimes(3);
+    expect(revokeObjectUrl).toHaveBeenCalledWith("blob:raster-pdf-page-2");
+    expect(revokeObjectUrl).toHaveBeenCalledWith("blob:raster-pdf-stale");
     app.destroy();
   });
 

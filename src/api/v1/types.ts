@@ -148,6 +148,170 @@ export interface DocumentAssetExtraction {
   job: ExtractionJob;
 }
 
+/**
+ * Raster extraction is deliberately a second, additive preview contract.  It
+ * does not change the existing born-digital PDF/text-layer extraction v1
+ * contract above, and none of these values are Review input until a reviewer
+ * explicitly confirms edited text.
+ */
+export type RasterDocumentType =
+  | "bill_of_lading"
+  | "commercial_invoice"
+  | "packing_list";
+
+export interface RasterExtractionPoint {
+  x: number;
+  y: number;
+}
+
+/** Optional quadrilateral/polygon supplied in the same normalized space as bbox. */
+export interface RasterExtractionPolygon {
+  points: RasterExtractionPoint[];
+}
+
+export interface RasterExtractionSpan {
+  span_id: string;
+  ordinal: number;
+  text: string;
+  bbox: ExtractionBoundingBox | null;
+  polygon?: RasterExtractionPolygon | null;
+  confidence: number;
+  reading_order: number;
+}
+
+export interface RasterExtractionPage {
+  page_number: number;
+  width: number;
+  height: number;
+  coordinate_unit: "pixels";
+  spans: RasterExtractionSpan[];
+}
+
+/** A field candidate remains evidence-linked OCR output, not a confirmed fact. */
+export interface RasterFieldCandidate {
+  field_id: string;
+  value: string;
+  confidence: number;
+  evidence_span_ids: string[];
+  bbox?: ExtractionBoundingBox | null;
+}
+
+export interface RasterTableCell {
+  cell_id: string;
+  row_index: number;
+  column_index: number;
+  text: string;
+  bbox: ExtractionBoundingBox | null;
+  confidence: number;
+  evidence_span_ids: string[];
+}
+
+export interface RasterTableRow {
+  row_index: number;
+  cells: RasterTableCell[];
+}
+
+export interface RasterTable {
+  table_id: string;
+  page_number: number;
+  bbox?: ExtractionBoundingBox | null;
+  rows: RasterTableRow[];
+}
+
+/**
+ * Safe Browser projection of raster OCR/layout output.  Source hashes,
+ * canonical text hashes, provider diagnostics, and raw source bytes are not
+ * part of this public preview model.
+ */
+export interface RasterDocumentExtractionPreview {
+  status: "preview_ready" | "needs_review" | "unavailable";
+  /**
+   * A usable `preview_ready` result has both values.  `needs_review` may
+   * deliberately omit both when the document type cannot be classified
+   * safely (for example unsupported EXIF orientation or an unknown form).
+   */
+  document_type?: RasterDocumentType | null;
+  classification_confidence?: number | null;
+  pages: RasterExtractionPage[];
+  field_candidates: RasterFieldCandidate[];
+  tables: RasterTable[];
+  warnings: string[];
+  needs_review_reasons: string[];
+}
+
+export interface RasterExtractionJob {
+  raster_extraction_job_id: string;
+  asset_id: string;
+  case_id: string;
+  profile_revision: string;
+  status: "queued" | "running" | "preview_ready" | "needs_review" | "unavailable" | "failed";
+  attempt_count: number;
+  result?: RasterDocumentExtractionPreview | null;
+  created_by: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface DocumentAssetRasterExtraction {
+  asset: DocumentAsset;
+  job: RasterExtractionJob;
+  /** True only when Backend reused the same asset + currently active profile job. */
+  idempotency_reused: boolean;
+  /** Null only when Agent currently has no active safe raster profile. */
+  current_profile_revision: string | null;
+  /** Historical job output must not be overlaid with the current profile. */
+  profile_superseded: boolean;
+}
+
+/**
+ * Raster text extraction is intentionally independent from the structured
+ * raster preview above.  It carries only editable OCR text by page; it never
+ * claims a table, cell, field, or source geometry.
+ */
+export interface RasterTextExtractionPage {
+  page_number: number;
+  text: string;
+  confidence: number | null;
+}
+
+/** Safe Browser projection of the text-only raster OCR candidate. */
+export interface RasterTextDocumentExtractionPreview {
+  status: "preview_ready" | "needs_review" | "unavailable";
+  pages: RasterTextExtractionPage[];
+  /**
+   * Provider-ordered whole-document text when available.  Browser otherwise
+   * derives the editable draft from page order without inventing structure.
+   */
+  canonical_text: string | null;
+  warnings: string[];
+  needs_review_reasons: string[];
+}
+
+export interface RasterTextExtractionJob {
+  raster_text_extraction_job_id: string;
+  asset_id: string;
+  case_id: string;
+  profile_revision: string;
+  status: "queued" | "running" | "preview_ready" | "needs_review" | "unavailable" | "failed";
+  attempt_count: number;
+  result?: RasterTextDocumentExtractionPreview | null;
+  created_by: string;
+  created_at: string;
+  updated_at: string;
+}
+
+/**
+ * Text-only OCR has its own activation pointer.  It must not be interpreted
+ * as an approval of the structured raster OCR/layout profile.
+ */
+export interface DocumentAssetRasterTextExtraction {
+  asset: DocumentAsset;
+  job: RasterTextExtractionJob;
+  idempotency_reused: boolean;
+  current_profile_revision: string | null;
+  profile_superseded: boolean;
+}
+
 export interface ReviewReport {
   overall_status: "needs_review" | "blocked";
   summary: string;
@@ -736,9 +900,16 @@ export interface UploadDocumentAssetRequest {
   content: Blob;
 }
 
-/** Only reviewer-confirmed text can enter the existing text-review workflow. */
+/**
+ * Only reviewer-confirmed text can enter the existing text-review workflow.
+ * Exactly one preview job identifier is accepted by Backend.  The original
+ * PDF/text-layer and structured-raster identifiers remain additive so an
+ * independently approved text-only raster profile cannot change either path.
+ */
 export interface ConfirmDocumentExtractionRequest {
-  extraction_job_id: string;
+  extraction_job_id?: string;
+  raster_extraction_job_id?: string;
+  raster_text_extraction_job_id?: string;
   filename: string;
   content_text: string;
   replaces_document_id?: string | null;

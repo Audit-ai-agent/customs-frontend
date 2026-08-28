@@ -233,6 +233,69 @@ small { color: var(--muted); }
 .extraction-span small { color: #62788a; font-size: .71rem; }
 .extraction-confirmation-form { background: #f6fbf7; border: 1px solid #bfdccc; }
 .extraction-confirmation-form textarea { min-height: 14rem; font: .82rem/1.6 ui-monospace, SFMono-Regular, Consolas, monospace; }
+.raster-extraction-workbench { display: grid; gap: .75rem; padding: .85rem; background: #f6fbfe; border: 1px solid #b9dcec; border-radius: .7rem; }
+.raster-extraction-workbench__heading h3 { margin: 0; color: #185d84; font-size: 1rem; }
+.raster-extraction-workbench__heading p { margin: .28rem 0 0; color: #4f6a7f; font-size: .83rem; line-height: 1.5; }
+.raster-text-extraction-workbench { display: grid; gap: .75rem; padding: .85rem; background: #fbfbf7; border: 1px solid #dedbbd; border-radius: .7rem; }
+.raster-text-extraction-workbench__heading h3 { margin: 0; color: #625d2c; font-size: 1rem; }
+.raster-text-extraction-workbench__heading p { margin: .28rem 0 0; color: #6c684d; font-size: .83rem; line-height: 1.5; }
+.raster-text-preview-candidate { display: grid; gap: .65rem; padding: .75rem; background: #fff; border: 1px solid #e5e2cc; border-radius: .6rem; }
+.raster-text-preview-candidate__heading h3 { margin: 0; color: #5c592e; font-size: .92rem; }
+.raster-text-preview-candidate__heading p { margin: .28rem 0 0; color: #6f6b51; font-size: .78rem; line-height: 1.45; }
+.raster-text-preview-pages { display: grid; gap: .45rem; max-height: 20rem; overflow: auto; }
+.raster-text-extraction-page { overflow: hidden; border: 1px solid #e5e2cc; border-radius: .45rem; background: #fffef9; }
+.raster-text-extraction-page summary { padding: .48rem .58rem; color: #5f5c36; font-size: .78rem; font-weight: 800; cursor: pointer; }
+.raster-text-extraction-page[open] summary { border-bottom: 1px solid #e9e6d5; }
+.raster-text-preview-candidate__text { max-height: 14rem; margin: 0; padding: .6rem; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; color: #374c5d; font: .76rem/1.48 ui-monospace, SFMono-Regular, Consolas, monospace; }
+.raster-text-source-viewer { display: grid; gap: .55rem; padding: .7rem; background: #fff; border: 1px solid #e5e2cc; border-radius: .6rem; }
+.raster-text-source-viewer--closed { background: #fffef9; }
+.raster-text-source-viewer__actions { display: flex; align-items: center; justify-content: space-between; gap: .65rem; }
+.raster-text-source-viewer__image { display: block; width: 100%; max-height: 42rem; object-fit: contain; background: #edf2f6; border: 1px solid #d9e1e5; border-radius: .45rem; }
+.raster-text-source-viewer__pdf { display: block; width: 100%; height: min(42rem, 70vh); background: #edf2f6; border: 1px solid #d9e1e5; border-radius: .45rem; }
+.raster-source-viewer { display: grid; gap: .55rem; padding: .7rem; background: #fff; border: 1px solid #d5e5ef; border-radius: .6rem; }
+.raster-source-viewer--closed { background: #fbfdfe; }
+.raster-source-viewer__actions { display: flex; align-items: center; justify-content: space-between; gap: .65rem; }
+.raster-source-viewer__page-picker { max-width: 14rem; }
+.raster-source-viewer__page-picker .field { gap: .28rem; }
+.raster-source-viewer__media { max-height: 42rem; overflow: auto; background: #edf2f6; border: 1px solid #cbd9e3; border-radius: .45rem; }
+.raster-source-viewer__canvas { position: relative; width: 100%; line-height: 0; }
+.raster-source-viewer__image { display: block; width: 100%; height: auto; }
+.raster-source-overlay { position: absolute; inset: 0; pointer-events: none; }
+.raster-source-overlay__span, .raster-source-overlay__field, .raster-source-overlay__table, .raster-source-overlay__cell { position: absolute; box-sizing: border-box; border-radius: 2px; }
+.raster-source-overlay__table { z-index: 1; border: 2px solid rgb(113 80 179 / 88%); background: rgb(144 103 207 / 8%); }
+.raster-source-overlay__span { z-index: 2; border: 1px solid rgb(28 120 199 / 85%); background: rgb(82 168 230 / 12%); }
+.raster-source-overlay__field { z-index: 3; border: 2px dashed rgb(196 110 24 / 94%); background: rgb(231 154 64 / 11%); }
+.raster-source-overlay__cell { z-index: 4; border: 1px solid rgb(24 132 91 / 92%); background: rgb(49 171 118 / 10%); }
+.raster-source-overlay-legend { display: flex; flex-wrap: wrap; gap: .35rem .65rem; padding: 0; margin: 0; list-style: none; color: #3d5d72; font-size: .74rem; }
+.raster-source-overlay-legend li { display: inline-flex; align-items: center; gap: .3rem; }
+.raster-source-overlay-legend li::before { width: .7rem; height: .7rem; box-sizing: border-box; border-radius: 2px; content: ""; }
+.raster-source-overlay-legend__span::before { border: 1px solid rgb(28 120 199 / 85%); background: rgb(82 168 230 / 12%); }
+.raster-source-overlay-legend__field::before { border: 2px dashed rgb(196 110 24 / 94%); background: rgb(231 154 64 / 11%); }
+.raster-source-overlay-legend__table::before { border: 2px solid rgb(113 80 179 / 88%); background: rgb(144 103 207 / 8%); }
+.raster-source-overlay-legend__cell::before { border: 1px solid rgb(24 132 91 / 92%); background: rgb(49 171 118 / 10%); }
+.raster-preview-candidate { display: grid; gap: .75rem; padding: .8rem; background: #fff; border: 1px solid #c9e0ed; border-radius: .6rem; }
+.raster-preview-group { display: grid; gap: .5rem; }
+.raster-preview-group h4 { margin: 0; color: #315d7a; font-size: .86rem; }
+.raster-extraction-page { background: #fbfdff; }
+.raster-extraction-span { border-left: 3px solid #579dcc; }
+.raster-field-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .45rem; margin: 0; }
+.raster-field-list > div { min-width: 0; padding: .55rem; background: #fbfdff; border: 1px solid #dce9f0; border-radius: .45rem; }
+.raster-field-list dt { color: #45667e; font-size: .72rem; font-weight: 800; }
+.raster-field-list dd { display: grid; gap: .25rem; margin: .28rem 0 0; }
+.raster-structured-value { color: #25475f; font-size: .84rem; font-weight: 750; overflow-wrap: anywhere; }
+.raster-field-list small { color: #60788a; font-size: .7rem; line-height: 1.45; }
+.raster-field-list textarea, .raster-table__cell-editor textarea { width: 100%; min-height: 2.4rem; box-sizing: border-box; resize: vertical; color: #25475f; background: #fff; border: 1px solid #afcbdc; border-radius: .32rem; font: .8rem/1.45 ui-monospace, SFMono-Regular, Consolas, monospace; }
+.raster-table-list { display: grid; gap: .55rem; }
+.raster-table { overflow: hidden; border: 1px solid #d9e7ee; border-radius: .5rem; background: #fff; }
+.raster-table summary { padding: .55rem .62rem; color: #3a637d; font-size: .79rem; font-weight: 800; cursor: pointer; }
+.raster-table[open] summary { border-bottom: 1px solid #d9e7ee; }
+.raster-table__scroll { max-height: 18rem; overflow: auto; }
+.raster-table table { width: 100%; border-collapse: collapse; font-size: .76rem; }
+.raster-table td { min-width: 5.5rem; padding: .43rem .5rem; color: #334e64; border-right: 1px solid #e1ebf0; border-bottom: 1px solid #e1ebf0; vertical-align: top; overflow-wrap: anywhere; }
+.raster-table tr:last-child td { border-bottom: 0; }
+.raster-table td:last-child { border-right: 0; }
+.raster-table__cell-editor { display: grid; gap: .2rem; }
+.raster-table__cell-editor small { color: #60788a; font-size: .68rem; line-height: 1.35; }
 
 .legacy-narrative { display: grid; gap: .45rem; min-width: 0; }
 .legacy-execution-original { width: fit-content; max-width: 100%; border: 1px solid #d8e3eb; border-radius: .45rem; background: #f8fafc; }

@@ -1,4 +1,4 @@
-import { ApiClient } from "./api/v1/client";
+import { ApiClient, ApiError } from "./api/v1/client";
 import { isCaseCitation, isDocumentSource } from "./api/v1/types";
 import { officialGuidanceUrl } from "./official-guidance-url";
 import { userFacingErrorMessage } from "./api/user-facing-errors";
@@ -80,11 +80,22 @@ import type {
   CorrectionProposal,
   CreateCorrectionProposalRequest,
   DocumentAsset,
+  DocumentAssetRasterExtraction,
+  DocumentAssetRasterTextExtraction,
   DocumentAssetMediaType,
   DocumentType,
   DocumentFact,
   ExtractionJob,
   ExtractionPage,
+  RasterDocumentExtractionPreview,
+  RasterExtractionJob,
+  RasterExtractionPage,
+  RasterExtractionSpan,
+  RasterFieldCandidate,
+  RasterTable,
+  RasterTextDocumentExtractionPreview,
+  RasterTextExtractionJob,
+  RasterTextExtractionPage,
   EvidenceItem,
   FindingDecisionRequest,
   GuidanceEvidenceCitation,
@@ -134,6 +145,14 @@ interface WorkbenchState {
   selectedDocumentAsset: DocumentAsset | null;
   selectedExtractionJob: ExtractionJob | null;
   extractionDraft: string;
+  /** Separate from v1 so a raster candidate can never overwrite it. */
+  selectedRasterExtractionJob: RasterExtractionJob | null;
+  selectedRasterProfileState: RasterProfileState | null;
+  rasterExtractionDraft: string;
+  /** Text-only raster OCR stays separate from both v1 and structured v2. */
+  selectedRasterTextExtractionJob: RasterTextExtractionJob | null;
+  selectedRasterTextProfileState: RasterTextProfileState | null;
+  rasterTextExtractionDraft: string;
   sourceFocus: SourceReference | null;
   factFocusId: string | null;
   activeJob: JobRecord | null;
@@ -184,6 +203,59 @@ interface CorrectionFactTarget {
   fieldName: string;
 }
 
+/** Transient Browser-only handle. It intentionally never retains Blob bytes. */
+type RasterSourceViewer =
+  | {
+    kind: "asset";
+    assetId: string;
+    mediaType: DocumentAssetMediaType;
+    objectUrl: string;
+  }
+  | {
+    kind: "raster_page";
+    assetId: string;
+    mediaType: "image/png";
+    objectUrl: string;
+    rasterExtractionJobId: string;
+    pageNumber: number;
+  };
+
+/**
+ * Text-only OCR has its own transient original viewer.  It deliberately does
+ * not share a layout job's page renderer or coordinate overlay state.
+ */
+type RasterTextSourceViewer = {
+  assetId: string;
+  mediaType: DocumentAssetMediaType;
+  rasterTextExtractionJobId: string;
+  objectUrl: string;
+};
+
+/**
+ * Browser-local reviewer edit.  This is intentionally not a new API model:
+ * the resulting text still crosses the existing text-only confirmation
+ * boundary, and is discarded when the reviewer changes document/job.
+ */
+type RasterCandidateEdit = {
+  label: string;
+  originalValue: string;
+  value: string;
+  /** True only when the value could be replaced exactly once in final text. */
+  appliedInDraft: boolean;
+};
+
+/** Current-profile metadata accompanies a raster job response, not the job itself. */
+type RasterProfileState = {
+  currentProfileRevision: string | null;
+  profileSuperseded: boolean;
+};
+
+/** Current-profile metadata accompanies the text-only raster job response. */
+type RasterTextProfileState = {
+  currentProfileRevision: string | null;
+  profileSuperseded: boolean;
+};
+
 const DOCUMENT_TYPES: readonly DocumentType[] = [
   "CI", "PL", "BL", "CO", "AWB", "EXPORT_DECLARATION", "SUPPORTING_EVIDENCE", "UNKNOWN",
 ];
@@ -192,6 +264,8 @@ const REVIEW_FAILURE_MESSAGE = "심사를 완료하지 못했습니다. 입력 �
 const REVISION_FAILURE_MESSAGE = "수정 반영 재심사를 완료하지 못했습니다. 승인된 정정 제안을 다시 선택한 뒤 재시도해 주십시오. 기존 심사 결과는 변경되지 않았습니다.";
 const REVIEW_RESULT_VISIBILITY_RETRY_DELAYS_MS = [200, 500, 900] as const;
 const REVIEW_RESULT_VISIBILITY_FAILURE_MESSAGE = "심사 결과가 아직 화면에 준비되지 않았습니다. 잠시 후 이력에서 다시 확인해 주십시오. 기존 심사 결과는 변경되지 않았습니다.";
+const RASTER_TEXT_POLL_DELAY_MS = 3_000;
+const RASTER_TEXT_POLL_MAX_ATTEMPTS = 20;
 const TABS: readonly { id: WorkspaceTab; label: string }[] = [
   { id: "documents", label: "문서" },
   { id: "analysis", label: "AI 심사" },
@@ -218,6 +292,12 @@ export class CommercialReviewWorkspace {
     selectedDocumentAsset: null,
     selectedExtractionJob: null,
     extractionDraft: "",
+    selectedRasterExtractionJob: null,
+    selectedRasterProfileState: null,
+    rasterExtractionDraft: "",
+    selectedRasterTextExtractionJob: null,
+    selectedRasterTextProfileState: null,
+    rasterTextExtractionDraft: "",
     sourceFocus: null,
     factFocusId: null,
     activeJob: null,
@@ -261,7 +341,23 @@ export class CommercialReviewWorkspace {
     error: null,
   };
   private jobTimer: number | null = null;
+  /** Bounded, independent polling for the text-only raster OCR queue. */
+  private rasterTextPollTimer: number | null = null;
+  private rasterTextPollJobId: string | null = null;
+  private rasterTextPollAttempt = 0;
   private destroyed = false;
+  /** Object URLs are transient viewer handles, never persisted source bytes. */
+  private rasterSourceViewer: RasterSourceViewer | null = null;
+  private rasterSourceLoading = false;
+  private rasterSourceAbortController: AbortController | null = null;
+  private rasterSourceRequestGeneration = 0;
+  private rasterPdfPageNumber: number | null = null;
+  /** Separate text-OCR original handle; never carries a layout overlay. */
+  private rasterTextSourceViewer: RasterTextSourceViewer | null = null;
+  private rasterTextSourceLoading = false;
+  private rasterTextSourceAbortController: AbortController | null = null;
+  private rasterTextSourceRequestGeneration = 0;
+  private readonly rasterCandidateEdits = new Map<string, RasterCandidateEdit>();
   private readonly hashChange = () => void this.followRoute();
 
   constructor(
@@ -289,6 +385,9 @@ export class CommercialReviewWorkspace {
     window.removeEventListener("hashchange", this.hashChange);
     if (this.jobTimer !== null) window.clearTimeout(this.jobTimer);
     this.jobTimer = null;
+    this.stopRasterTextExtractionPoll();
+    this.clearRasterSourceViewer();
+    this.clearRasterTextSourceViewer();
   }
 
   private hasRole(role: "reviewer" | "approver"): boolean {
@@ -391,6 +490,13 @@ export class CommercialReviewWorkspace {
     this.state.selectedDocumentAsset = null;
     this.state.selectedExtractionJob = null;
     this.state.extractionDraft = "";
+    this.state.selectedRasterExtractionJob = null;
+    this.state.selectedRasterProfileState = null;
+    this.state.rasterExtractionDraft = "";
+    this.clearRasterTextExtractionState();
+    this.clearRasterCandidateEdits();
+    this.clearRasterSourceViewer();
+    this.rasterPdfPageNumber = null;
     this.state.sourceFocus = null;
     this.state.factFocusId = null;
     this.state.activeJob = null;
@@ -419,6 +525,13 @@ export class CommercialReviewWorkspace {
     this.state.selectedDocumentAsset = null;
     this.state.selectedExtractionJob = null;
     this.state.extractionDraft = "";
+    this.state.selectedRasterExtractionJob = null;
+    this.state.selectedRasterProfileState = null;
+    this.state.rasterExtractionDraft = "";
+    this.clearRasterTextExtractionState();
+    this.clearRasterCandidateEdits();
+    this.clearRasterSourceViewer();
+    this.rasterPdfPageNumber = null;
     this.state.sourceFocus = null;
     this.state.factFocusId = null;
     this.state.activeJob = null;
@@ -871,16 +984,35 @@ export class CommercialReviewWorkspace {
     this.state.selectedDocumentAsset = null;
     this.state.selectedExtractionJob = null;
     this.state.extractionDraft = "";
+    this.state.selectedRasterExtractionJob = null;
+    this.state.selectedRasterProfileState = null;
+    this.state.rasterExtractionDraft = "";
+    this.clearRasterTextExtractionState();
+    this.clearRasterCandidateEdits();
+    this.clearRasterSourceViewer();
+    this.rasterPdfPageNumber = null;
     this.state.sourceFocus = source;
   }
 
   private openDocumentAsset(asset: DocumentAsset): void {
+    const changedAsset = this.state.selectedDocumentAsset?.asset_id !== asset.asset_id;
     this.state.selectedDocument = null;
     this.state.sourceFocus = null;
     this.state.selectedDocumentAsset = asset;
     if (this.state.selectedExtractionJob?.asset_id !== asset.asset_id) {
       this.state.selectedExtractionJob = null;
       this.state.extractionDraft = "";
+    }
+    if (this.state.selectedRasterExtractionJob?.asset_id !== asset.asset_id) {
+      this.state.selectedRasterExtractionJob = null;
+      this.state.selectedRasterProfileState = null;
+      this.state.rasterExtractionDraft = "";
+      this.clearRasterTextExtractionState();
+      this.clearRasterCandidateEdits();
+    }
+    if (changedAsset) {
+      this.clearRasterSourceViewer();
+      this.rasterPdfPageNumber = null;
     }
     this.render();
   }
@@ -960,6 +1092,13 @@ export class CommercialReviewWorkspace {
       this.state.selectedDocumentAsset = asset;
       this.state.selectedExtractionJob = null;
       this.state.extractionDraft = "";
+      this.state.selectedRasterExtractionJob = null;
+      this.state.selectedRasterProfileState = null;
+      this.state.rasterExtractionDraft = "";
+      this.clearRasterTextExtractionState();
+      this.clearRasterCandidateEdits();
+      this.clearRasterSourceViewer();
+      this.rasterPdfPageNumber = null;
       this.state.notice = "파일을 추출 미리보기용으로 등록했습니다. 아직 심사 입력이나 확인 사항에는 사용되지 않았습니다.";
       form.reset();
     });
@@ -1029,6 +1168,681 @@ export class CommercialReviewWorkspace {
 
   private updateExtractionDraft(value: string): void {
     this.state.extractionDraft = value.slice(0, 200_000);
+  }
+
+  /** Starts the additive raster-OCR/layout v2 job; it never starts a Review. */
+  private async requestRasterDocumentExtraction(asset: DocumentAsset): Promise<void> {
+    if (!this.hasRole("reviewer")) throw new Error("Raster OCR 미리보기 요청은 심사자 역할에서만 할 수 있습니다.");
+    const current = this.requireCase();
+    await this.withBusy(async () => {
+      const previousJob = this.state.selectedRasterExtractionJob?.asset_id === asset.asset_id
+        ? this.state.selectedRasterExtractionJob
+        : null;
+      const extraction = await this.api.requestRasterDocumentExtraction(
+        current.case_id,
+        asset.asset_id,
+        crypto.randomUUID(),
+      );
+      this.useRasterDocumentExtraction(extraction);
+      this.state.notice = extraction.idempotency_reused
+        ? "현재 활성 Raster OCR profile에서 이미 요청된 작업을 다시 표시했습니다. 새 작업을 다시 실행한 것이 아닙니다."
+        : previousJob !== null && previousJob.profile_revision !== extraction.job.profile_revision
+          ? "현재 OCR profile이 바뀌어 새 추출 작업을 시작했습니다. 이전 profile의 결과와 페이지 위치는 섞어 표시하지 않습니다."
+          : rasterExtractionNotice(extraction.job.status);
+    });
+  }
+
+  private async refreshRasterDocumentExtraction(): Promise<void> {
+    const current = this.requireCase();
+    const asset = this.requireDocumentAsset();
+    const job = this.state.selectedRasterExtractionJob;
+    if (!job) throw new Error("먼저 Raster OCR 미리보기를 요청해 주십시오.");
+    await this.withBusy(async () => {
+      const extraction = await this.api.getRasterDocumentExtraction(
+        current.case_id,
+        asset.asset_id,
+        job.raster_extraction_job_id,
+      );
+      this.useRasterDocumentExtraction(extraction);
+      this.state.notice = extraction.profile_superseded
+        ? rasterProfileSupersededNotice()
+        : rasterExtractionNotice(extraction.job.status);
+    });
+  }
+
+  /** The same Backend confirmation route stores only reviewer-edited text. */
+  private async confirmRasterDocumentExtraction(form: HTMLFormElement): Promise<void> {
+    if (!this.hasRole("reviewer")) throw new Error("Raster OCR 텍스트 확인은 심사자 역할에서만 할 수 있습니다.");
+    const current = this.requireCase();
+    const asset = this.requireDocumentAsset();
+    const job = this.state.selectedRasterExtractionJob;
+    if (!job || this.selectedRasterProfileIsSuperseded(asset, job) || !canConfirmRasterExtraction(job)) {
+      throw new Error("사람이 확인할 수 있는 Raster OCR 후보가 아직 준비되지 않았습니다.");
+    }
+    const data = new FormData(form);
+    const content = data.get("content_text");
+    const contentText = typeof content === "string" ? content : "";
+    const filename = stringValue(data, "filename");
+    if (!filename) throw new Error("확인한 텍스트의 파일명을 입력해 주십시오.");
+    if (!contentText.trim()) throw new Error("원본과 대조해 확인한 텍스트를 입력해 주십시오.");
+    const replaces = stringValue(data, "replaces_document_id");
+    await this.withBusy(async () => {
+      const document = await this.api.confirmDocumentExtraction(current.case_id, asset.asset_id, {
+        raster_extraction_job_id: job.raster_extraction_job_id,
+        filename,
+        content_text: contentText,
+        ...(replaces ? { replaces_document_id: replaces } : {}),
+      });
+      await this.loadCase(current.case_id);
+      await this.openDocument(document.document_id);
+      this.state.notice = replaces
+        ? "원본과 대조해 확인한 Raster OCR 텍스트를 보완 문서로 등록했습니다. 심사는 자동으로 시작하지 않았습니다."
+        : "원본과 대조해 확인한 Raster OCR 텍스트를 심사 문서로 등록했습니다. 심사는 자동으로 시작하지 않았습니다.";
+    });
+  }
+
+  /** Starts the bounded text-only OCR path; it never implies layout approval. */
+  private async requestRasterTextDocumentExtraction(asset: DocumentAsset): Promise<void> {
+    if (!this.hasRole("reviewer")) throw new Error("Raster OCR 텍스트 초안 요청은 심사자 역할에서만 할 수 있습니다.");
+    const current = this.requireCase();
+    await this.withBusy(async () => {
+      const previousJob = this.state.selectedRasterTextExtractionJob?.asset_id === asset.asset_id
+        ? this.state.selectedRasterTextExtractionJob
+        : null;
+      const extraction = await this.api.requestRasterTextDocumentExtraction(
+        current.case_id,
+        asset.asset_id,
+        crypto.randomUUID(),
+      );
+      this.useRasterTextDocumentExtraction(extraction);
+      this.state.notice = extraction.idempotency_reused
+        ? "현재 활성 Raster OCR 텍스트 profile에서 이미 요청된 작업을 다시 표시했습니다. 새 작업을 다시 실행한 것이 아닙니다."
+        : previousJob !== null && previousJob.profile_revision !== extraction.job.profile_revision
+          ? "현재 OCR 텍스트 profile이 바뀌어 새 추출 작업을 시작했습니다. 이전 profile의 텍스트와 섞어 등록하지 않습니다."
+          : rasterTextExtractionNotice(extraction.job.status);
+    });
+  }
+
+  private async refreshRasterTextDocumentExtraction(): Promise<void> {
+    const current = this.requireCase();
+    const asset = this.requireDocumentAsset();
+    const job = this.state.selectedRasterTextExtractionJob;
+    if (!job) throw new Error("먼저 Raster OCR 텍스트 초안을 요청해 주십시오.");
+    await this.withBusy(async () => {
+      const extraction = await this.api.getRasterTextDocumentExtraction(
+        current.case_id,
+        asset.asset_id,
+        job.raster_text_extraction_job_id,
+      );
+      this.useRasterTextDocumentExtraction(extraction);
+      this.state.notice = extraction.profile_superseded
+        ? rasterTextProfileSupersededNotice()
+        : rasterTextExtractionNotice(extraction.job.status);
+    });
+  }
+
+  /** Only reviewer-edited text crosses the existing text-only review boundary. */
+  private async confirmRasterTextDocumentExtraction(form: HTMLFormElement): Promise<void> {
+    if (!this.hasRole("reviewer")) throw new Error("Raster OCR 텍스트 확인은 심사자 역할에서만 할 수 있습니다.");
+    const current = this.requireCase();
+    const asset = this.requireDocumentAsset();
+    const job = this.state.selectedRasterTextExtractionJob;
+    if (!job || this.selectedRasterTextProfileIsSuperseded(asset, job) || !canConfirmRasterTextExtraction(job)) {
+      throw new Error("사람이 확인할 수 있는 Raster OCR 텍스트 초안이 아직 준비되지 않았습니다.");
+    }
+    const data = new FormData(form);
+    const content = data.get("content_text");
+    const contentText = typeof content === "string" ? content : "";
+    const filename = stringValue(data, "filename");
+    if (!filename) throw new Error("확인한 텍스트의 파일명을 입력해 주십시오.");
+    if (!contentText.trim()) throw new Error("원본과 비교해 확인한 텍스트를 입력해 주십시오.");
+    const replaces = stringValue(data, "replaces_document_id");
+    await this.withBusy(async () => {
+      const document = await this.api.confirmDocumentExtraction(current.case_id, asset.asset_id, {
+        raster_text_extraction_job_id: job.raster_text_extraction_job_id,
+        filename,
+        content_text: contentText,
+        ...(replaces ? { replaces_document_id: replaces } : {}),
+      });
+      await this.loadCase(current.case_id);
+      await this.openDocument(document.document_id);
+      this.state.notice = replaces
+        ? "원본과 대조해 확인한 Raster OCR 텍스트를 보완 문서로 등록했습니다. 심사는 자동으로 시작하지 않았습니다."
+        : "원본과 대조해 확인한 Raster OCR 텍스트를 심사 문서로 등록했습니다. 심사는 자동으로 시작하지 않았습니다.";
+    });
+  }
+
+  private useRasterTextDocumentExtraction(extraction: DocumentAssetRasterTextExtraction): void {
+    const { asset, job } = extraction;
+    const previousJobId = this.state.selectedRasterTextExtractionJob?.raster_text_extraction_job_id;
+    const isSameJob = previousJobId === job.raster_text_extraction_job_id;
+    if (!isSameJob) this.stopRasterTextExtractionPoll();
+    const sourceViewer = this.rasterTextSourceViewer;
+    if (
+      extraction.profile_superseded
+      || !isSameJob
+      || (sourceViewer !== null && (
+        sourceViewer.assetId !== asset.asset_id
+        || sourceViewer.rasterTextExtractionJobId !== job.raster_text_extraction_job_id
+      ))
+    ) {
+      this.clearRasterTextSourceViewer();
+    }
+    this.state.documentAssets = [asset, ...this.state.documentAssets.filter((item) => item.asset_id !== asset.asset_id)];
+    this.state.selectedDocument = null;
+    this.state.sourceFocus = null;
+    this.state.selectedDocumentAsset = asset;
+    this.state.selectedRasterTextExtractionJob = job;
+    this.state.selectedRasterTextProfileState = {
+      currentProfileRevision: extraction.current_profile_revision,
+      profileSuperseded: extraction.profile_superseded,
+    };
+    if (!isSameJob || !this.state.rasterTextExtractionDraft) {
+      this.state.rasterTextExtractionDraft = rasterTextExtractionCandidateText(job);
+    }
+    if (extraction.profile_superseded || !isRasterTextExtractionPending(job)) {
+      this.stopRasterTextExtractionPoll();
+    } else {
+      this.scheduleRasterTextExtractionPoll(job);
+    }
+  }
+
+  private selectedRasterTextProfileIsSuperseded(asset: DocumentAsset, job?: RasterTextExtractionJob | null): boolean {
+    const selectedJob = job ?? this.state.selectedRasterTextExtractionJob;
+    return selectedJob?.asset_id === asset.asset_id
+      && this.state.selectedRasterTextProfileState?.profileSuperseded === true;
+  }
+
+  private updateRasterTextExtractionDraft(value: string): void {
+    this.state.rasterTextExtractionDraft = value.slice(0, 200_000);
+  }
+
+  private clearRasterTextExtractionState(): void {
+    this.stopRasterTextExtractionPoll();
+    this.clearRasterTextSourceViewer();
+    this.state.selectedRasterTextExtractionJob = null;
+    this.state.selectedRasterTextProfileState = null;
+    this.state.rasterTextExtractionDraft = "";
+  }
+
+  /** Poll at most once per three seconds and for at most one minute total. */
+  private scheduleRasterTextExtractionPoll(job: RasterTextExtractionJob): void {
+    if (
+      this.destroyed
+      || !isRasterTextExtractionPending(job)
+      || this.state.selectedRasterTextExtractionJob?.raster_text_extraction_job_id !== job.raster_text_extraction_job_id
+    ) return;
+    if (this.rasterTextPollJobId !== job.raster_text_extraction_job_id) {
+      this.stopRasterTextExtractionPoll();
+      this.rasterTextPollJobId = job.raster_text_extraction_job_id;
+    }
+    if (this.rasterTextPollAttempt >= RASTER_TEXT_POLL_MAX_ATTEMPTS) {
+      this.state.notice = "Raster OCR 텍스트 상태 자동 확인은 60초 후 멈췄습니다. 결과를 추정하지 않았으니 필요하면 상태를 새로고침하십시오.";
+      return;
+    }
+    if (this.rasterTextPollTimer !== null) window.clearTimeout(this.rasterTextPollTimer);
+    this.rasterTextPollTimer = window.setTimeout(
+      () => void this.pollRasterTextDocumentExtraction(job.raster_text_extraction_job_id),
+      RASTER_TEXT_POLL_DELAY_MS,
+    );
+  }
+
+  private async pollRasterTextDocumentExtraction(jobId: string): Promise<void> {
+    if (
+      this.destroyed
+      || this.rasterTextPollJobId !== jobId
+      || this.rasterTextPollAttempt >= RASTER_TEXT_POLL_MAX_ATTEMPTS
+    ) return;
+    const current = this.state.selectedCase;
+    const asset = this.state.selectedDocumentAsset;
+    const job = this.state.selectedRasterTextExtractionJob;
+    if (!current || !asset || job?.raster_text_extraction_job_id !== jobId) return;
+    this.rasterTextPollTimer = null;
+    this.rasterTextPollAttempt += 1;
+    try {
+      const extraction = await this.api.getRasterTextDocumentExtraction(current.case_id, asset.asset_id, jobId);
+      if (
+        this.destroyed
+        || this.state.selectedDocumentAsset?.asset_id !== asset.asset_id
+        || this.state.selectedRasterTextExtractionJob?.raster_text_extraction_job_id !== jobId
+      ) return;
+      this.useRasterTextDocumentExtraction(extraction);
+      if (!isRasterTextExtractionPending(extraction.job)) {
+        this.state.notice = extraction.profile_superseded
+          ? rasterTextProfileSupersededNotice()
+          : rasterTextExtractionNotice(extraction.job.status);
+      }
+    } catch (error) {
+      if (!this.destroyed && this.state.selectedRasterTextExtractionJob?.raster_text_extraction_job_id === jobId) {
+        this.stopRasterTextExtractionPoll();
+        this.state.error = userMessage(error, "Raster OCR 텍스트 상태를 확인하지 못했습니다. 결과를 추정하지 않았으니 잠시 후 상태를 새로고침하십시오.");
+      }
+    } finally {
+      this.render();
+    }
+  }
+
+  private stopRasterTextExtractionPoll(): void {
+    if (this.rasterTextPollTimer !== null) window.clearTimeout(this.rasterTextPollTimer);
+    this.rasterTextPollTimer = null;
+    this.rasterTextPollJobId = null;
+    this.rasterTextPollAttempt = 0;
+  }
+
+  private useRasterDocumentExtraction(extraction: DocumentAssetRasterExtraction): void {
+    const { asset, job } = extraction;
+    const previousJobId = this.state.selectedRasterExtractionJob?.raster_extraction_job_id;
+    const isSameJob = previousJobId === job.raster_extraction_job_id;
+    const pages = job.result?.pages ?? [];
+    const currentPageStillExists = this.rasterPdfPageNumber !== null
+      && pages.some((page) => page.page_number === this.rasterPdfPageNumber);
+    if (asset.media_type !== "application/pdf") this.rasterPdfPageNumber = null;
+    else if (!currentPageStillExists) this.rasterPdfPageNumber = pages[0]?.page_number ?? null;
+
+    const sourceViewer = this.rasterSourceViewer;
+    if (extraction.profile_superseded) {
+      this.clearRasterSourceViewer();
+    } else if (
+      sourceViewer?.kind === "raster_page"
+      && (sourceViewer.assetId !== asset.asset_id
+        || sourceViewer.rasterExtractionJobId !== job.raster_extraction_job_id
+        || !pages.some((page) => page.page_number === sourceViewer.pageNumber))
+    ) {
+      this.clearRasterSourceViewer();
+    }
+    this.state.documentAssets = [asset, ...this.state.documentAssets.filter((item) => item.asset_id !== asset.asset_id)];
+    this.state.selectedDocument = null;
+    this.state.sourceFocus = null;
+    this.state.selectedDocumentAsset = asset;
+    this.state.selectedRasterExtractionJob = job;
+    this.state.selectedRasterProfileState = {
+      currentProfileRevision: extraction.current_profile_revision,
+      profileSuperseded: extraction.profile_superseded,
+    };
+    // A refresh of the same job must never erase a reviewer correction.  A
+    // different job/asset gets a clean draft and no stale candidate edits.
+    if (!isSameJob || !this.state.rasterExtractionDraft) {
+      this.clearRasterCandidateEdits();
+      this.state.rasterExtractionDraft = rasterExtractionCandidateText(job);
+    }
+  }
+
+  private selectedRasterProfileIsSuperseded(asset: DocumentAsset, job?: RasterExtractionJob | null): boolean {
+    const selectedJob = job ?? this.state.selectedRasterExtractionJob;
+    return selectedJob?.asset_id === asset.asset_id
+      && this.state.selectedRasterProfileState?.profileSuperseded === true;
+  }
+
+  private markSelectedRasterProfileSuperseded(asset: DocumentAsset, job: RasterExtractionJob): void {
+    if (
+      this.state.selectedDocumentAsset?.asset_id !== asset.asset_id
+      || this.state.selectedRasterExtractionJob?.raster_extraction_job_id !== job.raster_extraction_job_id
+    ) return;
+    this.state.selectedRasterProfileState = {
+      currentProfileRevision: null,
+      profileSuperseded: true,
+    };
+    this.clearRasterSourceViewer();
+  }
+
+  private updateRasterExtractionDraft(value: string): void {
+    this.state.rasterExtractionDraft = value.slice(0, 200_000);
+  }
+
+  private clearRasterCandidateEdits(): void {
+    this.rasterCandidateEdits.clear();
+  }
+
+  /**
+   * Keeps a reviewer edit in local memory and reflects it in the sole
+   * text-only confirmation draft.  A replacement is made only when the old
+   * value occurs exactly once; otherwise an explicit reviewer-correction
+   * block is retained for the person to reconcile, never an arbitrary match.
+   */
+  private updateRasterCandidateValue(
+    key: string,
+    label: string,
+    originalValue: string,
+    requestedValue: string,
+  ): string {
+    const value = requestedValue.slice(0, 20_000);
+    const previous = this.rasterCandidateEdits.get(key);
+    const candidateEdits = new Map(this.rasterCandidateEdits);
+    const draftWithoutCorrections = replaceRasterCandidateCorrectionBlock(this.state.rasterExtractionDraft, "");
+    let draft = draftWithoutCorrections;
+
+    if (value === originalValue) {
+      if (previous?.appliedInDraft) {
+        const replacement = replaceExactlyOne(draft, previous.value, originalValue);
+        draft = replacement.text;
+      }
+      candidateEdits.delete(key);
+    } else {
+      const previousValue = previous?.value ?? originalValue;
+      const replacement = replaceExactlyOne(draft, previousValue, value);
+      draft = replacement.text;
+      candidateEdits.set(key, {
+        label,
+        originalValue,
+        value,
+        appliedInDraft: replacement.replaced,
+      });
+    }
+
+    const nextDraft = withRasterCandidateCorrectionBlock(draft, candidateEdits);
+    if (nextDraft.length > 200_000) {
+      this.state.error = "후보 수정값까지 반영하면 확인 텍스트의 20만 글자 한도를 넘습니다. 최종 텍스트를 먼저 줄인 뒤 다시 수정하십시오.";
+      this.render();
+      return previous?.value ?? originalValue;
+    }
+    this.rasterCandidateEdits.clear();
+    for (const [candidateKey, edit] of candidateEdits) this.rasterCandidateEdits.set(candidateKey, edit);
+    this.state.rasterExtractionDraft = nextDraft;
+    const confirmation = this.root
+      .querySelector<HTMLFormElement>('[data-e2e="raster-document-extraction-confirmation-form"]')
+      ?.querySelector<HTMLTextAreaElement>('textarea[name="content_text"]');
+    if (confirmation) confirmation.value = nextDraft;
+    return value;
+  }
+
+  /**
+   * Image originals are held only by the browser's transient Blob/object-URL
+   * mechanism.  PDF source bytes deliberately never enter the page: a PDF
+   * uses the approved job's one-page PNG route below, which has the exact
+   * coordinate system used for the OCR layout.
+   */
+  private async openRasterSourceViewer(asset: DocumentAsset): Promise<void> {
+    if (!this.hasRole("reviewer")) {
+      this.state.error = "원본 보기 기능은 심사자 역할에서만 사용할 수 있습니다.";
+      this.render();
+      return;
+    }
+    if (this.selectedRasterProfileIsSuperseded(asset)) {
+      this.state.notice = rasterProfileSupersededNotice();
+      this.render();
+      return;
+    }
+    if (asset.media_type === "application/pdf") {
+      this.state.error = "PDF는 Raster OCR 작업이 만든 페이지 이미지를 통해서만 위치를 대조할 수 있습니다.";
+      this.render();
+      return;
+    }
+    if (this.rasterSourceLoading || (this.rasterSourceViewer?.kind === "asset" && this.rasterSourceViewer.assetId === asset.asset_id)) return;
+
+    const request = this.beginRasterSourceRequest();
+    this.state.error = null;
+    this.render();
+    try {
+      const client = this.api as ApiClient & {
+        getDocumentAssetSource?: (caseId: string, source: DocumentAsset, signal?: AbortSignal) => Promise<Blob>;
+      };
+      if (typeof client.getDocumentAssetSource !== "function") throw new Error("원본 보기 API가 아직 준비되지 않았습니다.");
+      const blob = await client.getDocumentAssetSource(this.requireCase().case_id, asset, request.controller.signal);
+      const objectUrl = URL.createObjectURL(blob);
+      if (!this.isCurrentRasterSourceRequest(request) || this.state.selectedDocumentAsset?.asset_id !== asset.asset_id) {
+        URL.revokeObjectURL(objectUrl);
+        return;
+      }
+      this.revokeRasterSourceViewer();
+      this.rasterSourceViewer = { kind: "asset", assetId: asset.asset_id, mediaType: asset.media_type, objectUrl };
+      this.state.notice = "원본은 이 화면의 임시 메모리에서만 표시합니다. 문서를 바꾸거나 닫으면 즉시 제거됩니다.";
+    } catch (error) {
+      if (this.isCurrentRasterSourceRequest(request) && !request.controller.signal.aborted) {
+        this.state.error = userMessage(error, "원본 파일을 안전하게 열지 못했습니다.");
+      }
+    } finally {
+      if (this.finishRasterSourceRequest(request)) this.render();
+    }
+  }
+
+  /** Fetches only the selected rasterized PDF page; it never downloads the PDF source. */
+  private async openRasterPdfPageViewer(
+    asset: DocumentAsset,
+    job: RasterExtractionJob,
+    pageNumber: number,
+  ): Promise<void> {
+    if (!this.hasRole("reviewer")) {
+      this.state.error = "원본 보기 기능은 심사자 역할에서만 사용할 수 있습니다.";
+      this.render();
+      return;
+    }
+    if (this.selectedRasterProfileIsSuperseded(asset, job)) {
+      this.state.notice = rasterProfileSupersededNotice();
+      this.render();
+      return;
+    }
+    const page = job.result?.pages.find((item) => item.page_number === pageNumber);
+    if (asset.media_type !== "application/pdf" || !page) {
+      this.state.error = "현재 Raster OCR 결과에는 선택한 PDF 페이지의 위치 정보가 없습니다.";
+      this.render();
+      return;
+    }
+    const currentViewer = this.rasterSourceViewer;
+    if (
+      !this.rasterSourceLoading
+      && currentViewer?.kind === "raster_page"
+      && currentViewer.assetId === asset.asset_id
+      && currentViewer.rasterExtractionJobId === job.raster_extraction_job_id
+      && currentViewer.pageNumber === pageNumber
+    ) return;
+
+    this.rasterPdfPageNumber = pageNumber;
+    const request = this.beginRasterSourceRequest();
+    this.state.error = null;
+    this.render();
+    try {
+      const client = this.api as ApiClient & {
+        getRasterExtractionPage?: (
+          caseId: string,
+          assetId: string,
+          rasterExtractionJobId: string,
+          requestedPageNumber: number,
+          expectedPage: Pick<RasterExtractionPage, "width" | "height">,
+          signal?: AbortSignal,
+        ) => Promise<Blob>;
+      };
+      if (typeof client.getRasterExtractionPage !== "function") throw new Error("PDF 페이지 대조 API가 아직 준비되지 않았습니다.");
+      const blob = await client.getRasterExtractionPage(
+        this.requireCase().case_id,
+        asset.asset_id,
+        job.raster_extraction_job_id,
+        pageNumber,
+        { width: page.width, height: page.height },
+        request.controller.signal,
+      );
+      const objectUrl = URL.createObjectURL(blob);
+      if (
+        !this.isCurrentRasterSourceRequest(request)
+        || this.state.selectedDocumentAsset?.asset_id !== asset.asset_id
+        || this.state.selectedRasterExtractionJob?.raster_extraction_job_id !== job.raster_extraction_job_id
+        || this.rasterPdfPageNumber !== pageNumber
+      ) {
+        URL.revokeObjectURL(objectUrl);
+        return;
+      }
+      this.revokeRasterSourceViewer();
+      this.rasterSourceViewer = {
+        kind: "raster_page",
+        assetId: asset.asset_id,
+        mediaType: "image/png",
+        objectUrl,
+        rasterExtractionJobId: job.raster_extraction_job_id,
+        pageNumber,
+      };
+      this.state.notice = `PDF ${pageNumber}쪽은 승인된 Raster OCR 작업의 페이지 이미지로만 이 화면에 임시 표시합니다.`;
+    } catch (error) {
+      if (this.isCurrentRasterSourceRequest(request) && !request.controller.signal.aborted) {
+        if (isRasterProfileSupersededError(error)) {
+          this.markSelectedRasterProfileSuperseded(asset, job);
+          this.state.notice = rasterProfileSupersededNotice();
+          this.state.error = null;
+        } else {
+          this.state.error = userMessage(error, "PDF 페이지를 안전하게 열지 못했습니다.");
+        }
+      }
+    } finally {
+      if (this.finishRasterSourceRequest(request)) this.render();
+    }
+  }
+
+  /** Page selection intentionally starts one request for that page only. */
+  private selectRasterPdfPage(asset: DocumentAsset, job: RasterExtractionJob, pageNumber: number): void {
+    if (!Number.isInteger(pageNumber) || !job.result?.pages.some((page) => page.page_number === pageNumber)) return;
+    this.rasterPdfPageNumber = pageNumber;
+    void this.openRasterPdfPageViewer(asset, job, pageNumber);
+  }
+
+  private selectedRasterPdfPreviewPage(job: RasterExtractionJob | null): RasterExtractionPage | null {
+    const pages = job?.result?.pages ?? [];
+    return pages.find((page) => page.page_number === this.rasterPdfPageNumber) ?? pages[0] ?? null;
+  }
+
+  private beginRasterSourceRequest(): { controller: AbortController; generation: number } {
+    this.cancelRasterSourceRequest();
+    this.revokeRasterSourceViewer();
+    const controller = new AbortController();
+    const generation = ++this.rasterSourceRequestGeneration;
+    this.rasterSourceAbortController = controller;
+    this.rasterSourceLoading = true;
+    return { controller, generation };
+  }
+
+  private isCurrentRasterSourceRequest(request: { controller: AbortController; generation: number }): boolean {
+    return !this.destroyed
+      && this.rasterSourceAbortController === request.controller
+      && this.rasterSourceRequestGeneration === request.generation;
+  }
+
+  private finishRasterSourceRequest(request: { controller: AbortController; generation: number }): boolean {
+    if (!this.isCurrentRasterSourceRequest(request)) return false;
+    this.rasterSourceAbortController = null;
+    this.rasterSourceLoading = false;
+    return true;
+  }
+
+  private cancelRasterSourceRequest(): void {
+    this.rasterSourceRequestGeneration += 1;
+    const controller = this.rasterSourceAbortController;
+    this.rasterSourceAbortController = null;
+    this.rasterSourceLoading = false;
+    if (controller && !controller.signal.aborted) controller.abort();
+  }
+
+  private revokeRasterSourceViewer(): void {
+    const viewer = this.rasterSourceViewer;
+    this.rasterSourceViewer = null;
+    if (viewer) URL.revokeObjectURL(viewer.objectUrl);
+  }
+
+  private clearRasterSourceViewer(): void {
+    this.cancelRasterSourceRequest();
+    this.revokeRasterSourceViewer();
+  }
+
+  /**
+   * Opens the original only for a confirmable text-only job.  This is a
+   * transient reviewer comparison aid, not a structured-raster page/overlay.
+   */
+  private async openRasterTextSourceViewer(asset: DocumentAsset, job: RasterTextExtractionJob): Promise<void> {
+    if (!this.hasRole("reviewer")) {
+      this.state.error = "원본 보기 기능은 심사자 역할에서만 할 수 있습니다.";
+      this.render();
+      return;
+    }
+    if (this.selectedRasterTextProfileIsSuperseded(asset, job)) {
+      this.state.notice = rasterTextProfileSupersededNotice();
+      this.render();
+      return;
+    }
+    if (!canConfirmRasterTextExtraction(job)) {
+      this.state.error = "원본과 대조할 수 있는 Raster OCR 텍스트 초안이 아직 준비되지 않았습니다.";
+      this.render();
+      return;
+    }
+    const currentViewer = this.rasterTextSourceViewer;
+    if (
+      this.rasterTextSourceLoading
+      || (currentViewer !== null
+        && currentViewer.assetId === asset.asset_id
+        && currentViewer.rasterTextExtractionJobId === job.raster_text_extraction_job_id)
+    ) return;
+
+    const request = this.beginRasterTextSourceRequest();
+    this.state.error = null;
+    this.render();
+    try {
+      const client = this.api as ApiClient & {
+        getDocumentAssetSource?: (caseId: string, source: DocumentAsset, signal?: AbortSignal) => Promise<Blob>;
+      };
+      if (typeof client.getDocumentAssetSource !== "function") throw new Error("원본 보기 API가 아직 준비되지 않았습니다.");
+      const blob = await client.getDocumentAssetSource(this.requireCase().case_id, asset, request.controller.signal);
+      const objectUrl = URL.createObjectURL(blob);
+      if (
+        !this.isCurrentRasterTextSourceRequest(request)
+        || this.state.selectedDocumentAsset?.asset_id !== asset.asset_id
+        || this.state.selectedRasterTextExtractionJob?.raster_text_extraction_job_id !== job.raster_text_extraction_job_id
+        || this.selectedRasterTextProfileIsSuperseded(asset, job)
+      ) {
+        URL.revokeObjectURL(objectUrl);
+        return;
+      }
+      this.revokeRasterTextSourceViewer();
+      this.rasterTextSourceViewer = {
+        assetId: asset.asset_id,
+        mediaType: asset.media_type,
+        rasterTextExtractionJobId: job.raster_text_extraction_job_id,
+        objectUrl,
+      };
+      this.state.notice = "원본은 이 화면의 임시 메모리에서만 대조합니다. 닫거나 문서·OCR profile이 바뀌면 즉시 제거됩니다.";
+    } catch (error) {
+      if (this.isCurrentRasterTextSourceRequest(request) && !request.controller.signal.aborted) {
+        this.state.error = userMessage(error, "원본 파일을 안전하게 열지 못했습니다.");
+      }
+    } finally {
+      if (this.finishRasterTextSourceRequest(request)) this.render();
+    }
+  }
+
+  private beginRasterTextSourceRequest(): { controller: AbortController; generation: number } {
+    this.cancelRasterTextSourceRequest();
+    this.revokeRasterTextSourceViewer();
+    const controller = new AbortController();
+    const generation = ++this.rasterTextSourceRequestGeneration;
+    this.rasterTextSourceAbortController = controller;
+    this.rasterTextSourceLoading = true;
+    return { controller, generation };
+  }
+
+  private isCurrentRasterTextSourceRequest(request: { controller: AbortController; generation: number }): boolean {
+    return !this.destroyed
+      && this.rasterTextSourceAbortController === request.controller
+      && this.rasterTextSourceRequestGeneration === request.generation;
+  }
+
+  private finishRasterTextSourceRequest(request: { controller: AbortController; generation: number }): boolean {
+    if (!this.isCurrentRasterTextSourceRequest(request)) return false;
+    this.rasterTextSourceAbortController = null;
+    this.rasterTextSourceLoading = false;
+    return true;
+  }
+
+  private cancelRasterTextSourceRequest(): void {
+    this.rasterTextSourceRequestGeneration += 1;
+    const controller = this.rasterTextSourceAbortController;
+    this.rasterTextSourceAbortController = null;
+    this.rasterTextSourceLoading = false;
+    if (controller && !controller.signal.aborted) controller.abort();
+  }
+
+  private revokeRasterTextSourceViewer(): void {
+    const viewer = this.rasterTextSourceViewer;
+    this.rasterTextSourceViewer = null;
+    if (viewer) URL.revokeObjectURL(viewer.objectUrl);
+  }
+
+  private clearRasterTextSourceViewer(): void {
+    this.cancelRasterTextSourceRequest();
+    this.revokeRasterTextSourceViewer();
   }
 
   private async startReview(): Promise<void> {
@@ -1875,6 +2689,8 @@ export class CommercialReviewWorkspace {
             on: { click: () => void this.requestDocumentExtraction(asset) },
           })
           : element("p", { className: "role-boundary-note", text: "추출 미리보기 요청은 심사자 역할에서만 할 수 있습니다." }),
+        this.createRasterExtractionWorkbench(asset),
+        this.createRasterTextExtractionWorkbench(asset),
       );
     }
 
@@ -1927,6 +2743,405 @@ export class CommercialReviewWorkspace {
       metadata,
       previewContent,
       confirmation,
+      this.createRasterExtractionWorkbench(asset),
+      this.createRasterTextExtractionWorkbench(asset),
+    );
+  }
+
+  /**
+   * A deliberately small text-only OCR card.  It never reuses the structured
+   * raster viewer, overlay, field, or table widgets below.
+   */
+  private createRasterTextExtractionWorkbench(asset: DocumentAsset): HTMLElement {
+    const job = this.state.selectedRasterTextExtractionJob?.asset_id === asset.asset_id
+      ? this.state.selectedRasterTextExtractionJob
+      : null;
+    if (!job) {
+      return element("section", { className: "raster-text-extraction-workbench", attributes: { "data-e2e": "raster-text-extraction-workbench" } },
+        element("header", { className: "raster-text-extraction-workbench__heading" },
+          element("h3", { text: "Raster OCR 텍스트 초안" }),
+          element("p", { text: "스캔 PDF·이미지에서 편집할 텍스트만 별도 작업으로 만듭니다. 표·셀·위치 추정은 포함하지 않습니다." }),
+        ),
+        element("section", { className: "extraction-boundary-notice" },
+          element("strong", { text: "사람 확인 전 텍스트 초안" }),
+          element("p", { text: "이 초안은 기존 심사 입력과 분리됩니다. 원본과 대조해 수정·확정하기 전에는 자동 심사나 통관 결론에 사용되지 않습니다." }),
+        ),
+        this.hasRole("reviewer")
+          ? element("button", {
+            className: "button button--primary",
+            text: "Raster OCR 텍스트 초안 요청",
+            attributes: { type: "button", disabled: this.state.busy ? "" : undefined, "data-e2e": "request-raster-text-document-extraction" },
+            on: { click: () => void this.requestRasterTextDocumentExtraction(asset) },
+          })
+          : element("p", { className: "role-boundary-note", text: "Raster OCR 텍스트 요청과 확인은 심사자 역할에서만 할 수 있습니다." }),
+      );
+    }
+
+    const status = statusChip(rasterTextExtractionStatusLabel(job.status), job.status);
+    status.setAttribute("data-e2e", "raster-text-document-extraction-status");
+    const profileSuperseded = this.selectedRasterTextProfileIsSuperseded(asset, job);
+    const actions: HTMLElement[] = [];
+    if (this.hasRole("reviewer")) {
+      actions.push(element("button", {
+        className: job.status === "queued" || job.status === "running" ? "button button--secondary" : "button button--quiet",
+        text: job.status === "queued" || job.status === "running"
+          ? "Raster OCR 텍스트 상태 새로고침"
+          : "현재 Raster OCR 텍스트 결과 새로고침",
+        attributes: { type: "button", disabled: this.state.busy ? "" : undefined, "data-e2e": "refresh-raster-text-document-extraction" },
+        on: { click: () => void this.refreshRasterTextDocumentExtraction() },
+      }));
+    }
+    if (profileSuperseded && this.hasRole("reviewer")) {
+      actions.push(element("button", {
+        className: "button button--primary",
+        text: "현재 profile로 새 Raster OCR 텍스트 요청",
+        attributes: { type: "button", disabled: this.state.busy ? "" : undefined, "data-e2e": "request-current-raster-text-document-extraction" },
+        on: { click: () => void this.requestRasterTextDocumentExtraction(asset) },
+      }));
+    }
+    const preview = job.result;
+    const previewContent = preview && hasRasterTextExtractionCandidate(preview)
+      ? renderRasterTextExtractionPreview(preview)
+      : element("section", { className: "extraction-boundary-notice", attributes: { "data-e2e": "raster-text-extraction-empty" } },
+        element("strong", { text: isRasterTextExtractionPending(job) ? "Raster OCR 텍스트 요청 처리 중" : "Raster OCR 텍스트 초안을 제공하지 못함" }),
+        element("p", { text: rasterTextExtractionStatusDescription(job.status) }),
+      );
+    const sourceViewer = !profileSuperseded && canConfirmRasterTextExtraction(job)
+      ? this.createRasterTextSourceViewer(asset, job)
+      : null;
+    return element("section", { className: "raster-text-extraction-workbench", attributes: { "data-e2e": "raster-text-extraction-workbench" } },
+      element("header", { className: "raster-text-extraction-workbench__heading" },
+        element("h3", { text: "Raster OCR 텍스트 초안" }),
+        element("p", { text: "페이지별 OCR 결과를 확인한 뒤 아래 전체 텍스트 초안만 수정·등록합니다. 표·셀·위치는 이 경로에서 추정하지 않습니다." }),
+      ),
+      element("div", { className: "extraction-status-row" }, status, ...actions),
+      isRasterTextExtractionPending(job)
+        ? element("p", { className: "form-hint", text: "최대 60초 동안 3초 간격으로 상태를 자동 확인합니다. 그 뒤에는 결과를 추정하지 않고 수동 새로고침만 제공합니다." })
+        : null,
+      profileSuperseded
+        ? element("section", { className: "extraction-boundary-notice", attributes: { "data-e2e": "raster-text-profile-superseded" } },
+          element("strong", { text: "현재 OCR 텍스트 profile이 바뀌었습니다" }),
+          element("p", { text: "이전 profile의 초안은 새 profile의 결과와 섞어 등록하지 않습니다. 필요하면 새 텍스트 추출 요청을 사용하십시오." }),
+        )
+        : null,
+      previewContent,
+      sourceViewer,
+      !profileSuperseded && canConfirmRasterTextExtraction(job)
+        ? this.createRasterTextExtractionConfirmationForm(asset, job)
+        : null,
+    );
+  }
+
+  /** Original comparison for text-only OCR; no structured overlay is rendered here. */
+  private createRasterTextSourceViewer(asset: DocumentAsset, job: RasterTextExtractionJob): HTMLElement {
+    const viewer = this.rasterTextSourceViewer?.assetId === asset.asset_id
+      && this.rasterTextSourceViewer.rasterTextExtractionJobId === job.raster_text_extraction_job_id
+      ? this.rasterTextSourceViewer
+      : null;
+    if (!viewer) {
+      return element("section", { className: "raster-text-source-viewer raster-text-source-viewer--closed", attributes: { "data-e2e": "raster-text-source-viewer" } },
+        element("p", { className: "form-hint", text: "원본은 필요할 때만 인증된 no-store 응답으로 받아 이 화면의 임시 메모리에서 대조합니다. 앱은 다운로드 링크나 브라우저 저장소를 만들지 않습니다." }),
+        this.hasRole("reviewer")
+          ? element("button", {
+            className: "button button--secondary",
+            text: this.rasterTextSourceLoading ? "원본 불러오는 중" : "원본과 텍스트 대조",
+            attributes: { type: "button", disabled: this.state.busy || this.rasterTextSourceLoading ? "" : undefined, "data-e2e": "open-raster-text-source-viewer" },
+            on: { click: () => void this.openRasterTextSourceViewer(asset, job) },
+          })
+          : element("p", { className: "role-boundary-note", text: "원본 보기는 심사자 역할에서만 할 수 있습니다." }),
+      );
+    }
+    const original = viewer.mediaType === "application/pdf"
+      ? element("object", {
+        className: "raster-text-source-viewer__pdf",
+        attributes: {
+          data: viewer.objectUrl,
+          type: "application/pdf",
+          "aria-label": `${asset.filename} 원본 PDF`,
+          "data-e2e": "raster-text-source-pdf",
+        },
+      }, element("p", { className: "form-hint", text: "이 브라우저에서는 PDF 원본을 인라인으로 표시하지 못했습니다. 텍스트 초안을 원본과 대조할 수 있는 환경에서 다시 열어 주십시오." }))
+      : element("img", {
+        className: "raster-text-source-viewer__image",
+        attributes: {
+          src: viewer.objectUrl,
+          alt: `${asset.filename} 원본`,
+          referrerpolicy: "no-referrer",
+          "data-e2e": "raster-text-source-image",
+        },
+      });
+    return element("section", { className: "raster-text-source-viewer", attributes: { "data-e2e": "raster-text-source-viewer" } },
+      element("div", { className: "raster-text-source-viewer__actions" },
+        element("strong", { text: "원본과 OCR 텍스트 대조" }),
+        element("button", {
+          className: "button button--quiet",
+          text: "원본 닫기",
+          attributes: { type: "button", "data-e2e": "close-raster-text-source-viewer" },
+          on: { click: () => { this.clearRasterTextSourceViewer(); this.render(); } },
+        }),
+      ),
+      original,
+      element("p", { className: "form-hint", text: "원본은 이 화면의 임시 Blob URL로만 표시합니다. 표·셀·위치 overlay는 제공하지 않습니다." }),
+    );
+  }
+
+  /** A compact visual workbench for the raster v2 preview; v1 stays above unchanged. */
+  private createRasterExtractionWorkbench(asset: DocumentAsset): HTMLElement {
+    const job = this.state.selectedRasterExtractionJob?.asset_id === asset.asset_id
+      ? this.state.selectedRasterExtractionJob
+      : null;
+    const sourceViewer = this.createRasterSourceViewer(asset, job);
+    if (!job) {
+      return element("section", { className: "raster-extraction-workbench", attributes: { "data-e2e": "raster-extraction-workbench" } },
+        element("header", { className: "raster-extraction-workbench__heading" },
+          element("h3", { text: "Raster OCR·표·위치 검토" }),
+          element("p", { text: "스캔 PDF와 이미지의 글자·필드·표·위치 후보를 별도 v2 작업으로 만듭니다. 기존 추출과 심사 입력은 바뀌지 않습니다." }),
+        ),
+        sourceViewer,
+        element("section", { className: "extraction-boundary-notice" },
+          element("strong", { text: "사람 확인 전 후보" }),
+          element("p", { text: "Raster OCR 결과는 원본과 대조하기 위한 초안입니다. 자동 심사·통관 결론·확정 문서로 사용되지 않습니다." }),
+        ),
+        this.hasRole("reviewer")
+          ? element("button", {
+            className: "button button--primary",
+            text: "Raster OCR 미리보기 요청",
+            attributes: { type: "button", disabled: this.state.busy ? "" : undefined, "data-e2e": "request-raster-document-extraction" },
+            on: { click: () => void this.requestRasterDocumentExtraction(asset) },
+          })
+          : element("p", { className: "role-boundary-note", text: "Raster OCR 요청과 원본 보기는 심사자 역할에서만 할 수 있습니다." }),
+      );
+    }
+
+    const status = statusChip(rasterExtractionStatusLabel(job.status), job.status);
+    status.setAttribute("data-e2e", "raster-document-extraction-status");
+    const profileSuperseded = this.selectedRasterProfileIsSuperseded(asset, job);
+    const actions: HTMLElement[] = [];
+    if (job.status === "queued" || job.status === "running") {
+      actions.push(element("button", {
+        className: "button button--secondary",
+        text: "Raster OCR 상태 새로고침",
+        attributes: { type: "button", disabled: this.state.busy ? "" : undefined, "data-e2e": "refresh-raster-document-extraction" },
+        on: { click: () => void this.refreshRasterDocumentExtraction() },
+      }));
+    }
+    if (this.hasRole("reviewer") && job.status !== "queued" && job.status !== "running") {
+      actions.push(element("button", {
+        className: "button button--quiet",
+        text: "현재 Raster OCR 결과 새로고침",
+        attributes: { type: "button", disabled: this.state.busy ? "" : undefined, "data-e2e": "refresh-completed-raster-document-extraction" },
+        on: { click: () => void this.refreshRasterDocumentExtraction() },
+      }));
+    }
+    if (profileSuperseded && this.hasRole("reviewer")) {
+      actions.push(element("button", {
+        className: "button button--primary",
+        text: "현재 profile로 새 Raster OCR 요청",
+        attributes: { type: "button", disabled: this.state.busy ? "" : undefined, "data-e2e": "request-current-raster-document-extraction" },
+        on: { click: () => void this.requestRasterDocumentExtraction(asset) },
+      }));
+    }
+    const preview = job.result;
+    const previewContent = preview && preview.pages.length
+      ? renderRasterExtractionPreview(
+        preview,
+        this.rasterSourceViewer?.assetId === asset.asset_id ? this.rasterSourceViewer : null,
+        this.rasterCandidateEdits,
+        (key, label, originalValue, value) => this.updateRasterCandidateValue(key, label, originalValue, value),
+      )
+      : element("section", { className: "extraction-boundary-notice" },
+        element("strong", { text: job.status === "queued" || job.status === "running" ? "Raster OCR 요청 처리 중" : "Raster OCR 후보를 제공하지 못함" }),
+        element("p", { text: rasterExtractionStatusDescription(job.status) }),
+      );
+    return element("section", { className: "raster-extraction-workbench", attributes: { "data-e2e": "raster-extraction-workbench" } },
+      element("header", { className: "raster-extraction-workbench__heading" },
+        element("h3", { text: "Raster OCR·표·위치 검토" }),
+        element("p", { text: "원본과 후보 위치·필드·표를 함께 확인한 뒤에만 수정한 텍스트를 심사 문서로 등록하십시오." }),
+      ),
+      element("div", { className: "extraction-status-row" }, status, ...actions),
+      profileSuperseded
+        ? element("section", { className: "extraction-boundary-notice", attributes: { "data-e2e": "raster-profile-superseded" } },
+          element("strong", { text: "현재 OCR profile이 바뀌었습니다" }),
+          element("p", { text: "이전 OCR 결과는 해당 작업의 기록으로만 남습니다. 현재 profile의 위치·표 결과와 섞어 표시하지 않으므로, 필요하면 새 추출 요청을 사용하십시오." }),
+        )
+        : null,
+      sourceViewer,
+      previewContent,
+      !profileSuperseded && canConfirmRasterExtraction(job)
+        ? this.createRasterExtractionConfirmationForm(asset, job)
+        : null,
+    );
+  }
+
+  private createRasterSourceViewer(
+    asset: DocumentAsset,
+    job: RasterExtractionJob | null,
+  ): HTMLElement {
+    const preview = job?.result;
+    const viewer = this.rasterSourceViewer?.assetId === asset.asset_id ? this.rasterSourceViewer : null;
+    if (job && this.selectedRasterProfileIsSuperseded(asset, job)) {
+      return element("section", { className: "raster-source-viewer raster-source-viewer--closed", attributes: { "data-e2e": "raster-source-viewer" } },
+        element("p", { className: "form-hint", text: "현재 OCR profile이 바뀌어 이전 작업의 원본·위치 overlay를 종료했습니다. 새 profile로 추출한 뒤에만 위치를 다시 대조할 수 있습니다." }),
+      );
+    }
+    if (asset.media_type === "application/pdf") {
+      const page = this.selectedRasterPdfPreviewPage(job);
+      const rasterViewer = viewer?.kind === "raster_page" && viewer.rasterExtractionJobId === job?.raster_extraction_job_id
+        ? viewer
+        : null;
+      if (!job || !preview || !page) {
+        return element("section", { className: "raster-source-viewer raster-source-viewer--closed", attributes: { "data-e2e": "raster-source-viewer" } },
+          element("p", { className: "form-hint", text: "PDF 원본의 위치 대조는 Raster OCR 작업이 완성한 페이지 이미지와 좌표를 함께 사용합니다. 아직 사용할 수 있는 페이지 후보가 없습니다." }),
+          element("p", { className: "role-boundary-note", text: "원본 PDF 바이트를 브라우저에 내려받거나 iframe으로 열지 않습니다." }),
+        );
+      }
+      const pagePicker = element("div", { className: "raster-source-viewer__page-picker" },
+        field("대조할 PDF 페이지", select(
+          "raster_page_number",
+          [...preview.pages]
+            .sort((left, right) => left.page_number - right.page_number)
+            .map((item): [string, string] => [String(item.page_number), `${item.page_number}쪽`]),
+          String(page.page_number),
+          (event) => this.selectRasterPdfPage(asset, job, Number((event.currentTarget as HTMLSelectElement).value)),
+          "raster-pdf-page-select",
+        )),
+      );
+      if (!rasterViewer) {
+        return element("section", { className: "raster-source-viewer raster-source-viewer--closed", attributes: { "data-e2e": "raster-source-viewer" } },
+          element("p", { className: "form-hint", text: "선택한 한 페이지만 서버에서 no-store PNG로 받아 OCR 좌표와 겹쳐 표시합니다. 다운로드 링크나 브라우저 저장소는 사용하지 않습니다." }),
+          pagePicker,
+          this.hasRole("reviewer")
+            ? element("button", {
+              className: "button button--secondary",
+              text: this.rasterSourceLoading ? "페이지 불러오는 중" : `${page.page_number}쪽 원본 보기`,
+              attributes: { type: "button", disabled: this.state.busy || this.rasterSourceLoading ? "" : undefined, "data-e2e": "open-raster-pdf-page-viewer" },
+              on: { click: () => void this.openRasterPdfPageViewer(asset, job, page.page_number) },
+            })
+            : element("p", { className: "role-boundary-note", text: "원본 보기는 심사자 역할에서만 할 수 있습니다." }),
+        );
+      }
+      const overlay = renderRasterOverlay(page, preview.tables, preview.field_candidates);
+      return element("section", { className: "raster-source-viewer", attributes: { "data-e2e": "raster-source-viewer" } },
+        element("div", { className: "raster-source-viewer__actions" },
+          element("strong", { text: `PDF ${page.page_number}쪽 원본 대조 화면` }),
+          element("button", {
+            className: "button button--quiet",
+            text: "원본 닫기",
+            attributes: { type: "button", "data-e2e": "close-raster-source-viewer" },
+            on: { click: () => { this.clearRasterSourceViewer(); this.render(); } },
+          }),
+        ),
+        pagePicker,
+        rasterSourceImageCanvas(
+          element("img", {
+            className: "raster-source-viewer__image",
+            attributes: { src: rasterViewer.objectUrl, alt: `${asset.filename} ${page.page_number}쪽 원본`, referrerpolicy: "no-referrer", "data-e2e": "raster-pdf-page-image" },
+          }),
+          overlay,
+        ),
+        rasterOverlayLegend(),
+        element("p", { className: "form-hint", text: "이 PNG는 같은 Raster OCR 작업이 만든 페이지라서 정규화 좌표를 원본 위치와 직접 대조할 수 있습니다." }),
+      );
+    }
+
+    const imageViewer = viewer?.kind === "asset" ? viewer : null;
+    if (!imageViewer) {
+      return element("section", { className: "raster-source-viewer raster-source-viewer--closed", attributes: { "data-e2e": "raster-source-viewer" } },
+        element("p", { className: "form-hint", text: "원본은 필요할 때만 서버에서 no-store로 받아 이 화면의 임시 메모리에 표시합니다. 다운로드 링크나 브라우저 저장소는 사용하지 않습니다." }),
+        this.hasRole("reviewer")
+          ? element("button", {
+            className: "button button--secondary",
+            text: this.rasterSourceLoading ? "원본 불러오는 중" : "원본 보기",
+            attributes: { type: "button", disabled: this.state.busy || this.rasterSourceLoading ? "" : undefined, "data-e2e": "open-raster-source-viewer" },
+            on: { click: () => void this.openRasterSourceViewer(asset) },
+          })
+          : element("p", { className: "role-boundary-note", text: "원본 보기는 심사자 역할에서만 할 수 있습니다." }),
+      );
+    }
+    const overlay = preview?.pages[0]
+      ? renderRasterOverlay(preview.pages[0], preview.tables, preview.field_candidates)
+      : null;
+    return element("section", { className: "raster-source-viewer", attributes: { "data-e2e": "raster-source-viewer" } },
+      element("div", { className: "raster-source-viewer__actions" },
+        element("strong", { text: "원본 대조 화면" }),
+        element("button", {
+          className: "button button--quiet",
+          text: "원본 닫기",
+          attributes: { type: "button", "data-e2e": "close-raster-source-viewer" },
+          on: { click: () => { this.clearRasterSourceViewer(); this.render(); } },
+        }),
+      ),
+      rasterSourceImageCanvas(
+        element("img", {
+          className: "raster-source-viewer__image",
+          attributes: { src: imageViewer.objectUrl, alt: `${asset.filename} 원본`, referrerpolicy: "no-referrer" },
+        }),
+        overlay,
+      ),
+      overlay ? rasterOverlayLegend() : null,
+      element("p", { className: "form-hint", text: "위치는 원본의 정규화 좌표를 사용합니다." }),
+    );
+  }
+
+  private createRasterExtractionConfirmationForm(asset: DocumentAsset, job: RasterExtractionJob): HTMLElement {
+    const active = this.activeDocuments();
+    return element("form", {
+      className: "extraction-confirmation-form",
+      attributes: { "data-e2e": "raster-document-extraction-confirmation-form" },
+      on: { submit: (event) => { event.preventDefault(); void this.confirmRasterDocumentExtraction(event.currentTarget as HTMLFormElement); } },
+    },
+    element("header", { className: "extraction-confirmation-form__heading" },
+      element("h3", { text: "사람 확인 후 Raster OCR 텍스트 등록" }),
+      element("p", { text: "위 필드·표·위치 후보와 원본을 대조한 뒤, 아래 텍스트를 직접 수정·확인하십시오. 등록해도 AI 심사는 자동 시작하지 않습니다." }),
+    ),
+    field("텍스트 파일명", input("filename", { required: true, maxLength: 255, value: confirmedTextFilename(asset.filename) })),
+    field("대체할 활성 텍스트 문서", select("replaces_document_id", [
+      ["", "새 텍스트 문서로 등록"],
+      ...active.map((document): [string, string] => [document.document_id, documentDisplayName(document)]),
+    ])),
+    field("원본과 대조해 확인한 텍스트", textarea("content_text", {
+      required: true,
+      maxLength: 200_000,
+      value: this.state.rasterExtractionDraft,
+      placeholder: "Raster OCR 후보를 원본과 대조해 수정·확인한 텍스트를 입력하십시오.",
+      onInput: (event) => {
+        const target = event.currentTarget;
+        if (target instanceof HTMLTextAreaElement) this.updateRasterExtractionDraft(target.value);
+      },
+    })),
+    element("p", { className: "form-hint", text: `현재 Raster OCR 상태: ${rasterExtractionStatusLabel(job.status)}. 확인 전 후보는 심사에 사용되지 않습니다.` }),
+    submit("확인한 텍스트를 심사 문서로 등록", this.state.busy),
+    );
+  }
+
+  private createRasterTextExtractionConfirmationForm(asset: DocumentAsset, job: RasterTextExtractionJob): HTMLElement {
+    const active = this.activeDocuments();
+    return element("form", {
+      className: "extraction-confirmation-form raster-text-extraction-confirmation-form",
+      attributes: { "data-e2e": "raster-text-document-extraction-confirmation-form" },
+      on: { submit: (event) => { event.preventDefault(); void this.confirmRasterTextDocumentExtraction(event.currentTarget as HTMLFormElement); } },
+    },
+    element("header", { className: "extraction-confirmation-form__heading" },
+      element("h3", { text: "사람 확인 후 Raster OCR 텍스트 등록" }),
+      element("p", { text: "페이지별 후보를 원본과 대조한 뒤, 아래 전체 텍스트를 직접 수정·확인하십시오. 등록해도 AI 심사는 자동 시작하지 않습니다." }),
+    ),
+    field("텍스트 파일명", input("filename", { required: true, maxLength: 255, value: confirmedTextFilename(asset.filename) })),
+    field("대체할 활성 텍스트 문서", select("replaces_document_id", [
+      ["", "새 텍스트 문서로 등록"],
+      ...active.map((document): [string, string] => [document.document_id, documentDisplayName(document)]),
+    ])),
+    field("원본과 대조해 확인한 전체 텍스트", textarea("content_text", {
+      required: true,
+      maxLength: 200_000,
+      value: this.state.rasterTextExtractionDraft,
+      placeholder: "Raster OCR 텍스트 초안을 원본과 대조해 수정·확인한 전체 텍스트를 입력하십시오.",
+      onInput: (event) => {
+        const target = event.currentTarget;
+        if (target instanceof HTMLTextAreaElement) this.updateRasterTextExtractionDraft(target.value);
+      },
+    })),
+    element("p", { className: "form-hint", text: `현재 Raster OCR 텍스트 상태: ${rasterTextExtractionStatusLabel(job.status)}. 확인 전 초안은 심사에 사용되지 않습니다.` }),
+    submit("확인한 텍스트를 심사 문서로 등록", this.state.busy),
     );
   }
 
@@ -3216,6 +4431,246 @@ function renderExtractionPage(page: ExtractionPage): HTMLElement {
   );
 }
 
+function renderRasterTextExtractionPreview(preview: RasterTextDocumentExtractionPreview): HTMLElement {
+  const notices = [...new Set([...preview.warnings, ...preview.needs_review_reasons])];
+  const pages = [...preview.pages].sort((left, right) => left.page_number - right.page_number);
+  return element("section", { className: "raster-text-preview-candidate", attributes: { "data-e2e": "raster-text-document-extraction-candidate" } },
+    element("header", { className: "raster-text-preview-candidate__heading" },
+      element("h3", { text: "검증 전 Raster OCR 텍스트 후보" }),
+      element("p", { text: "페이지별 후보는 참고용입니다. 표·셀·위치 정보는 만들거나 표시하지 않으며, 아래 전체 텍스트를 원본과 대조해 수정해야 합니다." }),
+    ),
+    notices.length
+      ? element("ul", { className: "extraction-warning-list" }, ...notices.map((notice) =>
+        element("li", { text: rasterTextWarningLabel(notice) }),
+      ))
+      : element("p", { className: "form-hint", text: "서버가 추가 확인 알림을 보내지 않았습니다. 그래도 원본과 대조해 확인해야 합니다." }),
+    pages.length
+      ? element("section", { className: "raster-text-preview-pages" },
+        ...pages.map((page) => renderRasterTextExtractionPage(page)),
+      )
+      : element("pre", { className: "raster-text-preview-candidate__text", text: preview.canonical_text ?? "" }),
+  );
+}
+
+function renderRasterTextExtractionPage(page: RasterTextExtractionPage): HTMLElement {
+  return element("details", { className: "raster-text-extraction-page", attributes: { open: "" } },
+    element("summary", { text: `${page.page_number}쪽 OCR 텍스트` }),
+    element("pre", { className: "raster-text-preview-candidate__text", text: page.text }),
+  );
+}
+
+type RasterCandidateEditCallback = (
+  key: string,
+  label: string,
+  originalValue: string,
+  value: string,
+) => string;
+
+/** Layout candidates are shown beside the editable final-text boundary. */
+function renderRasterExtractionPreview(
+  preview: RasterDocumentExtractionPreview,
+  viewer: RasterSourceViewer | null,
+  edits: ReadonlyMap<string, RasterCandidateEdit>,
+  updateCandidate: RasterCandidateEditCallback,
+): HTMLElement {
+  const classification = preview.document_type
+    ? `${rasterDocumentTypeLabel(preview.document_type)} · 분류 신뢰도 ${formatConfidence(preview.classification_confidence ?? 0)}`
+    : "문서 유형 분류 결과 없음";
+  const notices = [...preview.warnings, ...preview.needs_review_reasons];
+  return element("section", { className: "raster-preview-candidate", attributes: { "data-e2e": "raster-document-extraction-candidate" } },
+    element("header", { className: "extraction-preview-candidate__heading" },
+      element("h3", { text: "검증 전 Raster OCR·레이아웃 후보" }),
+      element("p", { text: `${classification}. 모든 값·표·위치는 원본과 대조해야 하며, 아직 심사에 사용되지 않습니다.` }),
+    ),
+    viewer?.kind === "raster_page"
+      ? element("p", { className: "form-hint", text: `원본 대조 화면의 상자는 ${viewer.pageNumber}쪽 후보 위치를 보여 줍니다. 페이지를 바꾸면 해당 페이지만 다시 불러옵니다.` })
+      : viewer?.kind === "asset" && preview.pages[0]
+        ? element("p", { className: "form-hint", text: "원본 대조 화면의 상자는 첫 페이지 후보 위치를 보여 줍니다. 아래 목록에서는 모든 페이지를 확인할 수 있습니다." })
+      : null,
+    notices.length
+      ? element("ul", { className: "extraction-warning-list" }, ...notices.map((notice) =>
+        element("li", { text: rasterWarningLabel(notice) }),
+      ))
+      : element("p", { className: "form-hint", text: "서버가 추가 확인 사유를 보내지 않았습니다. 그래도 모든 OCR 후보는 원본 대조가 필요합니다." }),
+    element("section", { className: "raster-preview-group" },
+      element("h4", { text: `텍스트 위치 · ${preview.pages.reduce((count, page) => count + page.spans.length, 0).toLocaleString()}개` }),
+      ...preview.pages.map((page) => renderRasterExtractionPage(page)),
+    ),
+    element("section", { className: "raster-preview-group" },
+      element("h4", { text: `필드 후보 · ${preview.field_candidates.length.toLocaleString()}개` }),
+      preview.field_candidates.length
+        ? element("dl", { className: "raster-field-list" }, ...preview.field_candidates.map((field, index) =>
+          renderRasterField(field, index, edits, updateCandidate),
+        ))
+        : element("p", { className: "form-hint", text: "확정할 수 있는 핵심 필드 후보가 없습니다. 텍스트와 원본을 직접 대조하십시오." }),
+    ),
+    element("section", { className: "raster-preview-group" },
+      element("h4", { text: `표 후보 · ${preview.tables.length.toLocaleString()}개` }),
+      preview.tables.length
+        ? element("div", { className: "raster-table-list" }, ...preview.tables.map((table, index) =>
+          renderRasterTable(table, index, edits, updateCandidate),
+        ))
+        : element("p", { className: "form-hint", text: "확정할 수 있는 표 구조 후보가 없습니다. 표가 있다면 원본을 기준으로 확인 텍스트를 수정하십시오." }),
+    ),
+    element("p", { className: "form-hint", text: "필드와 표 셀은 여기서 바로 수정할 수 있습니다. 수정값은 아래의 확인 텍스트에 반영되며, 같은 값이 여러 곳에 있어 안전하게 바꾸지 못한 경우에는 검토자 수정 블록으로 남습니다." }),
+  );
+}
+
+function renderRasterExtractionPage(page: RasterExtractionPage): HTMLElement {
+  const sorted = [...page.spans]
+    .sort((left, right) => left.reading_order - right.reading_order || left.ordinal - right.ordinal);
+  return element("details", { className: "extraction-page raster-extraction-page" },
+    element("summary", { text: `${page.page_number}쪽 · OCR 문장 ${page.spans.length.toLocaleString()}개` }),
+    element("ol", { className: "extraction-span-list" }, ...sorted.map((span) =>
+      element("li", { className: "extraction-span raster-extraction-span", attributes: { "data-has-bbox": span.bbox ? "true" : "false", "data-span-id": span.span_id } },
+        element("span", { text: span.text }),
+        element("small", { text: `신뢰도 ${formatConfidence(span.confidence)}${span.bbox ? ` · 위치 ${bboxLabel(span.bbox)}` : " · 위치 정보 없음"}` }),
+      ),
+    )),
+  );
+}
+
+function renderRasterField(
+  field: RasterFieldCandidate,
+  index: number,
+  edits: ReadonlyMap<string, RasterCandidateEdit>,
+  updateCandidate: RasterCandidateEditCallback,
+): HTMLElement {
+  const key = `field:${index}:${field.field_id}`;
+  const label = rasterFieldLabel(field.field_id);
+  const value = edits.get(key)?.value ?? field.value;
+  return element("div", { attributes: { "data-raster-field-id": field.field_id } },
+    element("dt", { text: label }),
+    element("dd", {},
+      textarea(`raster_field_${index}_${field.field_id}`, {
+        maxLength: 20_000,
+        rows: 2,
+        value,
+        ariaLabel: `${label} 후보 텍스트`,
+        dataE2E: `raster-field-editor-${index}`,
+        onInput: (event) => {
+          const target = event.currentTarget;
+          if (target instanceof HTMLTextAreaElement) target.value = updateCandidate(key, label, field.value, target.value);
+        },
+      }),
+      element("small", { text: `신뢰도 ${formatConfidence(field.confidence)}${field.bbox ? ` · 위치 ${bboxLabel(field.bbox)}` : " · 위치 연결 없음"}` }),
+    ),
+  );
+}
+
+function renderRasterTable(
+  table: RasterTable,
+  tableIndex: number,
+  edits: ReadonlyMap<string, RasterCandidateEdit>,
+  updateCandidate: RasterCandidateEditCallback,
+): HTMLElement {
+  const rows = [...table.rows].sort((left, right) => left.row_index - right.row_index);
+  const columnCount = Math.max(0, ...rows.flatMap((row) => row.cells.map((cell) => cell.column_index + 1)));
+  return element("details", { className: "raster-table", attributes: { "data-raster-table-id": table.table_id } },
+    element("summary", { text: `${table.page_number}쪽 표 · ${table.rows.length.toLocaleString()}행${table.bbox ? " · 위치 정보 포함" : ""}` }),
+    element("div", { className: "raster-table__scroll" },
+      element("table", { attributes: { "aria-label": `${table.page_number}쪽 OCR 표 후보` } },
+        element("tbody", {}, ...rows.map((row) => {
+          const cellsByColumn = new Map(row.cells.map((cell) => [cell.column_index, cell]));
+          return element("tr", {}, ...Array.from({ length: columnCount }, (_, columnIndex) => {
+            const cell = cellsByColumn.get(columnIndex);
+            return element("td", { attributes: cell ? { "data-raster-cell-id": cell.cell_id } : {} }, cell
+              ? renderRasterTableCell(table, tableIndex, cell, edits, updateCandidate)
+              : element("span", { className: "muted", text: "—" }));
+          }));
+        })),
+      ),
+    ),
+  );
+}
+
+function renderRasterTableCell(
+  table: RasterTable,
+  tableIndex: number,
+  cell: RasterTable["rows"][number]["cells"][number],
+  edits: ReadonlyMap<string, RasterCandidateEdit>,
+  updateCandidate: RasterCandidateEditCallback,
+): HTMLElement {
+  const key = `table:${tableIndex}:${table.table_id}:cell:${cell.cell_id}`;
+  const label = `${table.page_number}쪽 표 ${cell.row_index + 1}행 ${cell.column_index + 1}열`;
+  const value = edits.get(key)?.value ?? cell.text;
+  return element("div", { className: "raster-table__cell-editor" },
+    textarea(`raster_table_${tableIndex}_${cell.cell_id}`, {
+      maxLength: 20_000,
+      rows: 2,
+      value,
+      ariaLabel: `${label} 후보 텍스트`,
+      dataE2E: `raster-table-cell-editor-${tableIndex}-${cell.cell_id}`,
+      onInput: (event) => {
+        const target = event.currentTarget;
+        if (target instanceof HTMLTextAreaElement) target.value = updateCandidate(key, label, cell.text, target.value);
+      },
+    }),
+    element("small", { text: `신뢰도 ${formatConfidence(cell.confidence)}${cell.bbox ? ` · ${bboxLabel(cell.bbox)}` : " · 위치 정보 없음"}` }),
+  );
+}
+
+function renderRasterOverlay(
+  page: RasterExtractionPage,
+  tables: readonly RasterTable[],
+  fields: readonly RasterFieldCandidate[],
+): HTMLElement {
+  const layer = element("div", { className: "raster-source-overlay", attributes: { "aria-hidden": "true" } });
+  // Do not truncate geometry: a reviewer must see every supplied candidate.
+  // The decoder already enforces the public contract's bounded collection sizes.
+  for (const table of tables) {
+    if (table.page_number === page.page_number && table.bbox) {
+      layer.append(rasterOverlayBox(table.bbox, "raster-source-overlay__table"));
+    }
+  }
+  for (const span of page.spans) {
+    if (span.bbox) layer.append(rasterOverlayBox(span.bbox, "raster-source-overlay__span"));
+  }
+  const pageSpanIds = new Set(page.spans.map((span) => span.span_id));
+  for (const field of fields) {
+    if (field.bbox && field.evidence_span_ids.some((spanId) => pageSpanIds.has(spanId))) {
+      layer.append(rasterOverlayBox(field.bbox, "raster-source-overlay__field"));
+    }
+  }
+  for (const table of tables) {
+    if (table.page_number !== page.page_number) continue;
+    for (const row of table.rows) {
+      for (const cell of row.cells) {
+      if (cell.bbox) layer.append(rasterOverlayBox(cell.bbox, "raster-source-overlay__cell"));
+      }
+    }
+  }
+  return layer;
+}
+
+/** The relative canvas receives the rendered image's height, not scroll viewport height. */
+function rasterSourceImageCanvas(image: HTMLImageElement, overlay: HTMLElement | null): HTMLElement {
+  return element("div", { className: "raster-source-viewer__media" },
+    element("div", { className: "raster-source-viewer__canvas" }, image, overlay),
+  );
+}
+
+function rasterOverlayLegend(): HTMLElement {
+  return element("ul", { className: "raster-source-overlay-legend", attributes: { "aria-label": "원본 위치 상자 범례" } },
+    element("li", { className: "raster-source-overlay-legend__span", text: "텍스트" }),
+    element("li", { className: "raster-source-overlay-legend__field", text: "필드" }),
+    element("li", { className: "raster-source-overlay-legend__table", text: "표" }),
+    element("li", { className: "raster-source-overlay-legend__cell", text: "표 셀" }),
+  );
+}
+
+function rasterOverlayBox(
+  bbox: { x: number; y: number; width: number; height: number },
+  className: string,
+): HTMLElement {
+  const box = element("span", { className });
+  box.style.left = `${bbox.x * 100}%`;
+  box.style.top = `${bbox.y * 100}%`;
+  box.style.width = `${bbox.width * 100}%`;
+  box.style.height = `${bbox.height * 100}%`;
+  return box;
+}
+
 type FindingDisplayGroup = {
   readonly kind: "regular" | "regulatory";
   readonly findings: readonly ReviewFinding[];
@@ -3590,6 +5045,136 @@ function extractionWarningLabel(code: string): string {
   return labels[code] ?? "추출 후보에 추가 확인이 필요합니다.";
 }
 
+function rasterExtractionStatusLabel(value: RasterExtractionJob["status"]): string {
+  return ({
+    queued: "Raster OCR 대기",
+    running: "Raster OCR 처리 중",
+    preview_ready: "Raster OCR 후보 준비됨",
+    needs_review: "Raster OCR 추가 확인 필요",
+    unavailable: "Raster OCR 후보 제공 불가",
+    failed: "Raster OCR 미리보기 실패",
+  })[value];
+}
+
+function rasterTextExtractionStatusLabel(value: RasterTextExtractionJob["status"]): string {
+  return ({
+    queued: "Raster OCR 텍스트 대기",
+    running: "Raster OCR 텍스트 처리 중",
+    preview_ready: "Raster OCR 텍스트 초안 준비됨",
+    needs_review: "Raster OCR 텍스트 추가 확인 필요",
+    unavailable: "Raster OCR 텍스트 초안 제공 불가",
+    failed: "Raster OCR 텍스트 초안 실패",
+  })[value];
+}
+
+function rasterTextExtractionStatusDescription(value: RasterTextExtractionJob["status"]): string {
+  return ({
+    queued: "Raster OCR 텍스트 요청을 대기열에 등록했습니다. 최대 60초 동안 상태를 자동 확인합니다.",
+    running: "Raster OCR 텍스트를 처리 중입니다. 표·셀·위치 정보를 추정하거나 심사에 사용하지 않습니다.",
+    preview_ready: "원본과 대조해 수정할 Raster OCR 텍스트 초안이 준비되었습니다.",
+    needs_review: "일부 OCR 텍스트가 불확실할 수 있습니다. 원본과 대조한 뒤에만 텍스트를 등록하십시오.",
+    unavailable: "현재 승인된 Raster OCR 텍스트 profile이 이 문서의 초안을 제공하지 못했습니다. 자동으로 다른 모델이나 VLM 결과로 바꾸지 않습니다.",
+    failed: "Raster OCR 텍스트 초안을 완료하지 못했습니다. 현재 결과를 새로고침해 상태를 확인하십시오.",
+  })[value];
+}
+
+function rasterTextExtractionNotice(value: RasterTextExtractionJob["status"]): string {
+  return `${rasterTextExtractionStatusLabel(value)}. ${rasterTextExtractionStatusDescription(value)}`;
+}
+
+function rasterTextProfileSupersededNotice(): string {
+  return "현재 OCR 텍스트 profile이 바뀌었습니다. 이전 결과와 새 profile의 텍스트를 섞지 않았습니다. 필요하면 새 Raster OCR 텍스트 요청을 사용하십시오.";
+}
+
+function isRasterTextExtractionPending(job: RasterTextExtractionJob): boolean {
+  return job.status === "queued" || job.status === "running";
+}
+
+function rasterExtractionStatusDescription(value: RasterExtractionJob["status"]): string {
+  return ({
+    queued: "Raster OCR 요청을 대기열에 등록했습니다. 잠시 후 상태를 새로고침하십시오.",
+    running: "Raster OCR과 레이아웃 분석을 처리 중입니다. 결과를 추정하거나 심사에 사용하지 않습니다.",
+    preview_ready: "원본과 대조할 수 있는 Raster OCR·표·위치 후보가 준비되었습니다.",
+    needs_review: "일부 OCR·표·위치 후보가 불확실합니다. 원본과 대조한 뒤에만 텍스트를 등록하십시오.",
+    unavailable: "현재 승인된 Raster OCR profile이 이 문서의 후보를 제공하지 못했습니다. 자동으로 다른 모델이나 VLM 결과로 바꾸지 않습니다.",
+    failed: "Raster OCR 미리보기를 완료하지 못했습니다. 현재 결과를 새로고침해 상태를 확인하십시오. 같은 원본·profile 조합은 안전하게 기존 작업을 재사용합니다.",
+  })[value];
+}
+
+function rasterExtractionNotice(value: RasterExtractionJob["status"]): string {
+  return `${rasterExtractionStatusLabel(value)}. ${rasterExtractionStatusDescription(value)}`;
+}
+
+function rasterProfileSupersededNotice(): string {
+  return "현재 OCR profile이 바뀌었습니다. 이전 결과와 새 profile의 위치·표 정보를 섞지 않았습니다. 필요하면 새 Raster OCR 요청을 사용하십시오.";
+}
+
+function isRasterProfileSupersededError(error: unknown): error is ApiError {
+  return error instanceof ApiError && error.code === "raster_profile_superseded";
+}
+
+function rasterWarningLabel(code: string): string {
+  const labels: Record<string, string> = {
+    ...{
+      human_confirmation_required: "원본과 대조한 사람 확인이 필요합니다.",
+      ocr_low_confidence: "일부 글자 인식 신뢰도가 낮을 수 있어 원본 대조가 필요합니다.",
+      table_structure_uncertain: "표 구조가 불확실할 수 있어 행·열을 원본과 대조해야 합니다.",
+    },
+    document_type_unknown: "문서 유형을 확정하지 못했습니다. B/L·상업송장·포장명세서 이외의 문서는 자동 매핑하지 않습니다.",
+    unsupported_document_type: "이번 Raster OCR 범위에서 지원하지 않는 문서 유형입니다.",
+    source_orientation_unsupported: "이미지 회전 정보가 있어 위치 후보를 안전하게 표시하지 않습니다.",
+    layout_incomplete: "문서의 위치·표 구조가 완전하지 않아 원본 대조가 필요합니다.",
+    no_approved_profile: "이 문서에 사용할 승인된 Raster OCR profile이 없습니다.",
+    raster_profile_unavailable: "현재 사용할 수 있는 Raster OCR profile이 없어 이 작업을 종료했습니다.",
+    raster_profile_superseded: "이 작업의 Raster OCR profile이 새 profile로 교체되어 위치 overlay를 종료했습니다.",
+  };
+  return labels[code] ?? "Raster OCR 후보에 추가 확인이 필요합니다.";
+}
+
+function rasterTextWarningLabel(code: string): string {
+  const labels: Record<string, string> = {
+    human_confirmation_required: "원본과 대조한 사람 확인이 필요합니다.",
+    ocr_low_confidence: "일부 글자 인식 신뢰도가 낮을 수 있어 원본 대조가 필요합니다.",
+    no_approved_profile: "이 문서에 사용할 승인된 Raster OCR 텍스트 profile이 없습니다.",
+    raster_text_profile_unavailable: "현재 사용할 수 있는 Raster OCR 텍스트 profile이 없어 이 작업을 종료했습니다.",
+    raster_text_profile_superseded: "이 작업의 Raster OCR 텍스트 profile이 새 profile로 교체되어 이전 초안을 등록하지 않습니다.",
+    unsupported_document_type: "이번 Raster OCR 텍스트 범위에서 지원하지 않는 문서 유형입니다.",
+  };
+  return labels[code] ?? "Raster OCR 텍스트 초안에 추가 확인이 필요합니다.";
+}
+
+function rasterDocumentTypeLabel(value: NonNullable<RasterDocumentExtractionPreview["document_type"]>): string {
+  return ({
+    bill_of_lading: "선하증권(B/L)",
+    commercial_invoice: "상업송장(Commercial Invoice)",
+    packing_list: "포장명세서(Packing List)",
+  })[value];
+}
+
+function rasterFieldLabel(fieldId: string): string {
+  const labels: Record<string, string> = {
+    bill_of_lading_number: "B/L 번호",
+    invoice_number: "송장 번호",
+    invoice_date: "송장 일자",
+    total_amount: "총 금액",
+    currency: "통화",
+    quantity: "수량",
+    gross_weight: "총중량",
+    net_weight: "순중량",
+    consignee: "수하인",
+    shipper: "송하인",
+  };
+  return labels[fieldId] ?? "추출 필드";
+}
+
+function formatConfidence(value: number): string {
+  return `${Math.round(Math.max(0, Math.min(1, value)) * 100)}%`;
+}
+
+function bboxLabel(bbox: { x: number; y: number; width: number; height: number }): string {
+  return `${Math.round(bbox.x * 100)}%, ${Math.round(bbox.y * 100)}% · ${Math.round(bbox.width * 100)}×${Math.round(bbox.height * 100)}%`;
+}
+
 function extractionCandidateText(job: ExtractionJob, maximum = 200_001): string {
   const pages = job.result?.pages ?? [];
   let result = "";
@@ -3605,9 +5190,96 @@ function extractionCandidateText(job: ExtractionJob, maximum = 200_001): string 
   return result;
 }
 
+function rasterExtractionCandidateText(job: RasterExtractionJob, maximum = 200_001): string {
+  const pages = job.result?.pages ?? [];
+  let result = "";
+  for (const [pageIndex, page] of [...pages].sort((left, right) => left.page_number - right.page_number).entries()) {
+    const pageText = [...page.spans]
+      .sort((left, right) => left.reading_order - right.reading_order || left.ordinal - right.ordinal)
+      .map((span) => span.text)
+      .join("\n");
+    const next = `${pageIndex ? "\n\n" : ""}${pageText}`;
+    if (result.length + next.length > maximum) return `${result}${next}`.slice(0, maximum);
+    result += next;
+  }
+  return result;
+}
+
+function rasterTextExtractionCandidateText(job: RasterTextExtractionJob, maximum = 200_001): string {
+  const preview = job.result;
+  if (preview?.canonical_text?.trim()) return preview.canonical_text.slice(0, maximum);
+  let result = "";
+  for (const [pageIndex, page] of [...(preview?.pages ?? [])].sort((left, right) => left.page_number - right.page_number).entries()) {
+    const next = `${pageIndex ? "\n\f\n" : ""}${page.text}`;
+    if (result.length + next.length > maximum) return `${result}${next}`.slice(0, maximum);
+    result += next;
+  }
+  return result;
+}
+
+function hasRasterTextExtractionCandidate(preview: RasterTextDocumentExtractionPreview): boolean {
+  if (preview.canonical_text?.trim()) return true;
+  return preview.pages.some((page) => page.text.trim().length > 0);
+}
+
+const RASTER_CANDIDATE_CORRECTION_START = "[검토자가 수정한 Raster OCR 후보]\n";
+const RASTER_CANDIDATE_CORRECTION_END = "[/검토자가 수정한 Raster OCR 후보]\n";
+
+/**
+ * Removes or replaces only the exact block that this UI previously appended.
+ * If a reviewer has manually damaged that delimiter, preserve their text
+ * rather than guessing what is safe to remove.
+ */
+function replaceRasterCandidateCorrectionBlock(draft: string, replacement: string): string {
+  const start = draft.indexOf(RASTER_CANDIDATE_CORRECTION_START);
+  if (start < 0) return draft;
+  const end = draft.indexOf(RASTER_CANDIDATE_CORRECTION_END, start + RASTER_CANDIDATE_CORRECTION_START.length);
+  if (end < 0) return draft;
+  return `${draft.slice(0, start)}${replacement}${draft.slice(end + RASTER_CANDIDATE_CORRECTION_END.length)}`;
+}
+
+/** Adds unresolved, evidence-ambiguous corrections without altering a random duplicate. */
+function withRasterCandidateCorrectionBlock(
+  draft: string,
+  edits: ReadonlyMap<string, RasterCandidateEdit>,
+): string {
+  const unresolved = [...edits.values()].filter((edit) => !edit.appliedInDraft);
+  const withoutExistingBlock = replaceRasterCandidateCorrectionBlock(draft, "");
+  if (!unresolved.length) return withoutExistingBlock;
+  const lines = unresolved.map((edit) => {
+    const displayedValue = edit.value ? edit.value.replace(/\r?\n/gu, "\n  ") : "[빈 값으로 수정]";
+    return `- ${edit.label}: ${displayedValue}`;
+  });
+  const separator = withoutExistingBlock ? (withoutExistingBlock.endsWith("\n") ? "\n" : "\n\n") : "";
+  return `${withoutExistingBlock}${separator}${RASTER_CANDIDATE_CORRECTION_START}${lines.join("\n")}\n${RASTER_CANDIDATE_CORRECTION_END}`;
+}
+
+/** Replaces only a unique occurrence; repeated OCR text is intentionally not guessed. */
+function replaceExactlyOne(text: string, previousValue: string, nextValue: string): { text: string; replaced: boolean } {
+  if (!previousValue || previousValue === nextValue) return { text, replaced: previousValue === nextValue };
+  const first = text.indexOf(previousValue);
+  if (first < 0 || text.indexOf(previousValue, first + previousValue.length) >= 0) return { text, replaced: false };
+  return {
+    text: `${text.slice(0, first)}${nextValue}${text.slice(first + previousValue.length)}`,
+    replaced: true,
+  };
+}
+
 function canConfirmExtraction(job: ExtractionJob): boolean {
   if (job.status !== "preview_ready" && job.status !== "needs_review") return false;
   const candidate = extractionCandidateText(job);
+  return Boolean(candidate.trim()) && candidate.length <= 200_000;
+}
+
+function canConfirmRasterExtraction(job: RasterExtractionJob): boolean {
+  if (job.status !== "preview_ready" && job.status !== "needs_review") return false;
+  const candidate = rasterExtractionCandidateText(job);
+  return Boolean(candidate.trim()) && candidate.length <= 200_000;
+}
+
+function canConfirmRasterTextExtraction(job: RasterTextExtractionJob): boolean {
+  if (job.status !== "preview_ready" && job.status !== "needs_review") return false;
+  const candidate = rasterTextExtractionCandidateText(job);
   return Boolean(candidate.trim()) && candidate.length <= 200_000;
 }
 
@@ -3679,6 +5351,9 @@ function textarea(
     maxLength?: number;
     placeholder?: string;
     value?: string;
+    rows?: number;
+    ariaLabel?: string;
+    dataE2E?: string;
     onInput?: EventListener;
     onKeydown?: EventListener;
   },
@@ -3689,7 +5364,9 @@ function textarea(
       required: options.required ? "" : undefined,
       maxlength: options.maxLength === undefined ? undefined : String(options.maxLength),
       placeholder: options.placeholder,
-      rows: "8",
+      rows: String(options.rows ?? 8),
+      "aria-label": options.ariaLabel,
+      "data-e2e": options.dataE2E,
     },
     on: {
       ...(options.onInput ? { input: options.onInput } : {}),

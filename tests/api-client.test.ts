@@ -1,10 +1,20 @@
 import { describe, expect, it, vi } from "vitest";
 import { ApiClient } from "../src/api/v1/client";
-import { decodeReviewRun } from "../src/api/v1/decoders";
+import { decodeDocumentAssetRasterTextExtraction, decodeReviewRun } from "../src/api/v1/decoders";
 import { stableApiErrorMessage } from "../src/api/user-facing-errors";
+
+const V15_TEXT_PROFILE_REVISION = "synthetic-raster-text-v1:12f95aa0bd932311dd7e40fc";
 
 function json(value: unknown, status = 200): Response {
   return new Response(JSON.stringify(value), { status, headers: { "content-type": "application/json" } });
+}
+
+function pngHeader(width: number, height: number): ArrayBuffer {
+  const header = new Uint8Array(24);
+  header.set([137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82]);
+  new DataView(header.buffer).setUint32(16, width);
+  new DataView(header.buffer).setUint32(20, height);
+  return header.buffer as ArrayBuffer;
 }
 
 describe("knowledge input boundary", () => {
@@ -64,6 +74,56 @@ function reviewRunPayload() {
 }
 
 describe("Backend API client", () => {
+  it("accepts only the fail-closed no-active-profile raster-text supersession", () => {
+    const unavailable = {
+      asset: {
+        asset_id: "asset-raster-text-unavailable", case_id: "case-1", document_type: "CI",
+        filename: "scan-invoice.png", media_type: "image/png", byte_size: 5, page_count: 1,
+        pixel_count: 100, created_by: "reviewer", created_at: "2026-08-26T00:00:00Z",
+      },
+      idempotency_reused: false,
+      current_profile_revision: null,
+      profile_superseded: true,
+      job: {
+        raster_text_extraction_job_id: "raster-text-job-unavailable",
+        asset_id: "asset-raster-text-unavailable", case_id: "case-1",
+        profile_revision: "synthetic-raster-text-v1:previous", status: "unavailable",
+        attempt_count: 0, error_code: "raster_text_profile_unavailable",
+        result: {
+          status: "unavailable", pages: [], canonical_text: null,
+          warnings: ["raster_text_profile_unavailable"], needs_review_reasons: [],
+        },
+        created_by: "reviewer", created_at: "2026-08-26T00:00:00Z",
+        updated_at: "2026-08-26T00:00:01Z",
+      },
+    };
+
+    expect(decodeDocumentAssetRasterTextExtraction(unavailable)).toMatchObject({
+      current_profile_revision: null,
+      profile_superseded: true,
+      job: { status: "unavailable" },
+    });
+
+    expect(() => decodeDocumentAssetRasterTextExtraction({
+      ...unavailable,
+      job: { ...unavailable.job, error_code: "raster_text_profile_superseded" },
+    })).toThrow("supersession does not name a newer profile");
+
+    expect(() => decodeDocumentAssetRasterTextExtraction({
+      ...unavailable,
+      job: {
+        ...unavailable.job,
+        status: "preview_ready",
+        error_code: null,
+        result: {
+          status: "preview_ready",
+          pages: [{ page_number: 1, text: "OCR draft", confidence: 0.9 }],
+          canonical_text: "OCR draft", warnings: [], needs_review_reasons: [],
+        },
+      },
+    })).toThrow("supersession does not name a newer profile");
+  });
+
   it("creates a loopback development session without sending a bearer token", async () => {
     const calls: Array<[RequestInfo | URL, RequestInit | undefined]> = [];
     const fetcher: typeof fetch = async (input, init) => {
@@ -178,6 +238,222 @@ describe("Backend API client", () => {
       extraction_job_id: "extraction-1", filename: "invoice.txt", content_text: "INVOICE 001",
     });
     expect(document.document_id).toBe("document-1");
+  });
+
+  it("keeps raster OCR/layout v2 parallel to v1 and fetches the reviewer source with no-store controls", async () => {
+    const calls: Array<{ url: string; init: RequestInit | undefined }> = [];
+    const asset = {
+      asset_id: "asset-raster-1", case_id: "case-1", document_type: "CI", filename: "scan-invoice.png",
+      media_type: "image/png", byte_size: 5, page_count: 1, pixel_count: 100,
+      created_by: "reviewer", created_at: "2026-08-23T00:00:00Z",
+      source_sha256: "a".repeat(64), object_key: "must-not-reach-browser",
+    };
+    const raster = {
+      asset,
+      idempotency_reused: false,
+      current_profile_revision: "synthetic-raster-v1",
+      profile_superseded: false,
+      job: {
+        raster_extraction_job_id: "raster-job-1", asset_id: asset.asset_id, case_id: asset.case_id,
+        profile_revision: "synthetic-raster-v1", status: "needs_review", attempt_count: 1,
+        result: {
+          // A legitimate needs-review response may have no safe document
+          // classification (for example unknown type or EXIF orientation).
+          status: "needs_review", document_type: null, classification_confidence: null,
+          pages: [{
+            page_number: 1, width: 100, height: 100, coordinate_unit: "pixels",
+            spans: [{
+              span_id: "span-raster-1", ordinal: 1, text: "INV-001", bbox: { x: 0.1, y: 0.2, width: 0.2, height: 0.1 },
+              polygon: { points: [{ x: 0.1, y: 0.2 }, { x: 0.3, y: 0.2 }, { x: 0.3, y: 0.3 }, { x: 0.1, y: 0.3 }] },
+              confidence: 0.97, reading_order: 1,
+            }],
+          }],
+          field_candidates: [{ field_id: "invoice_number", value: "INV-001", confidence: 0.97, evidence_span_ids: ["span-raster-1"], bbox: { x: 0.1, y: 0.2, width: 0.2, height: 0.1 } }],
+          tables: [], warnings: ["human_confirmation_required"], needs_review_reasons: ["ocr_low_confidence"],
+          source_sha256: "must-not-reach-browser", canonical_text_sha256: "must-not-reach-browser",
+        },
+        created_by: "reviewer", created_at: "2026-08-23T00:00:00Z", updated_at: "2026-08-23T00:00:01Z",
+      },
+    };
+    const confirmed = {
+      record: {
+        document_id: "document-raster-1", case_id: "case-1", document_type: "CI", filename: "scan-invoice.txt", media_type: "text/plain",
+        content_sha256: "b".repeat(64), byte_size: 7, character_count: 7, created_by: "reviewer", created_at: "2026-08-23T00:01:00Z",
+      },
+      content_text: "INV-001",
+    };
+    const fetcher: typeof fetch = async (input, init) => {
+      const url = String(input);
+      calls.push({ url, init });
+      if (url.endsWith("/raster-extractions") && init?.method === "POST") return json({ ...raster, idempotency_reused: false }, 202);
+      if (url.endsWith("/raster-extractions/raster-job-1") && init?.method === "GET") return json(raster);
+      if (url.endsWith("/raster-extractions/raster-job-1/pages/1") && init?.method === "GET") {
+        return new Response(pngHeader(100, 100), {
+          status: 200,
+          headers: {
+            "content-type": "image/png", "content-length": "24", "content-disposition": "inline; filename=page-1.png",
+            "cache-control": "private, no-store", "x-content-type-options": "nosniff",
+          },
+        });
+      }
+      if (url.endsWith("/source") && init?.method === "GET") {
+        return new Response("IMAGE", {
+          status: 200,
+          headers: {
+            "content-type": "image/png", "content-length": "5", "content-disposition": "inline; filename=scan-invoice.png",
+            "cache-control": "private, no-store", pragma: "no-cache", "x-content-type-options": "nosniff",
+          },
+        });
+      }
+      if (url.endsWith("/confirmed-document") && init?.method === "POST") return json(confirmed, 201);
+      return json({ detail: "unexpected request" }, 500);
+    };
+    const api = new ApiClient(fetcher, async () => "local-token");
+
+    const started = await api.requestRasterDocumentExtraction("case-1", asset.asset_id, "raster-key-1");
+    const refreshed = await api.getRasterDocumentExtraction("case-1", asset.asset_id, "raster-job-1");
+    const page = await api.getRasterExtractionPage("case-1", asset.asset_id, "raster-job-1", 1, { width: 100, height: 100 });
+    const source = await api.getDocumentAssetSource("case-1", started.asset);
+    const document = await api.confirmDocumentExtraction("case-1", asset.asset_id, {
+      raster_extraction_job_id: "raster-job-1", filename: "scan-invoice.txt", content_text: "INV-001",
+    });
+
+    expect(started.job.result?.field_candidates[0]?.value).toBe("INV-001");
+    expect(started.job.result?.document_type).toBeUndefined();
+    expect(started.job.result?.classification_confidence).toBeUndefined();
+    expect(started.job.result).not.toHaveProperty("source_sha256");
+    expect(started.job.result).not.toHaveProperty("canonical_text_sha256");
+    expect(started.current_profile_revision).toBe("synthetic-raster-v1");
+    expect(started.profile_superseded).toBe(false);
+    expect(refreshed.job.raster_extraction_job_id).toBe("raster-job-1");
+    expect(page.size).toBe(24);
+    expect(await source.text()).toBe("IMAGE");
+    expect(document.document_id).toBe("document-raster-1");
+    expect(calls.map((call) => call.url)).toEqual([
+      "/api/v1/cases/case-1/document-assets/asset-raster-1/raster-extractions",
+      "/api/v1/cases/case-1/document-assets/asset-raster-1/raster-extractions/raster-job-1",
+      "/api/v1/cases/case-1/document-assets/asset-raster-1/raster-extractions/raster-job-1/pages/1",
+      "/api/v1/cases/case-1/document-assets/asset-raster-1/source",
+      "/api/v1/cases/case-1/document-assets/asset-raster-1/confirmed-document",
+    ]);
+    expect(new Headers(calls[0]?.init?.headers).get("Idempotency-Key")).toBe("raster-key-1");
+    expect(new Headers(calls[2]?.init?.headers).get("Cache-Control")).toBe("no-store");
+    expect(new Headers(calls[3]?.init?.headers).get("Cache-Control")).toBe("no-store");
+    expect(calls[2]?.init?.signal).toBeDefined();
+    expect(JSON.parse(String(calls[4]?.init?.body))).toEqual({
+      raster_extraction_job_id: "raster-job-1", filename: "scan-invoice.txt", content_text: "INV-001",
+    });
+    expect(() => api.getRasterExtractionPage("case-1", asset.asset_id, "raster-job-1", 21, { width: 100, height: 100 })).toThrow("page number is invalid");
+    expect(() => api.confirmDocumentExtraction("case-1", asset.asset_id, {
+      extraction_job_id: "legacy-job", raster_extraction_job_id: "raster-job-1", filename: "duplicate.txt", content_text: "INV-001",
+    })).toThrow("exactly one extraction job ID");
+  });
+
+  it("keeps text-only raster OCR separate from layout v2 and confirms only the edited text", async () => {
+    const timeout = vi.spyOn(AbortSignal, "timeout");
+    const calls: Array<{ url: string; init: RequestInit | undefined }> = [];
+    const asset = {
+      asset_id: "asset-raster-text-1", case_id: "case-1", document_type: "CI", filename: "scan-invoice.jpg",
+      media_type: "image/jpeg", byte_size: 5, page_count: 1, pixel_count: 100,
+      created_by: "reviewer", created_at: "2026-08-25T00:00:00Z",
+      source_sha256: "a".repeat(64), object_key: "must-not-reach-browser",
+    };
+    const rasterText = {
+      asset,
+      idempotency_reused: false,
+      current_profile_revision: V15_TEXT_PROFILE_REVISION,
+      profile_superseded: false,
+      job: {
+        raster_text_extraction_job_id: "raster-text-job-1", asset_id: asset.asset_id, case_id: asset.case_id,
+        profile_revision: V15_TEXT_PROFILE_REVISION, status: "needs_review", attempt_count: 1,
+        result: {
+          status: "needs_review",
+          pages: [{ page_number: 1, text: "INVOICE 001\nTOTAL USD 100", confidence: null }],
+          canonical_text: "INVOICE 001\nTOTAL USD 100",
+          warnings: ["human_confirmation_required"], needs_review_reasons: ["ocr_low_confidence"],
+          source_sha256: "must-not-reach-browser", provider_error: "must-not-reach-browser",
+        },
+        created_by: "reviewer", created_at: "2026-08-25T00:00:00Z", updated_at: "2026-08-25T00:00:01Z",
+      },
+    };
+    const confirmed = {
+      record: {
+        document_id: "document-raster-text-1", case_id: "case-1", document_type: "CI", filename: "scan-invoice.txt", media_type: "text/plain",
+        content_sha256: "b".repeat(64), byte_size: 25, character_count: 25, created_by: "reviewer", created_at: "2026-08-25T00:01:00Z",
+      },
+      content_text: "INVOICE 001\nTOTAL USD 100",
+    };
+    const fetcher: typeof fetch = async (input, init) => {
+      const url = String(input);
+      calls.push({ url, init });
+      if (url.endsWith("/raster-text-extractions") && init?.method === "POST") return json(rasterText, 202);
+      if (url.endsWith("/raster-text-extractions/raster-text-job-1") && init?.method === "GET") return json(rasterText);
+      if (url.endsWith("/confirmed-document") && init?.method === "POST") return json(confirmed, 201);
+      return json({ detail: "unexpected request" }, 500);
+    };
+    const api = new ApiClient(fetcher, async () => "local-token");
+
+    const started = await api.requestRasterTextDocumentExtraction("case-1", asset.asset_id, "raster-text-key-1");
+    const refreshed = await api.getRasterTextDocumentExtraction("case-1", asset.asset_id, "raster-text-job-1");
+    const document = await api.confirmDocumentExtraction("case-1", asset.asset_id, {
+      raster_text_extraction_job_id: "raster-text-job-1", filename: "scan-invoice.txt", content_text: "INVOICE 001\nTOTAL USD 100",
+    });
+
+    expect(started.job.result?.pages).toEqual([{ page_number: 1, text: "INVOICE 001\nTOTAL USD 100", confidence: null }]);
+    expect(started.job.result?.canonical_text).toBe("INVOICE 001\nTOTAL USD 100");
+    expect(started.job.profile_revision).toBe(V15_TEXT_PROFILE_REVISION);
+    expect(started.job.result).not.toHaveProperty("source_sha256");
+    expect(started.job.result).not.toHaveProperty("provider_error");
+    expect(started.job.result).not.toHaveProperty("tables");
+    expect(refreshed.job.raster_text_extraction_job_id).toBe("raster-text-job-1");
+    expect(document.document_id).toBe("document-raster-text-1");
+    expect(calls.map((call) => call.url)).toEqual([
+      "/api/v1/cases/case-1/document-assets/asset-raster-text-1/raster-text-extractions",
+      "/api/v1/cases/case-1/document-assets/asset-raster-text-1/raster-text-extractions/raster-text-job-1",
+      "/api/v1/cases/case-1/document-assets/asset-raster-text-1/confirmed-document",
+    ]);
+    expect(new Headers(calls[0]?.init?.headers).get("Idempotency-Key")).toBe("raster-text-key-1");
+    expect(timeout).toHaveBeenNthCalledWith(1, 30_000);
+    timeout.mockRestore();
+    expect(JSON.parse(String(calls[2]?.init?.body))).toEqual({
+      raster_text_extraction_job_id: "raster-text-job-1", filename: "scan-invoice.txt", content_text: "INVOICE 001\nTOTAL USD 100",
+    });
+    expect(() => api.confirmDocumentExtraction("case-1", asset.asset_id, {
+      extraction_job_id: "legacy-job", raster_text_extraction_job_id: "raster-text-job-1", filename: "duplicate.txt", content_text: "INVOICE 001",
+    })).toThrow("exactly one extraction job ID");
+  });
+
+  it("validates raster-page PNG bytes and dimensions before returning a browser-viewer Blob", async () => {
+    const timeout = vi.spyOn(AbortSignal, "timeout");
+    const fetcher: typeof fetch = async () => new Response(pngHeader(101, 100), {
+      status: 200,
+      headers: {
+        "content-type": "image/png", "content-length": "24", "content-disposition": "inline; filename=page-1.png",
+        "cache-control": "private, no-store", "x-content-type-options": "nosniff",
+      },
+    });
+    const api = new ApiClient(fetcher, async () => "local-token");
+    try {
+      await expect(api.getRasterExtractionPage("case-1", "asset-1", "raster-job-1", 1, { width: 100, height: 100 }))
+        .rejects.toThrow("dimensions do not match");
+      expect(timeout).toHaveBeenCalledWith(30_000);
+    } finally {
+      timeout.mockRestore();
+    }
+  });
+
+  it("rejects a MIME-labelled raster page without a PNG signature", async () => {
+    const fetcher: typeof fetch = async () => new Response(new ArrayBuffer(24), {
+      status: 200,
+      headers: {
+        "content-type": "image/png", "content-length": "24", "content-disposition": "inline; filename=page-1.png",
+        "cache-control": "private, no-store", "x-content-type-options": "nosniff",
+      },
+    });
+    const api = new ApiClient(fetcher, async () => "local-token");
+
+    await expect(api.getRasterExtractionPage("case-1", "asset-1", "raster-job-1", 1, { width: 100, height: 100 }))
+      .rejects.toThrow("not a PNG");
   });
 
   it("allows exactly 16 MiB of a preview asset and blocks one extra byte before any request", async () => {

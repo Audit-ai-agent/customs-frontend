@@ -8,6 +8,8 @@ import {
   decodeCorrectionProposal,
   decodeDocumentAsset,
   decodeDocumentAssetExtraction,
+  decodeDocumentAssetRasterExtraction,
+  decodeDocumentAssetRasterTextExtraction,
   decodeDocumentListItem,
   decodeDocumentView,
   decodeJob,
@@ -37,6 +39,9 @@ import type {
   CorrectionProposal,
   DocumentAsset,
   DocumentAssetExtraction,
+  DocumentAssetRasterExtraction,
+  DocumentAssetRasterTextExtraction,
+  RasterExtractionPage,
   CreateRevisionRequest,
   EnqueueReviewRequest,
   FindingDecisionRequest,
@@ -65,6 +70,18 @@ const REQUEST_TIMEOUT_MS = 30_000;
 // return its terminal Job projection.
 const REVIEW_EXECUTION_TIMEOUT_MS = 120_000;
 const DOCUMENT_EXTRACTION_TIMEOUT_MS = 120_000;
+// Raster extraction POSTs only enqueue durable work; OCR runs in Backend's
+// worker under its own 60-second Agent limit.  A stalled enqueue should keep
+// the normal interactive request bound instead of inheriting synchronous v1.
+const RASTER_EXTRACTION_ENQUEUE_TIMEOUT_MS = 30_000;
+// A structured-raster PDF page is bounded by two short profile checks around
+// Backend's 15-second Agent render call.  Thirty seconds leaves handoff margin
+// without carrying the historical 420-second offline-evaluator budget into
+// an interactive Browser request.  Text-only OCR never uses this route.
+const RASTER_PAGE_VIEWER_TIMEOUT_MS = 30_000;
+// A raster page is a transient reviewer preview, not an uploaded source.
+// Keep it bounded even when a small PDF expands into a high-DPI image.
+const MAX_RASTER_PAGE_PREVIEW_BYTES = 32 * 1024 * 1024;
 // Match the Agent's isolated binary-admission default.  Backend revalidates
 // the same bound before any source bytes reach the local preview adapter.
 const MAX_DOCUMENT_ASSET_UPLOAD_BYTES = 16 * 1024 * 1024;
@@ -242,6 +259,139 @@ export class ApiClient {
     );
   }
 
+  /**
+   * Starts the independently approved raster-OCR/layout v2 profile.  It is
+   * additive to v1 and still produces only a human-review preview.
+   */
+  requestRasterDocumentExtraction(
+    caseId: string,
+    assetId: string,
+    idempotencyKey: string,
+  ): Promise<DocumentAssetRasterExtraction> {
+    if (!isSafeIdempotencyKey(idempotencyKey)) throw new ContractError("raster extraction Idempotency-Key is invalid");
+    return this.request(
+      `/cases/${segment(caseId)}/document-assets/${segment(assetId)}/raster-extractions`,
+      { method: "POST", headers: { "Idempotency-Key": idempotencyKey } },
+      (value) => {
+        const extraction = decodeDocumentAssetRasterExtraction(value);
+        this.assertIdentity(extraction.asset.case_id, caseId, "Raster document extraction Case");
+        this.assertIdentity(extraction.asset.asset_id, assetId, "Raster document extraction asset");
+        return extraction;
+      },
+      true,
+      RASTER_EXTRACTION_ENQUEUE_TIMEOUT_MS,
+    );
+  }
+
+  getRasterDocumentExtraction(
+    caseId: string,
+    assetId: string,
+    rasterExtractionJobId: string,
+  ): Promise<DocumentAssetRasterExtraction> {
+    return this.request(
+      `/cases/${segment(caseId)}/document-assets/${segment(assetId)}/raster-extractions/${segment(rasterExtractionJobId)}`,
+      { method: "GET" },
+      (value) => {
+        const extraction = decodeDocumentAssetRasterExtraction(value);
+        this.assertIdentity(extraction.asset.case_id, caseId, "Raster document extraction Case");
+        this.assertIdentity(extraction.asset.asset_id, assetId, "Raster document extraction asset");
+        this.assertIdentity(extraction.job.raster_extraction_job_id, rasterExtractionJobId, "Raster document extraction job");
+        return extraction;
+      },
+    );
+  }
+
+  /**
+   * Starts the independently approved text-only raster OCR profile.  Unlike
+   * raster v2 this response contains no layout/table/cell projection.
+   */
+  requestRasterTextDocumentExtraction(
+    caseId: string,
+    assetId: string,
+    idempotencyKey: string,
+  ): Promise<DocumentAssetRasterTextExtraction> {
+    if (!isSafeIdempotencyKey(idempotencyKey)) throw new ContractError("raster text extraction Idempotency-Key is invalid");
+    return this.request(
+      `/cases/${segment(caseId)}/document-assets/${segment(assetId)}/raster-text-extractions`,
+      { method: "POST", headers: { "Idempotency-Key": idempotencyKey } },
+      (value) => {
+        const extraction = decodeDocumentAssetRasterTextExtraction(value);
+        this.assertIdentity(extraction.asset.case_id, caseId, "Raster text document extraction Case");
+        this.assertIdentity(extraction.asset.asset_id, assetId, "Raster text document extraction asset");
+        return extraction;
+      },
+      true,
+      RASTER_EXTRACTION_ENQUEUE_TIMEOUT_MS,
+    );
+  }
+
+  getRasterTextDocumentExtraction(
+    caseId: string,
+    assetId: string,
+    rasterTextExtractionJobId: string,
+  ): Promise<DocumentAssetRasterTextExtraction> {
+    return this.request(
+      `/cases/${segment(caseId)}/document-assets/${segment(assetId)}/raster-text-extractions/${segment(rasterTextExtractionJobId)}`,
+      { method: "GET" },
+      (value) => {
+        const extraction = decodeDocumentAssetRasterTextExtraction(value);
+        this.assertIdentity(extraction.asset.case_id, caseId, "Raster text document extraction Case");
+        this.assertIdentity(extraction.asset.asset_id, assetId, "Raster text document extraction asset");
+        this.assertIdentity(extraction.job.raster_text_extraction_job_id, rasterTextExtractionJobId, "Raster text document extraction job");
+        return extraction;
+      },
+    );
+  }
+
+  /**
+   * Fetches an inline reviewer source into transient memory only.  Callers
+   * must revoke any object URL they create; this client never writes source
+   * bytes to JSON, local/session storage, IndexedDB, or application state.
+   */
+  getDocumentAssetSource(caseId: string, asset: DocumentAsset, signal?: AbortSignal): Promise<Blob> {
+    return this.requestBinary(
+      `/cases/${segment(caseId)}/document-assets/${segment(asset.asset_id)}/source`,
+      asset.media_type,
+      asset.byte_size,
+      asset.byte_size,
+      signal,
+      true,
+    );
+  }
+
+  /**
+   * Fetches exactly one Backend-rasterized PDF page for geometry overlay.
+   * The page is created by the same approved raster job, so normalized OCR
+   * coordinates remain meaningful without shipping a PDF renderer to Browser.
+   */
+  getRasterExtractionPage(
+    caseId: string,
+    assetId: string,
+    rasterExtractionJobId: string,
+    pageNumber: number,
+    expectedPage: Pick<RasterExtractionPage, "width" | "height">,
+    signal?: AbortSignal,
+  ): Promise<Blob> {
+    if (!Number.isInteger(pageNumber) || pageNumber < 1 || pageNumber > 20) {
+      throw new ContractError("raster extraction page number is invalid");
+    }
+    if (!isPositiveSafeInteger(expectedPage.width) || !isPositiveSafeInteger(expectedPage.height)) {
+      throw new ContractError("raster extraction expected page dimensions are invalid");
+    }
+    return this.requestBinary(
+      `/cases/${segment(caseId)}/document-assets/${segment(assetId)}/raster-extractions/${segment(rasterExtractionJobId)}/pages/${pageNumber}`,
+      "image/png",
+      undefined,
+      MAX_RASTER_PAGE_PREVIEW_BYTES,
+      signal,
+      false,
+      RASTER_PAGE_VIEWER_TIMEOUT_MS,
+    ).then(async (blob) => {
+      await assertRasterPagePng(blob, expectedPage);
+      return blob;
+    });
+  }
+
   /** A reviewer-confirmed text copy is the sole OCR-to-review transition. */
   confirmDocumentExtraction(
     caseId: string,
@@ -253,14 +403,27 @@ export class ApiClient {
     if (!contentText.trim() || contentText.length > MAX_TEXT_DOCUMENT_CHARACTERS) {
       throw new ContractError("confirmed extraction text is invalid");
     }
-    const extractionJobId = requestIdentifier(payload.extraction_job_id, "extraction job ID");
+    const extractionJobId = payload.extraction_job_id === undefined || payload.extraction_job_id === null
+      ? undefined
+      : requestIdentifier(payload.extraction_job_id, "extraction job ID");
+    const rasterExtractionJobId = payload.raster_extraction_job_id === undefined || payload.raster_extraction_job_id === null
+      ? undefined
+      : requestIdentifier(payload.raster_extraction_job_id, "raster extraction job ID");
+    const rasterTextExtractionJobId = payload.raster_text_extraction_job_id === undefined || payload.raster_text_extraction_job_id === null
+      ? undefined
+      : requestIdentifier(payload.raster_text_extraction_job_id, "raster text extraction job ID");
+    if ([extractionJobId, rasterExtractionJobId, rasterTextExtractionJobId].filter((value) => value !== undefined).length !== 1) {
+      throw new ContractError("exactly one extraction job ID is required");
+    }
     const replacesDocumentId = payload.replaces_document_id === undefined || payload.replaces_document_id === null
       ? undefined
       : requestIdentifier(payload.replaces_document_id, "replacement document ID");
     return this.request(
       `/cases/${segment(caseId)}/document-assets/${segment(assetId)}/confirmed-document`,
       this.json("POST", {
-        extraction_job_id: extractionJobId,
+        ...(extractionJobId === undefined ? {} : { extraction_job_id: extractionJobId }),
+        ...(rasterExtractionJobId === undefined ? {} : { raster_extraction_job_id: rasterExtractionJobId }),
+        ...(rasterTextExtractionJobId === undefined ? {} : { raster_text_extraction_job_id: rasterTextExtractionJobId }),
         filename,
         content_text: contentText,
         ...(replacesDocumentId === undefined ? {} : { replaces_document_id: replacesDocumentId }),
@@ -616,6 +779,72 @@ export class ApiClient {
     return decoder(body);
   }
 
+  private async requestBinary(
+    path: string,
+    expectedMediaType: DocumentAsset["media_type"],
+    expectedByteSize: number | undefined,
+    maximumByteSize: number,
+    callerSignal?: AbortSignal,
+    requireLegacyNoCache = false,
+    timeoutMs = REQUEST_TIMEOUT_MS,
+  ): Promise<Blob> {
+    const token = await this.accessToken?.();
+    if (!token) throw new ApiError("browser token is absent", 401);
+    let response: Response;
+    try {
+      response = await this.fetcher(`${API_BASE}${path}`, {
+        method: "GET",
+        headers: {
+          Accept: expectedMediaType,
+          Authorization: `Bearer ${token}`,
+          "Cache-Control": "no-store",
+          Pragma: "no-cache",
+        },
+        credentials: "same-origin",
+        redirect: "error",
+        referrerPolicy: "same-origin",
+        signal: requestSignal(timeoutMs, callerSignal),
+      });
+    } catch {
+      throw new ApiError("Backend source-viewer request failed before a response", 503);
+    }
+    if (!response.ok) {
+      const problem = decodeProblem(await readJson(response), response.status);
+      throw new ApiError(problem.detail, problem.status, problem.code, problem.request_id);
+    }
+    const actualMediaType = response.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase();
+    if (actualMediaType !== expectedMediaType) throw new ContractError("source viewer returned an unexpected media type");
+    if (!/^inline(?:;|$)/iu.test(response.headers.get("content-disposition") ?? "")) {
+      throw new ContractError("source viewer must use inline content disposition");
+    }
+    if (!/(?:^|,)\s*no-store(?:\s|,|$)/iu.test(response.headers.get("cache-control") ?? "")) {
+      throw new ContractError("source viewer response must be no-store");
+    }
+    if (requireLegacyNoCache && (response.headers.get("pragma") ?? "").toLowerCase() !== "no-cache") {
+      throw new ContractError("source viewer response must disable legacy caching");
+    }
+    if ((response.headers.get("x-content-type-options") ?? "").toLowerCase() !== "nosniff") {
+      throw new ContractError("source viewer response must prevent MIME sniffing");
+    }
+    const contentLength = response.headers.get("content-length");
+    if (
+      contentLength !== null
+      && (!/^\d+$/u.test(contentLength)
+        || Number(contentLength) > maximumByteSize
+        || (expectedByteSize !== undefined && Number(contentLength) !== expectedByteSize))
+    ) {
+      throw new ContractError("source viewer response has an unexpected byte length");
+    }
+    const blob = await response.blob();
+    if (blob.type && blob.type.split(";", 1)[0]?.toLowerCase() !== expectedMediaType) {
+      throw new ContractError("source viewer blob has an unexpected media type");
+    }
+    if (blob.size > maximumByteSize || (expectedByteSize !== undefined && blob.size !== expectedByteSize)) {
+      throw new ContractError("source viewer response has an unexpected byte length");
+    }
+    return blob;
+  }
+
   private assertIdentity(actual: string, expected: string, label: string): void {
     if (actual !== expected) throw new ContractError(label + " does not match the requested identifier");
   }
@@ -702,6 +931,57 @@ async function readJson(response: Response): Promise<unknown> {
   } catch {
     throw new ContractError("Backend response contains invalid JSON");
   }
+}
+
+/**
+ * PNG media type alone is not enough for a coordinate overlay.  Verify the
+ * fixed PNG signature and IHDR dimensions before an object URL is created.
+ */
+async function assertRasterPagePng(
+  blob: Blob,
+  expectedPage: Pick<RasterExtractionPage, "width" | "height">,
+): Promise<void> {
+  if (blob.size < 24) throw new ContractError("raster extraction page PNG is incomplete");
+  const header = new Uint8Array(await blob.slice(0, 24).arrayBuffer());
+  const signature = [137, 80, 78, 71, 13, 10, 26, 10];
+  if (signature.some((value, index) => header[index] !== value)) {
+    throw new ContractError("raster extraction page is not a PNG");
+  }
+  if (
+    header[8] !== 0 || header[9] !== 0 || header[10] !== 0 || header[11] !== 13
+    || header[12] !== 73 || header[13] !== 72 || header[14] !== 68 || header[15] !== 82
+  ) {
+    throw new ContractError("raster extraction page PNG has no valid IHDR");
+  }
+  const width = readPngUint32(header, 16);
+  const height = readPngUint32(header, 20);
+  if (width !== expectedPage.width || height !== expectedPage.height) {
+    throw new ContractError("raster extraction page dimensions do not match the OCR result");
+  }
+}
+
+function readPngUint32(header: Uint8Array, offset: number): number {
+  return (header[offset]! * 0x1_000000) + (header[offset + 1]! << 16) + (header[offset + 2]! << 8) + header[offset + 3]!;
+}
+
+function isPositiveSafeInteger(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value > 0;
+}
+
+/** Merge a caller cancellation with the normal public-request timeout. */
+function requestSignal(timeoutMs: number, callerSignal?: AbortSignal): AbortSignal {
+  const timeout = AbortSignal.timeout(timeoutMs);
+  if (!callerSignal) return timeout;
+  const withAny = AbortSignal as typeof AbortSignal & {
+    any?: (signals: AbortSignal[]) => AbortSignal;
+  };
+  if (typeof withAny.any === "function") return withAny.any([timeout, callerSignal]);
+  const controller = new AbortController();
+  const abort = () => controller.abort();
+  timeout.addEventListener("abort", abort, { once: true });
+  callerSignal.addEventListener("abort", abort, { once: true });
+  if (timeout.aborted || callerSignal.aborted) controller.abort();
+  return controller.signal;
 }
 
 function validDocumentType(value: unknown): UploadDocumentAssetRequest["document_type"] {
