@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import type { ReviewComparison, ReviewRun } from "../api/v1/types";
+import type { DocumentAsset, RasterTextExtractionJob, ReviewComparison, ReviewRun } from "../api/v1/types";
 import { isDocumentSource } from "../api/v1/types";
 import type { AssetWorkbenchEntry } from "./store";
 import { DOCUMENT_TYPES } from "./constants";
@@ -11,6 +11,9 @@ import {
   extractionStatusLabel,
   extractionUnavailableMessage,
   focusDataTarget,
+  rasterTextExtractionStatusLabel,
+  rasterTextPreviewText,
+  rasterTextWarningLabel,
 } from "./labels";
 import { EmptyCopy, EmptyState, Field, Metric, RoleBoundaryNote, SectionHeading, Submit } from "./primitives";
 import { DutyDiagnosisStage, HsClassificationCard, OriginVerificationCard } from "./trade";
@@ -124,8 +127,8 @@ function UploadAssetForm() {
       }}
     >
       <p className="form-hint">
-        원본 파일은 그대로 보존되며, 추출된 텍스트는 검수·확정 전에는 심사에 사용되지 않습니다. 이미지·스캔 문서는 이
-        환경에서 자동 추출을 제공하지 않습니다.
+        원본 파일은 그대로 보존됩니다. 일반 PDF는 내장 텍스트를 먼저 읽고, 스캔 PDF·JPG·PNG는 별도의 OCR 텍스트
+        초안을 실행할 수 있습니다. 어떤 결과도 검수·확정 전에는 심사에 사용되지 않습니다.
       </p>
       <div className="form-grid">
         <Field label="문서 유형">
@@ -192,6 +195,7 @@ function AssetRow({ entry }: { entry: AssetWorkbenchEntry }) {
       {extraction && extraction.status === "unavailable" ? (
         <p className="asset-row__note">{extractionUnavailableMessage(extraction.result?.warnings)}</p>
       ) : null}
+      <RasterTextExtractionPanel entry={entry} confirmed={confirmed} />
       {confirmable && preview && store.hasRole("reviewer") ? (
         <ConfirmExtractionPanel
           assetId={asset.asset_id}
@@ -203,6 +207,245 @@ function AssetRow({ entry }: { entry: AssetWorkbenchEntry }) {
         />
       ) : null}
     </article>
+  );
+}
+
+function RasterTextExtractionPanel({ entry, confirmed }: { entry: AssetWorkbenchEntry; confirmed: boolean }) {
+  const store = useStore();
+  const state = useWorkbenchState();
+  const envelope = entry.rasterTextExtraction;
+  const job = envelope?.job ?? null;
+  const preview = job?.result ?? null;
+  const candidate = rasterTextPreviewText(preview);
+  const pending = job?.status === "queued" || job?.status === "running";
+  const confirmable = !confirmed
+    && envelope !== null
+    && !envelope.profile_superseded
+    && (job?.status === "preview_ready" || job?.status === "needs_review")
+    && Boolean(candidate.trim());
+  const notices = [...new Set([...(preview?.warnings ?? []), ...(preview?.needs_review_reasons ?? [])])];
+
+  return (
+    <section className="raster-text-panel" data-testid="raster-text-panel">
+      <div className="raster-text-panel__head">
+        <div>
+          <strong>스캔·이미지 OCR 텍스트</strong>
+          <p>텍스트만 읽습니다. 표·셀·위치 구조는 만들거나 추정하지 않습니다.</p>
+        </div>
+        {job ? (
+          <span className={`asset-status asset-status--${job.status}`}>{rasterTextExtractionStatusLabel(job.status)}</span>
+        ) : null}
+      </div>
+
+      {!job && store.hasRole("reviewer") ? (
+        <button
+          className="btn"
+          type="button"
+          disabled={entry.rasterTextExtracting || state.busy || confirmed}
+          onClick={() => void store.runRasterTextExtraction(entry.asset.asset_id)}
+        >
+          {entry.rasterTextExtracting ? "OCR 요청 중…" : "스캔·이미지 OCR 실행"}
+        </button>
+      ) : null}
+
+      {job ? (
+        <div className="raster-text-panel__actions">
+          <button
+            className="btn"
+            type="button"
+            disabled={entry.rasterTextExtracting || state.busy}
+            onClick={() => void store.refreshRasterTextExtraction(entry.asset.asset_id)}
+          >
+            {entry.rasterTextExtracting ? "상태 확인 중…" : "OCR 상태 새로고침"}
+          </button>
+          {envelope?.profile_superseded ? (
+            <button
+              className="btn primary"
+              type="button"
+              disabled={entry.rasterTextExtracting || state.busy}
+              onClick={() => void store.runRasterTextExtraction(entry.asset.asset_id)}
+            >
+              현재 프로필로 새 OCR 요청
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+
+      {pending ? (
+        <p className="form-hint">3초 간격으로 최대 60초 동안 상태를 자동 확인합니다. OCR 요청 자체는 백그라운드에서 계속 처리됩니다.</p>
+      ) : null}
+      {envelope?.profile_superseded ? (
+        <p className="asset-row__note">OCR 프로필이 바뀌어 이전 초안은 등록할 수 없습니다. 현재 프로필로 새로 요청하십시오.</p>
+      ) : null}
+      {job?.status === "unavailable" || job?.status === "failed" ? (
+        <p className="asset-row__note">{job.status === "unavailable" ? "이 문서의 OCR 텍스트 초안을 제공할 수 없습니다." : "OCR 처리에 실패했습니다. 기존 문서는 변경되지 않았습니다."}</p>
+      ) : null}
+      {notices.length ? (
+        <ul className="raster-text-notices">
+          {notices.map((code) => <li key={code}>{rasterTextWarningLabel(code)}</li>)}
+        </ul>
+      ) : null}
+      {preview?.pages.length ? (
+        <div className="raster-text-pages">
+          {[...preview.pages].sort((left, right) => left.page_number - right.page_number).map((page) => (
+            <details key={page.page_number} open={preview.pages.length === 1}>
+              <summary>
+                {page.page_number}쪽
+                {page.confidence === null ? " · 신뢰도 정보 없음" : ` · 신뢰도 ${Math.round(page.confidence * 1000) / 10}%`}
+              </summary>
+              <pre>{page.text}</pre>
+            </details>
+          ))}
+        </div>
+      ) : null}
+      {confirmable && job ? (
+        <>
+          <RasterTextSourceViewer asset={entry.asset} />
+          <RasterTextConfirmationPanel
+            key={job.raster_text_extraction_job_id}
+            asset={entry.asset}
+            job={job}
+            initialText={candidate}
+            notices={notices}
+          />
+        </>
+      ) : null}
+    </section>
+  );
+}
+
+function RasterTextSourceViewer({ asset }: { asset: DocumentAsset }) {
+  const store = useStore();
+  const [objectUrl, setObjectUrl] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const controller = useRef<AbortController | null>(null);
+  const objectUrlRef = useRef<string | null>(null);
+
+  const close = () => {
+    controller.current?.abort();
+    controller.current = null;
+    if (objectUrlRef.current !== null) URL.revokeObjectURL(objectUrlRef.current);
+    objectUrlRef.current = null;
+    setObjectUrl(null);
+    setLoading(false);
+  };
+
+  useEffect(() => () => {
+    controller.current?.abort();
+    controller.current = null;
+    if (objectUrlRef.current !== null) URL.revokeObjectURL(objectUrlRef.current);
+    objectUrlRef.current = null;
+  }, []);
+
+  const open = async () => {
+    close();
+    const nextController = new AbortController();
+    controller.current = nextController;
+    setLoading(true);
+    try {
+      const blob = await store.getDocumentAssetSource(asset.asset_id, nextController.signal);
+      if (nextController.signal.aborted || controller.current !== nextController) return;
+      const nextUrl = URL.createObjectURL(blob);
+      if (nextController.signal.aborted || controller.current !== nextController) {
+        URL.revokeObjectURL(nextUrl);
+        return;
+      }
+      objectUrlRef.current = nextUrl;
+      setObjectUrl(nextUrl);
+    } catch (error) {
+      if (!nextController.signal.aborted) store.showError(error);
+    } finally {
+      if (controller.current === nextController) {
+        controller.current = null;
+        setLoading(false);
+      }
+    }
+  };
+
+  return (
+    <section className="raster-text-source-viewer">
+      <div className="raster-text-panel__actions">
+        <strong>원본 대조</strong>
+        {objectUrl ? (
+          <button className="btn" type="button" onClick={close}>원본 닫기</button>
+        ) : (
+          <button className="btn" type="button" disabled={loading} onClick={() => void open()}>
+            {loading ? "원본 불러오는 중…" : "원본과 OCR 텍스트 대조"}
+          </button>
+        )}
+      </div>
+      {objectUrl ? (
+        asset.media_type === "application/pdf" ? (
+          <object className="raster-text-source-viewer__pdf" data={objectUrl} type="application/pdf" aria-label={`${asset.filename} 원본 PDF`}>
+            <p>이 브라우저에서는 PDF 원본을 인라인으로 표시할 수 없습니다.</p>
+          </object>
+        ) : (
+          <img className="raster-text-source-viewer__image" src={objectUrl} alt={`${asset.filename} 원본`} referrerPolicy="no-referrer" />
+        )
+      ) : (
+        <p className="form-hint">원본은 요청할 때만 no-store 응답으로 받아 임시 Blob URL로 표시하며, 닫거나 화면을 벗어나면 즉시 해제합니다.</p>
+      )}
+    </section>
+  );
+}
+
+function RasterTextConfirmationPanel({
+  asset,
+  job,
+  initialText,
+  notices,
+}: {
+  asset: DocumentAsset;
+  job: RasterTextExtractionJob;
+  initialText: string;
+  notices: string[];
+}) {
+  const store = useStore();
+  const state = useWorkbenchState();
+  const [text, setText] = useState(initialText);
+  const [filename, setFilename] = useState(asset.filename.replace(/\.(pdf|jpe?g|png)$/iu, "") + ".txt");
+  return (
+    <details className="asset-confirm-panel raster-text-confirm-panel" open>
+      <summary>{job.status === "needs_review" ? "OCR 텍스트 원본 대조·확정" : "OCR 텍스트 검수·확정"}</summary>
+      <p className="form-hint">
+        아래 전체 텍스트를 직접 대조·수정한 값만 문서로 등록합니다. OCR 초안 자체는 심사 입력이 아닙니다.
+        {notices.length ? ` (${notices.map(rasterTextWarningLabel).join(" ")})` : ""}
+      </p>
+      <form
+        className="asset-confirm-form"
+        onSubmit={(event) => {
+          event.preventDefault();
+          void store.confirmRasterTextExtraction({
+            assetId: asset.asset_id,
+            rasterTextExtractionJobId: job.raster_text_extraction_job_id,
+            contentText: text,
+            filename: filename.trim(),
+          });
+        }}
+      >
+        <Field label="원본과 대조해 확인한 전체 텍스트">
+          <textarea
+            name="raster_text_confirmed_text"
+            rows={12}
+            required
+            maxLength={200_000}
+            value={text}
+            onChange={(event) => setText(event.target.value)}
+          />
+        </Field>
+        <Field label="등록 파일명 (.txt)">
+          <input
+            name="raster_text_confirmed_filename"
+            type="text"
+            required
+            maxLength={255}
+            value={filename}
+            onChange={(event) => setFilename(event.target.value)}
+          />
+        </Field>
+        <Submit label="확인한 OCR 텍스트를 문서로 등록" disabled={state.busy || !text.trim()} />
+      </form>
+    </details>
   );
 }
 

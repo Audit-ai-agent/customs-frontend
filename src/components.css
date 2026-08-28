@@ -62,6 +62,56 @@
   line-height: 1.6;
 }
 
+/* ── Text-only raster OCR review boundary ──────────────────────── */
+.raster-text-panel {
+  display: grid;
+  gap: .75rem;
+  margin-top: .85rem;
+  padding: .9rem;
+  background: var(--krds-primary-bg-soft);
+  border: 1px solid var(--krds-line-2);
+  border-radius: .625rem;
+}
+.raster-text-panel__head,
+.raster-text-panel__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: .5rem .75rem;
+}
+.raster-text-panel__head p { margin: .15rem 0 0; color: var(--krds-muted); font-size: .8rem; }
+.raster-text-panel__actions { justify-content: flex-start; }
+.raster-text-notices { margin: 0; padding-left: 1.25rem; color: var(--krds-warning-strong); font-size: .82rem; }
+.raster-text-pages { display: grid; gap: .45rem; }
+.raster-text-pages details { padding: .55rem .7rem; background: var(--krds-surface); border: 1px solid var(--krds-line); border-radius: .5rem; }
+.raster-text-pages summary { color: var(--krds-text); font-size: .8rem; font-weight: 700; }
+.raster-text-pages pre {
+  max-height: 18rem;
+  margin: .55rem 0 0;
+  padding: .7rem;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--krds-ink);
+  background: var(--krds-surface-2);
+  border-radius: .375rem;
+  font: .78rem/1.55 ui-monospace, SFMono-Regular, Consolas, monospace;
+}
+.raster-text-source-viewer { display: grid; gap: .6rem; padding-top: .7rem; border-top: 1px dashed var(--krds-line-2); }
+.raster-text-source-viewer__pdf,
+.raster-text-source-viewer__image {
+  display: block;
+  width: 100%;
+  max-height: 38rem;
+  background: var(--krds-surface);
+  border: 1px solid var(--krds-line-2);
+  border-radius: .5rem;
+}
+.raster-text-source-viewer__pdf { height: min(60vh, 38rem); }
+.raster-text-source-viewer__image { object-fit: contain; }
+.raster-text-confirm-panel textarea { min-height: 14rem; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; }
+
 * { box-sizing: border-box; }
 html { background: var(--krds-bg); }
 /* Identifiers and hashes are common here; none of them may scroll the page sideways. */

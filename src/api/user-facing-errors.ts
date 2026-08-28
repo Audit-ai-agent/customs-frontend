@@ -11,6 +11,16 @@ export function stableApiErrorMessage(
     return "다른 담당자의 변경이 먼저 반영되었습니다. 최신 내용을 다시 불러온 뒤 시도해 주십시오.";
   }
   if (
+    normalizedCode === "raster_ocr_unavailable"
+    || normalizedCode === "raster_text_ocr_unavailable"
+    || normalizedCode === "raster_text_extraction_unavailable"
+  ) {
+    return "Raster OCR 텍스트 profile이 아직 활성화되지 않았거나 현재 사용할 수 없습니다. 기존 심사 문서는 변경되지 않았습니다.";
+  }
+  if (normalizedCode === "raster_profile_superseded" || normalizedCode === "raster_text_profile_superseded") {
+    return "현재 OCR 텍스트 profile이 바뀌어 이전 텍스트 초안 등록을 중단했습니다. 새 Raster OCR 텍스트 요청을 사용하십시오.";
+  }
+  if (
     normalizedCode.includes("response_rejected")
     || normalizedCode.includes("validation")
     || normalizedCode.includes("contract")

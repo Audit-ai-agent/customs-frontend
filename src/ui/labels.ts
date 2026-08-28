@@ -13,6 +13,9 @@ import type {
   DocumentType,
   ExtractionJob,
   ExtractionPreview,
+  RasterTextExtractionEnvelope,
+  RasterTextExtractionJob,
+  RasterTextExtractionPreview,
   ReportClaim,
   ReportSection,
   ReviewComparison,
@@ -160,6 +163,54 @@ export function extractionPreviewText(preview: ExtractionPreview): string {
     .flatMap((page) => [...page.spans].sort((a, b) => a.reading_order - b.reading_order || a.ordinal - b.ordinal))
     .map((span) => span.text)
     .join("\n");
+}
+
+export function rasterTextExtractionStatusLabel(value: RasterTextExtractionJob["status"]): string {
+  const labels: Record<RasterTextExtractionJob["status"], string> = {
+    queued: "OCR 대기",
+    running: "OCR 처리 중",
+    preview_ready: "OCR 초안 준비됨",
+    needs_review: "OCR 추가 확인 필요",
+    unavailable: "OCR 초안 제공 불가",
+    failed: "OCR 처리 실패",
+  };
+  return labels[value];
+}
+
+export function rasterTextPreviewText(preview: RasterTextExtractionPreview | null | undefined): string {
+  if (preview?.canonical_text?.trim()) return preview.canonical_text;
+  return [...(preview?.pages ?? [])]
+    .sort((left, right) => left.page_number - right.page_number)
+    .map((page) => page.text)
+    .join("\n\f\n");
+}
+
+export function rasterTextWarningLabel(code: string): string {
+  const labels: Readonly<Record<string, string>> = {
+    human_confirmation_required: "원본과 대조한 사람 확인이 필요합니다.",
+    ocr_low_confidence: "일부 글자 인식 신뢰도가 낮을 수 있습니다.",
+    raster_text_profile_unavailable: "현재 사용할 수 있는 OCR 텍스트 프로필이 없습니다.",
+    raster_text_profile_superseded: "OCR 프로필이 바뀌어 이전 초안을 사용할 수 없습니다.",
+    unsupported_document_type: "현재 OCR 지원 범위 밖의 문서 유형입니다.",
+    multi_page_pdf_unsupported: "현재 OCR은 단일 페이지 PDF만 지원합니다.",
+    jpeg_exif_orientation_unsupported: "회전 정보가 있는 JPEG는 안전하게 처리하지 않습니다.",
+  };
+  return labels[code] ?? "OCR 텍스트 초안에 추가 확인이 필요합니다.";
+}
+
+export function rasterTextExtractionNotice(envelope: RasterTextExtractionEnvelope): string {
+  if (envelope.profile_superseded) {
+    return "현재 OCR 프로필이 바뀌었습니다. 이전 초안은 등록할 수 없으므로 새 OCR 요청을 실행하십시오.";
+  }
+  const descriptions: Record<RasterTextExtractionJob["status"], string> = {
+    queued: "OCR 작업이 대기열에 등록되었습니다.",
+    running: "OCR 텍스트를 처리하고 있습니다.",
+    preview_ready: "원본과 대조해 수정할 OCR 텍스트 초안이 준비되었습니다.",
+    needs_review: "일부 OCR 텍스트가 불확실할 수 있으므로 원본 대조가 필요합니다.",
+    unavailable: "현재 문서의 OCR 텍스트 초안을 제공할 수 없습니다.",
+    failed: "OCR 텍스트 처리를 완료하지 못했습니다.",
+  };
+  return `${rasterTextExtractionStatusLabel(envelope.job.status)}. ${descriptions[envelope.job.status]}`;
 }
 
 export function severityLabel(value: ReviewFinding["severity"]): string {

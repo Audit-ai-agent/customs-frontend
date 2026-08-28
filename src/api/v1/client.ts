@@ -25,6 +25,7 @@ import {
   decodeReviewerDecision,
   decodeReviewRun,
   decodeReviewRunSummary,
+  decodeRasterTextExtractionEnvelope,
   decodeSession,
 } from "./decoders";
 import type {
@@ -61,6 +62,7 @@ import type {
   LawSearch,
   OperationsMetrics,
   OriginVerification,
+  RasterTextExtractionEnvelope,
   ReviewProgress,
   ReviewerDecision,
   ReviewRun,
@@ -75,6 +77,7 @@ const API_BASE = "/api/v1" as const;
 const MAX_JSON_BODY_BYTES = 4 * 1024 * 1024;
 /** The Backend's document-asset byte bound (16MiB); checked client-side for a fast, clear error. */
 const MAX_ASSET_BODY_BYTES = 16 * 1024 * 1024;
+const MAX_TEXT_DOCUMENT_CHARACTERS = 200_000;
 const REQUEST_TIMEOUT_MS = 30_000;
 /**
  * Backend runs the whole AI workflow inside the request for review start,
@@ -253,18 +256,87 @@ export class ApiClient {
     );
   }
 
+  /** Enqueues the independently approved text-only OCR profile. */
+  requestRasterTextExtraction(
+    caseId: string,
+    assetId: string,
+    idempotencyKey: string,
+  ): Promise<RasterTextExtractionEnvelope> {
+    if (!isSafeIdempotencyKey(idempotencyKey)) throw new ContractError("raster text extraction Idempotency-Key is invalid");
+    return this.request(
+      `/cases/${segment(caseId)}/document-assets/${segment(assetId)}/raster-text-extractions`,
+      { method: "POST", headers: { "Idempotency-Key": idempotencyKey } },
+      (value) => {
+        const envelope = decodeRasterTextExtractionEnvelope(value);
+        this.assertIdentity(envelope.asset.case_id, caseId, "Raster text extraction Case");
+        this.assertIdentity(envelope.asset.asset_id, assetId, "Raster text extraction asset");
+        return envelope;
+      },
+    );
+  }
+
+  getRasterTextExtraction(
+    caseId: string,
+    assetId: string,
+    rasterTextExtractionJobId: string,
+  ): Promise<RasterTextExtractionEnvelope> {
+    return this.request(
+      `/cases/${segment(caseId)}/document-assets/${segment(assetId)}/raster-text-extractions/${segment(rasterTextExtractionJobId)}`,
+      { method: "GET" },
+      (value) => {
+        const envelope = decodeRasterTextExtractionEnvelope(value);
+        this.assertIdentity(envelope.asset.case_id, caseId, "Raster text extraction Case");
+        this.assertIdentity(envelope.asset.asset_id, assetId, "Raster text extraction asset");
+        this.assertIdentity(envelope.job.raster_text_extraction_job_id, rasterTextExtractionJobId, "Raster text extraction job");
+        return envelope;
+      },
+    );
+  }
+
+  /** Fetches the reviewer-only original into transient memory for inline comparison. */
+  getDocumentAssetSource(caseId: string, asset: DocumentAsset, signal?: AbortSignal): Promise<Blob> {
+    return this.requestBinary(
+      `/cases/${segment(caseId)}/document-assets/${segment(asset.asset_id)}/source`,
+      asset.media_type,
+      asset.byte_size,
+      MAX_ASSET_BODY_BYTES,
+      signal,
+    );
+  }
+
   /** Human-confirmed extracted text enters the existing text-review workflow. */
   confirmExtractedText(
     caseId: string,
     assetId: string,
     payload: ConfirmExtractedTextRequest,
   ): Promise<CaseDocument> {
-    if (!payload.content_text.trim() || payload.content_text.length > 200_000) {
+    if (!payload.content_text.trim() || payload.content_text.length > MAX_TEXT_DOCUMENT_CHARACTERS) {
       throw new ContractError("confirmed text is invalid");
+    }
+    const extractionJobId = payload.extraction_job_id === undefined
+      ? undefined
+      : requestIdentifier(payload.extraction_job_id, "extraction job ID");
+    const rasterTextExtractionJobId = payload.raster_text_extraction_job_id === undefined
+      ? undefined
+      : requestIdentifier(payload.raster_text_extraction_job_id, "raster text extraction job ID");
+    if ([extractionJobId, rasterTextExtractionJobId].filter((value) => value !== undefined).length !== 1) {
+      throw new ContractError("exactly one extraction job ID is required");
+    }
+    const filename = payload.filename.trim();
+    if (!filename || filename.length > 255 || /[\\/\r\n\0]/u.test(filename)) {
+      throw new ContractError("confirmed text filename is invalid");
     }
     return this.request(
       `/cases/${segment(caseId)}/document-assets/${segment(assetId)}/confirmed-document`,
-      this.json("POST", payload),
+      this.json("POST", {
+        ...(extractionJobId === undefined ? {} : { extraction_job_id: extractionJobId }),
+        ...(rasterTextExtractionJobId === undefined ? {} : { raster_text_extraction_job_id: rasterTextExtractionJobId }),
+        content_text: payload.content_text,
+        filename,
+        ...(payload.replaces_document_id === undefined || payload.replaces_document_id === null
+          ? {}
+          : { replaces_document_id: requestIdentifier(payload.replaces_document_id, "replacement document ID") }),
+      }),
       (value) => {
         const item = decodeDocumentView(value);
         this.assertIdentity(item.record.case_id, caseId, "Document Case");
@@ -634,6 +706,62 @@ export class ApiClient {
     return decoder(body);
   }
 
+  private async requestBinary(
+    path: string,
+    expectedMediaType: DocumentAssetMediaType,
+    expectedByteSize: number,
+    maximumByteSize: number,
+    callerSignal?: AbortSignal,
+  ): Promise<Blob> {
+    const token = await this.accessToken?.();
+    if (!token) throw new ApiError("browser token is absent", 401);
+    let response: Response;
+    try {
+      response = await this.fetcher(`${API_BASE}${path}`, {
+        method: "GET",
+        headers: {
+          Accept: expectedMediaType,
+          Authorization: `Bearer ${token}`,
+          "Cache-Control": "no-store",
+          Pragma: "no-cache",
+        },
+        credentials: "same-origin",
+        redirect: "error",
+        referrerPolicy: "same-origin",
+        signal: combinedRequestSignal(REQUEST_TIMEOUT_MS, callerSignal),
+      });
+    } catch {
+      throw new ApiError("Backend source-viewer request failed before a response", 503);
+    }
+    if (!response.ok) {
+      const problem = decodeProblem(await readJson(response), response.status);
+      throw new ApiError(problem.detail, problem.status, problem.code, problem.request_id);
+    }
+    const actualMediaType = response.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase();
+    if (actualMediaType !== expectedMediaType) throw new ContractError("source viewer returned an unexpected media type");
+    if (!/^inline(?:;|$)/iu.test(response.headers.get("content-disposition") ?? "")) {
+      throw new ContractError("source viewer must use inline content disposition");
+    }
+    if (!/(?:^|,)\s*no-store(?:\s|,|$)/iu.test(response.headers.get("cache-control") ?? "")) {
+      throw new ContractError("source viewer response must be no-store");
+    }
+    if ((response.headers.get("x-content-type-options") ?? "").toLowerCase() !== "nosniff") {
+      throw new ContractError("source viewer response must prevent MIME sniffing");
+    }
+    const contentLength = response.headers.get("content-length");
+    if (contentLength !== null && (!/^\d+$/u.test(contentLength) || Number(contentLength) !== expectedByteSize)) {
+      throw new ContractError("source viewer response has an unexpected byte length");
+    }
+    const blob = await response.blob();
+    if (blob.type && blob.type.split(";", 1)[0]?.toLowerCase() !== expectedMediaType) {
+      throw new ContractError("source viewer blob has an unexpected media type");
+    }
+    if (blob.size !== expectedByteSize || blob.size > maximumByteSize) {
+      throw new ContractError("source viewer response has an unexpected byte length");
+    }
+    return blob;
+  }
+
   private assertIdentity(actual: string, expected: string, label: string): void {
     if (actual !== expected) throw new ContractError(label + " does not match the requested identifier");
   }
@@ -727,6 +855,29 @@ function segment(value: string): string {
     throw new ContractError("path identifier is invalid");
   }
   return encodeURIComponent(value);
+}
+
+function requestIdentifier(value: unknown, label: string): string {
+  if (typeof value !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u.test(value)) {
+    throw new ContractError(`${label} is invalid`);
+  }
+  return value;
+}
+
+/** Combines caller cancellation with the normal public-request timeout. */
+function combinedRequestSignal(timeoutMs: number, callerSignal?: AbortSignal): AbortSignal {
+  const timeout = AbortSignal.timeout(timeoutMs);
+  if (!callerSignal) return timeout;
+  const abortSignal = AbortSignal as typeof AbortSignal & {
+    any?: (signals: AbortSignal[]) => AbortSignal;
+  };
+  if (typeof abortSignal.any === "function") return abortSignal.any([timeout, callerSignal]);
+  const controller = new AbortController();
+  const abort = () => controller.abort();
+  timeout.addEventListener("abort", abort, { once: true });
+  callerSignal.addEventListener("abort", abort, { once: true });
+  if (timeout.aborted || callerSignal.aborted) controller.abort();
+  return controller.signal;
 }
 
 function isSafeIdempotencyKey(value: string): boolean {

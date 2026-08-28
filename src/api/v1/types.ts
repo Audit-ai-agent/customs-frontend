@@ -518,8 +518,57 @@ export interface ExtractionJobEnvelope {
   job: ExtractionJob;
 }
 
+/** One page of editable OCR text. No table, cell, span, or geometry is implied. */
+export interface RasterTextExtractionPage {
+  page_number: number;
+  text: string;
+  confidence: number | null;
+}
+
+/** Safe Browser projection of the independently approved text-only OCR draft. */
+export interface RasterTextExtractionPreview {
+  status: "preview_ready" | "needs_review" | "unavailable";
+  pages: RasterTextExtractionPage[];
+  canonical_text: string | null;
+  warnings: string[];
+  needs_review_reasons: string[];
+}
+
+export type RasterTextExtractionJobStatus =
+  | "queued"
+  | "running"
+  | "preview_ready"
+  | "needs_review"
+  | "unavailable"
+  | "failed";
+
+export interface RasterTextExtractionJob {
+  raster_text_extraction_job_id: string;
+  asset_id: string;
+  case_id: string;
+  profile_revision: string;
+  status: RasterTextExtractionJobStatus;
+  attempt_count: number;
+  error_code?: string | null;
+  result?: RasterTextExtractionPreview | null;
+  created_by: string;
+  created_at: string;
+  updated_at: string;
+}
+
+/** Profile binding travels with every response so stale drafts fail closed. */
+export interface RasterTextExtractionEnvelope {
+  asset: DocumentAsset;
+  job: RasterTextExtractionJob;
+  idempotency_reused: boolean;
+  current_profile_revision: string | null;
+  profile_superseded: boolean;
+}
+
 export interface ConfirmExtractedTextRequest {
-  extraction_job_id: string;
+  /** Exactly one of the two job identifiers must be supplied. */
+  extraction_job_id?: string;
+  raster_text_extraction_job_id?: string;
   content_text: string;
   filename: string;
   replaces_document_id?: string | null;

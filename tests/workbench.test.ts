@@ -7,6 +7,7 @@ beforeAll(() => {
 });
 
 afterEach(() => {
+  vi.useRealTimers();
   window.location.hash = "#/cases";
 });
 
@@ -336,5 +337,188 @@ describe("commercial review workspace", () => {
     await flush();
     expect(root.textContent).toContain("사람 제공 값");
     dispose();
+  });
+
+  it("polls text-only OCR through running, revokes the transient original, and confirms only edited text", async () => {
+    window.location.hash = "#/cases/case-1/documents";
+    const caseDetail = { case_id: "case-1", org_id: "local-org", title: "스캔 서류", status: "open" as const, revision: 0, updated_at: "2026-08-29T00:00:00Z" };
+    const asset = {
+      asset_id: "asset-ocr-1", case_id: "case-1", document_type: "CI" as const, filename: "scan.png",
+      media_type: "image/png" as const, byte_size: 4, page_count: 1, pixel_count: 1,
+      created_by: "local-reviewer", created_at: "2026-08-29T00:00:00Z",
+    };
+    const jobBase = {
+      raster_text_extraction_job_id: "raster-text-job-1", asset_id: asset.asset_id, case_id: asset.case_id,
+      profile_revision: "synthetic-raster-text-v1:9eb7f34b", attempt_count: 1,
+      created_by: "local-reviewer", created_at: "2026-08-29T00:00:00Z", updated_at: "2026-08-29T00:00:01Z",
+    };
+    const envelope = (status: "queued" | "running" | "needs_review") => ({
+      asset,
+      job: {
+        ...jobBase,
+        status,
+        ...(status === "needs_review" ? {
+          result: {
+            status: "needs_review" as const,
+            pages: [{ page_number: 1, text: "INVOICE 001", confidence: 0.976 }],
+            canonical_text: "INVOICE 001",
+            warnings: ["human_confirmation_required"],
+            needs_review_reasons: ["ocr_low_confidence"],
+          },
+        } : {}),
+      },
+      idempotency_reused: false,
+      current_profile_revision: jobBase.profile_revision,
+      profile_superseded: false,
+    });
+    const confirmedDocument = { ...DOCUMENT, document_id: "document-ocr-1", filename: "scan.txt", character_count: 18 };
+    let confirmed = false;
+    const getRasterTextExtraction = vi.fn()
+      .mockResolvedValueOnce(envelope("running"))
+      .mockResolvedValueOnce(envelope("needs_review"));
+    const api = {
+      getSession: vi.fn(async () => ({ subject: "local-reviewer", org_id: "local-org", roles: ["reviewer"] })),
+      listCases: vi.fn(async () => ({ items: [caseDetail] })),
+      getCase: vi.fn(async () => caseDetail),
+      listDocuments: vi.fn(async () => confirmed ? [confirmedDocument] : []),
+      listDocumentAssets: vi.fn(async () => [asset]),
+      listReviewRuns: vi.fn(async () => []),
+      requestRasterTextExtraction: vi.fn(async () => envelope("queued")),
+      getRasterTextExtraction,
+      getDocumentAssetSource: vi.fn(async () => new Blob([new Uint8Array([137, 80, 78, 71])], { type: "image/png" })),
+      confirmExtractedText: vi.fn(async () => {
+        confirmed = true;
+        return confirmedDocument;
+      }),
+    };
+    const createObjectUrl = vi.fn(() => "blob:ocr-source");
+    const revokeObjectUrl = vi.fn();
+    const originalCreateObjectUrl = URL.createObjectURL;
+    const originalRevokeObjectUrl = URL.revokeObjectURL;
+    Object.defineProperty(URL, "createObjectURL", { configurable: true, value: createObjectUrl });
+    Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: revokeObjectUrl });
+    const { root, dispose } = await mount(api, AUTH, "local-development");
+
+    expect(root.textContent).toContain("표·셀·위치 구조는 만들거나 추정하지 않습니다.");
+    vi.useFakeTimers();
+    const requestButton = Array.from(root.querySelectorAll<HTMLButtonElement>("button"))
+      .find((button) => button.textContent === "스캔·이미지 OCR 실행");
+    await act(async () => {
+      requestButton?.click();
+      await Promise.resolve();
+    });
+    expect(root.textContent).toContain("OCR 대기");
+    await act(async () => { await vi.advanceTimersByTimeAsync(3_000); });
+    expect(root.textContent).toContain("OCR 처리 중");
+    await act(async () => { await vi.advanceTimersByTimeAsync(3_000); });
+    expect(root.textContent).toContain("OCR 추가 확인 필요");
+    expect(getRasterTextExtraction).toHaveBeenCalledTimes(2);
+    vi.useRealTimers();
+
+    const openSource = Array.from(root.querySelectorAll<HTMLButtonElement>("button"))
+      .find((button) => button.textContent === "원본과 OCR 텍스트 대조");
+    await click(openSource);
+    expect(createObjectUrl).toHaveBeenCalledTimes(1);
+    expect(root.querySelector<HTMLImageElement>(".raster-text-source-viewer__image")?.src).toContain("blob:ocr-source");
+    await click(Array.from(root.querySelectorAll<HTMLButtonElement>("button")).find((button) => button.textContent === "원본 닫기"));
+    expect(revokeObjectUrl).toHaveBeenCalledWith("blob:ocr-source");
+    await click(Array.from(root.querySelectorAll<HTMLButtonElement>("button")).find((button) => button.textContent === "원본과 OCR 텍스트 대조"));
+
+    const form = root.querySelector<HTMLFormElement>(".raster-text-confirm-panel form");
+    const text = form?.querySelector<HTMLTextAreaElement>('textarea[name="raster_text_confirmed_text"]');
+    if (!form || !text) throw new Error("OCR confirmation form is unavailable");
+    setValue(text, "INVOICE 001 EDITED");
+    await submit(form);
+    expect(api.confirmExtractedText).toHaveBeenCalledWith("case-1", "asset-ocr-1", {
+      raster_text_extraction_job_id: "raster-text-job-1",
+      content_text: "INVOICE 001 EDITED",
+      filename: "scan.txt",
+    });
+    expect(root.textContent).toContain("문서로 확정됨");
+    expect(revokeObjectUrl).toHaveBeenCalledTimes(2);
+    dispose();
+    vi.useRealTimers();
+    Object.defineProperty(URL, "createObjectURL", { configurable: true, value: originalCreateObjectUrl });
+    Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: originalRevokeObjectUrl });
+  });
+
+  it("fails closed when no OCR profile is active or a previous profile is superseded", async () => {
+    window.location.hash = "#/cases/case-1/documents";
+    const caseDetail = { case_id: "case-1", org_id: "local-org", title: "스캔 서류", status: "open" as const, revision: 0, updated_at: "2026-08-29T00:00:00Z" };
+    const asset = {
+      asset_id: "asset-ocr-unavailable", case_id: "case-1", document_type: "CI" as const, filename: "scan.jpg",
+      media_type: "image/jpeg" as const, byte_size: 4, page_count: 1, pixel_count: 1,
+      created_by: "local-reviewer", created_at: "2026-08-29T00:00:00Z",
+    };
+    const unavailable = {
+      asset,
+      job: {
+        raster_text_extraction_job_id: "raster-text-job-old", asset_id: asset.asset_id, case_id: asset.case_id,
+        profile_revision: "synthetic-raster-text-v1:old", status: "unavailable" as const, attempt_count: 0,
+        error_code: "raster_text_profile_unavailable",
+        result: {
+          status: "unavailable" as const, pages: [], canonical_text: null,
+          warnings: ["raster_text_profile_unavailable"], needs_review_reasons: [],
+        },
+        created_by: "local-reviewer", created_at: "2026-08-29T00:00:00Z", updated_at: "2026-08-29T00:00:01Z",
+      },
+      idempotency_reused: false,
+      current_profile_revision: null,
+      profile_superseded: true,
+    };
+    const api = {
+      getSession: vi.fn(async () => ({ subject: "local-reviewer", org_id: "local-org", roles: ["reviewer"] })),
+      listCases: vi.fn(async () => ({ items: [caseDetail] })), getCase: vi.fn(async () => caseDetail),
+      listDocuments: vi.fn(async () => []), listDocumentAssets: vi.fn(async () => [asset]), listReviewRuns: vi.fn(async () => []),
+      requestRasterTextExtraction: vi.fn(async () => unavailable),
+    };
+    const { root, dispose } = await mount(api, AUTH, "local-development");
+    await click(Array.from(root.querySelectorAll<HTMLButtonElement>("button")).find((button) => button.textContent === "스캔·이미지 OCR 실행"));
+    expect(root.textContent).toContain("OCR 프로필이 바뀌어 이전 초안은 등록할 수 없습니다.");
+    expect(root.textContent).toContain("현재 사용할 수 있는 OCR 텍스트 프로필이 없습니다.");
+    expect(root.querySelector(".raster-text-confirm-panel")).toBeNull();
+    expect(root.textContent).toContain("현재 프로필로 새 OCR 요청");
+    dispose();
+  });
+
+  it("bounds queued or running OCR polling to twenty checks over sixty seconds", async () => {
+    window.location.hash = "#/cases/case-1/documents";
+    const caseDetail = { case_id: "case-1", org_id: "local-org", title: "스캔 서류", status: "open" as const, revision: 0, updated_at: "2026-08-29T00:00:00Z" };
+    const asset = {
+      asset_id: "asset-ocr-running", case_id: "case-1", document_type: "CI" as const, filename: "scan.pdf",
+      media_type: "application/pdf" as const, byte_size: 4, page_count: 1, pixel_count: 0,
+      created_by: "local-reviewer", created_at: "2026-08-29T00:00:00Z",
+    };
+    const makeEnvelope = (status: "queued" | "running") => ({
+      asset,
+      job: {
+        raster_text_extraction_job_id: "raster-text-job-running", asset_id: asset.asset_id, case_id: asset.case_id,
+        profile_revision: "synthetic-raster-text-v1:9eb7f34b", status, attempt_count: status === "queued" ? 0 : 1,
+        created_by: "local-reviewer", created_at: "2026-08-29T00:00:00Z", updated_at: "2026-08-29T00:00:01Z",
+      },
+      idempotency_reused: false,
+      current_profile_revision: "synthetic-raster-text-v1:9eb7f34b",
+      profile_superseded: false,
+    });
+    const getRasterTextExtraction = vi.fn(async () => makeEnvelope("running"));
+    const api = {
+      getSession: vi.fn(async () => ({ subject: "local-reviewer", org_id: "local-org", roles: ["reviewer"] })),
+      listCases: vi.fn(async () => ({ items: [caseDetail] })), getCase: vi.fn(async () => caseDetail),
+      listDocuments: vi.fn(async () => []), listDocumentAssets: vi.fn(async () => [asset]), listReviewRuns: vi.fn(async () => []),
+      requestRasterTextExtraction: vi.fn(async () => makeEnvelope("queued")), getRasterTextExtraction,
+    };
+    const { root, dispose } = await mount(api, AUTH, "local-development");
+    vi.useFakeTimers();
+    await act(async () => {
+      Array.from(root.querySelectorAll<HTMLButtonElement>("button"))
+        .find((button) => button.textContent === "스캔·이미지 OCR 실행")?.click();
+      await Promise.resolve();
+      await vi.runAllTimersAsync();
+    });
+    expect(getRasterTextExtraction).toHaveBeenCalledTimes(20);
+    expect(root.textContent).toContain("OCR 상태 자동 확인은 60초 후 멈췄습니다.");
+    expect(root.textContent).toContain("OCR 상태 새로고침");
+    dispose();
+    vi.useRealTimers();
   });
 });

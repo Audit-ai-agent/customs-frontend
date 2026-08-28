@@ -155,6 +155,44 @@ const contents: Record<string, string> = {
 // The role switch is live so the approver-only affordances can be reviewed too.
 let actor: "reviewer" | "approver" = "reviewer";
 
+const previewRasterAsset = {
+  asset_id: "asset-raster-preview",
+  case_id: "case-1",
+  document_type: "CI",
+  filename: "invoice-scan.png",
+  media_type: "image/png",
+  byte_size: 68,
+  page_count: 1,
+  pixel_count: 1,
+  created_by: "local-reviewer",
+  created_at: NOW,
+};
+
+const previewRasterTextEnvelope = {
+  asset: previewRasterAsset,
+  job: {
+    raster_text_extraction_job_id: "raster-text-preview-job",
+    asset_id: previewRasterAsset.asset_id,
+    case_id: previewRasterAsset.case_id,
+    profile_revision: "synthetic-raster-text-v1:preview",
+    status: "needs_review",
+    attempt_count: 1,
+    result: {
+      status: "needs_review",
+      pages: [{ page_number: 1, text: "COMMERCIAL INVOICE\nInvoice No: CI-2026-0001\nTotal: USD 12,400.00", confidence: 0.976 }],
+      canonical_text: "COMMERCIAL INVOICE\nInvoice No: CI-2026-0001\nTotal: USD 12,400.00",
+      warnings: ["human_confirmation_required"],
+      needs_review_reasons: ["ocr_low_confidence"],
+    },
+    created_by: "local-reviewer",
+    created_at: NOW,
+    updated_at: NOW,
+  },
+  idempotency_reused: false,
+  current_profile_revision: "synthetic-raster-text-v1:preview",
+  profile_superseded: false,
+};
+
 const api = {
   getSession: async () => ({
     subject: actor === "approver" ? "local-approver" : "local-reviewer",
@@ -169,9 +207,14 @@ const api = {
     ...documents.find((item) => item.document_id === documentId),
     content_text: contents[documentId] ?? "",
   }),
-  // CP9 introduced the asset upload flow; the preview keeps it empty so the
-  // text-document path stays reviewable without a Backend.
-  listDocumentAssets: async () => [],
+  listDocumentAssets: async (caseId: string) => caseId === "case-1" ? [previewRasterAsset] : [],
+  requestRasterTextExtraction: async () => previewRasterTextEnvelope,
+  getRasterTextExtraction: async () => previewRasterTextEnvelope,
+  getDocumentAssetSource: async () => {
+    const encoded = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
+    return new Blob([Uint8Array.from(atob(encoded), (character) => character.charCodeAt(0))], { type: "image/png" });
+  },
+  confirmExtractedText: async () => documents[0],
   deleteCase: async () => undefined,
   listReviewRuns: async (caseId: string) => caseId === "case-2" ? [] : [runSummary],
   getReviewRun: async () => run,

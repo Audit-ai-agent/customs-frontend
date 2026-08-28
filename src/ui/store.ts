@@ -23,6 +23,7 @@ import type {
   LawSearch,
   OperationsMetrics,
   OriginVerification,
+  RasterTextExtractionEnvelope,
   ReviewComparison,
   ReviewProgress,
   ReviewerDecision,
@@ -56,6 +57,8 @@ import {
   extractionUnavailableMessage,
   findFact,
   mergeAssistantMessages,
+  rasterTextExtractionNotice,
+  rasterTextPreviewText,
   severityWeight,
   sourceForFinding,
   sourceForOperand,
@@ -69,6 +72,8 @@ export interface AssetWorkbenchEntry {
   asset: DocumentAsset;
   extraction: ExtractionJob | null;
   extracting: boolean;
+  rasterTextExtraction: RasterTextExtractionEnvelope | null;
+  rasterTextExtracting: boolean;
 }
 
 /** One review run joined with its case for the cross-case records page. */
@@ -246,6 +251,9 @@ const INITIAL_STATE: WorkbenchState = {
   notice: null,
   error: null,
 };
+
+const RASTER_TEXT_POLL_DELAY_MS = 3_000;
+const RASTER_TEXT_POLL_MAX_ATTEMPTS = 20;
 
 /** Fields cleared whenever the selected review run changes. */
 const RUN_ATTACHMENT_RESET = {
@@ -728,7 +736,14 @@ export class WorkbenchStore {
       documents,
       documentAssets: assets.map((asset) => {
         const known = knownEntries.find((entry) => entry.asset.asset_id === asset.asset_id);
-        return known ? { ...known, asset } : { asset, extraction: null, extracting: false, confirmed: false };
+        return known ? { ...known, asset } : {
+          asset,
+          extraction: null,
+          extracting: false,
+          rasterTextExtraction: null,
+          rasterTextExtracting: false,
+          confirmed: false,
+        };
       }),
       uploadingAsset: false,
       runs: runSummaries,
@@ -855,8 +870,14 @@ export class WorkbenchStore {
         body: input.file,
       });
       this.patch({
-        documentAssets: [{ asset, extraction: null, extracting: false }, ...this.state.documentAssets],
-        notice: "원본 파일을 등록했습니다. 자동 추출을 실행한 뒤 추출 텍스트를 검수해 확정하십시오.",
+        documentAssets: [{
+          asset,
+          extraction: null,
+          extracting: false,
+          rasterTextExtraction: null,
+          rasterTextExtracting: false,
+        }, ...this.state.documentAssets],
+        notice: "원본 파일을 등록했습니다. 일반 텍스트 추출 또는 스캔·이미지 OCR 초안을 검수해 확정하십시오.",
       });
       await this.runExtraction(asset.asset_id);
     } catch (error) {
@@ -916,6 +937,124 @@ export class WorkbenchStore {
         notice: "검수한 추출 텍스트를 문서로 등록했습니다. 활성 문서가 준비되면 AI 심사를 시작할 수 있습니다.",
       });
     });
+  }
+
+  /** Enqueues text-only OCR and follows queued/running for at most 60 seconds. */
+  async runRasterTextExtraction(assetId: string): Promise<void> {
+    if (!this.hasRole("reviewer")) {
+      this.showError(new Error("스캔·이미지 OCR은 심사자 역할에서만 실행할 수 있습니다."));
+      return;
+    }
+    const current = this.state.selectedCase;
+    const entry = this.state.documentAssets.find((item) => item.asset.asset_id === assetId);
+    if (!current || !entry || entry.rasterTextExtracting) return;
+    this.patchAssetEntry(assetId, { rasterTextExtracting: true });
+    try {
+      const envelope = await this.api.requestRasterTextExtraction(current.case_id, assetId, crypto.randomUUID());
+      this.patchAssetEntry(assetId, { rasterTextExtraction: envelope });
+      await this.pollRasterTextExtraction(current.case_id, assetId, envelope);
+    } catch (error) {
+      this.patch({ error: userMessage(error, "스캔·이미지 OCR 텍스트 초안을 만들지 못했습니다.") });
+    } finally {
+      this.patchAssetEntry(assetId, { rasterTextExtracting: false });
+    }
+  }
+
+  /** Refreshes a known job without silently replacing its profile binding. */
+  async refreshRasterTextExtraction(assetId: string): Promise<void> {
+    const current = this.state.selectedCase;
+    const entry = this.state.documentAssets.find((item) => item.asset.asset_id === assetId);
+    const known = entry?.rasterTextExtraction;
+    if (!current || !entry || !known || entry.rasterTextExtracting) return;
+    this.patchAssetEntry(assetId, { rasterTextExtracting: true });
+    try {
+      const envelope = await this.api.getRasterTextExtraction(
+        current.case_id,
+        assetId,
+        known.job.raster_text_extraction_job_id,
+      );
+      this.patchAssetEntry(assetId, { rasterTextExtraction: envelope });
+      await this.pollRasterTextExtraction(current.case_id, assetId, envelope);
+    } catch (error) {
+      this.patch({ error: userMessage(error, "스캔·이미지 OCR 상태를 확인하지 못했습니다.") });
+    } finally {
+      this.patchAssetEntry(assetId, { rasterTextExtracting: false });
+    }
+  }
+
+  private async pollRasterTextExtraction(
+    caseId: string,
+    assetId: string,
+    initial: RasterTextExtractionEnvelope,
+  ): Promise<void> {
+    let envelope = initial;
+    let attempts = 0;
+    while (isRasterTextPending(envelope) && attempts < RASTER_TEXT_POLL_MAX_ATTEMPTS && !this.destroyed) {
+      await delay(RASTER_TEXT_POLL_DELAY_MS);
+      const currentEntry = this.state.documentAssets.find((item) => item.asset.asset_id === assetId);
+      if (
+        this.destroyed
+        || this.state.selectedCase?.case_id !== caseId
+        || currentEntry?.rasterTextExtraction?.job.raster_text_extraction_job_id !== envelope.job.raster_text_extraction_job_id
+      ) return;
+      envelope = await this.api.getRasterTextExtraction(
+        caseId,
+        assetId,
+        envelope.job.raster_text_extraction_job_id,
+      );
+      this.patchAssetEntry(assetId, { rasterTextExtraction: envelope });
+      attempts += 1;
+    }
+    if (isRasterTextPending(envelope)) {
+      this.patch({ notice: "OCR 상태 자동 확인은 60초 후 멈췄습니다. 작업은 취소하지 않았으며 상태 새로고침으로 다시 확인할 수 있습니다." });
+      return;
+    }
+    this.patch({ notice: rasterTextExtractionNotice(envelope) });
+  }
+
+  /** Only the text currently in the reviewer editor crosses into a document. */
+  async confirmRasterTextExtraction(input: {
+    assetId: string;
+    rasterTextExtractionJobId: string;
+    contentText: string;
+    filename: string;
+  }): Promise<void> {
+    if (!this.hasRole("reviewer")) {
+      this.showError(new Error("OCR 텍스트 확정은 심사자 역할에서만 할 수 있습니다."));
+      return;
+    }
+    const current = this.state.selectedCase;
+    const entry = this.state.documentAssets.find((item) => item.asset.asset_id === input.assetId);
+    const envelope = entry?.rasterTextExtraction;
+    const confirmable = envelope !== null
+      && envelope !== undefined
+      && !envelope.profile_superseded
+      && envelope.job.raster_text_extraction_job_id === input.rasterTextExtractionJobId
+      && (envelope.job.status === "preview_ready" || envelope.job.status === "needs_review")
+      && Boolean(rasterTextPreviewText(envelope.job.result).trim());
+    if (!current || !entry || !confirmable || !input.contentText.trim()) {
+      this.showError(new Error("원본과 대조해 확인할 수 있는 OCR 텍스트 초안이 없습니다."));
+      return;
+    }
+    await this.withBusy(async () => {
+      await this.api.confirmExtractedText(current.case_id, input.assetId, {
+        raster_text_extraction_job_id: input.rasterTextExtractionJobId,
+        content_text: input.contentText,
+        filename: input.filename,
+      });
+      this.patchAssetEntry(input.assetId, { confirmed: true });
+      await this.loadCase(current.case_id);
+      this.patch({ notice: "원본과 대조해 확인한 OCR 텍스트를 심사 문서로 등록했습니다. AI 심사는 자동으로 시작하지 않습니다." });
+    });
+  }
+
+  /** Reviewer source bytes stay transient; the React viewer owns URL cleanup. */
+  async getDocumentAssetSource(assetId: string, signal?: AbortSignal): Promise<Blob> {
+    if (!this.hasRole("reviewer")) throw new Error("원본 보기는 심사자 역할에서만 사용할 수 있습니다.");
+    const current = this.state.selectedCase;
+    const entry = this.state.documentAssets.find((item) => item.asset.asset_id === assetId);
+    if (!current || !entry || entry.asset.case_id !== current.case_id) throw new Error("현재 Case의 원본 파일을 찾지 못했습니다.");
+    return this.api.getDocumentAssetSource(current.case_id, entry.asset, signal);
   }
 
   async openDocumentModal(documentId: string, source: SourceReference | null = null): Promise<void> {
@@ -1551,6 +1690,11 @@ export class WorkbenchStore {
 
 function delay(milliseconds: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+function isRasterTextPending(envelope: RasterTextExtractionEnvelope): boolean {
+  return !envelope.profile_superseded
+    && (envelope.job.status === "queued" || envelope.job.status === "running");
 }
 
 /** Validates the upload's media type from its extension and browser-declared type. */

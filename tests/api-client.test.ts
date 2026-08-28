@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
+import { stableApiErrorMessage } from "../src/api/user-facing-errors";
 import { ApiClient } from "../src/api/v1/client";
+import { decodeRasterTextExtractionEnvelope } from "../src/api/v1/decoders";
 
 function json(value: unknown, status = 200): Response {
   return new Response(JSON.stringify(value), { status, headers: { "content-type": "application/json" } });
@@ -52,6 +54,128 @@ function reviewRunPayload() {
 }
 
 describe("Backend API client", () => {
+  it("keeps text-only raster OCR profile-bound and confirms only the edited draft", async () => {
+    const asset = {
+      asset_id: "asset-ocr-1", case_id: "case-1", document_type: "CI" as const, filename: "scan.png",
+      media_type: "image/png" as const, byte_size: 4, page_count: 1, pixel_count: 1,
+      created_by: "reviewer", created_at: "2026-08-29T00:00:00Z",
+    };
+    const jobBase = {
+      raster_text_extraction_job_id: "raster-text-job-1", asset_id: asset.asset_id, case_id: asset.case_id,
+      profile_revision: "synthetic-raster-text-v1:9eb7f34b", attempt_count: 1,
+      created_by: "reviewer", created_at: "2026-08-29T00:00:00Z", updated_at: "2026-08-29T00:00:01Z",
+    };
+    const queued = {
+      asset, job: { ...jobBase, status: "queued" }, idempotency_reused: false,
+      current_profile_revision: jobBase.profile_revision, profile_superseded: false,
+    };
+    const needsReview = {
+      asset,
+      job: {
+        ...jobBase,
+        status: "needs_review",
+        result: {
+          status: "needs_review",
+          pages: [{ page_number: 1, text: "INVOICE 001", confidence: 0.976 }],
+          canonical_text: "INVOICE 001",
+          warnings: ["human_confirmation_required"],
+          needs_review_reasons: ["ocr_low_confidence"],
+        },
+      },
+      idempotency_reused: false,
+      current_profile_revision: jobBase.profile_revision,
+      profile_superseded: false,
+    };
+    const confirmed = {
+      record: {
+        document_id: "document-ocr-1", case_id: "case-1", document_type: "CI", filename: "scan.txt",
+        media_type: "text/plain", content_sha256: "a".repeat(64), byte_size: 19, character_count: 19,
+        created_by: "reviewer", created_at: "2026-08-29T00:00:02Z",
+      },
+      content_text: "INVOICE 001 EDITED",
+    };
+    const calls: Array<{ url: string; init: RequestInit | undefined }> = [];
+    const fetcher: typeof fetch = async (input, init) => {
+      const url = String(input);
+      calls.push({ url, init });
+      if (url.endsWith("/raster-text-extractions")) return json(queued, 202);
+      if (url.endsWith("/raster-text-extractions/raster-text-job-1")) return json(needsReview);
+      if (url.endsWith("/source")) {
+        return new Response(new Uint8Array([137, 80, 78, 71]), {
+          headers: {
+            "cache-control": "private, no-store",
+            "content-disposition": "inline; filename=source.png",
+            "content-length": "4",
+            "content-type": "image/png",
+            "x-content-type-options": "nosniff",
+          },
+        });
+      }
+      if (url.endsWith("/confirmed-document")) return json(confirmed, 201);
+      throw new Error(`unexpected test URL: ${url}`);
+    };
+    const api = new ApiClient(fetcher, async () => "local-token");
+
+    await expect(api.requestRasterTextExtraction("case-1", asset.asset_id, "raster-text-key-1"))
+      .resolves.toMatchObject({ job: { status: "queued" } });
+    await expect(api.getRasterTextExtraction("case-1", asset.asset_id, jobBase.raster_text_extraction_job_id))
+      .resolves.toMatchObject({ job: { status: "needs_review" } });
+    await expect(api.getDocumentAssetSource("case-1", asset)).resolves.toMatchObject({ size: 4, type: "image/png" });
+    await api.confirmExtractedText("case-1", asset.asset_id, {
+      raster_text_extraction_job_id: jobBase.raster_text_extraction_job_id,
+      filename: "scan.txt",
+      content_text: "INVOICE 001 EDITED",
+    });
+
+    expect(new Headers(calls[0]?.init?.headers).get("Idempotency-Key")).toBe("raster-text-key-1");
+    expect(calls.map((call) => call.url)).toEqual([
+      "/api/v1/cases/case-1/document-assets/asset-ocr-1/raster-text-extractions",
+      "/api/v1/cases/case-1/document-assets/asset-ocr-1/raster-text-extractions/raster-text-job-1",
+      "/api/v1/cases/case-1/document-assets/asset-ocr-1/source",
+      "/api/v1/cases/case-1/document-assets/asset-ocr-1/confirmed-document",
+    ]);
+    expect(JSON.parse(String(calls[3]?.init?.body))).toEqual({
+      raster_text_extraction_job_id: "raster-text-job-1",
+      filename: "scan.txt",
+      content_text: "INVOICE 001 EDITED",
+    });
+  });
+
+  it("accepts only fail-closed raster text profile supersession states", () => {
+    const asset = {
+      asset_id: "asset-ocr-1", case_id: "case-1", document_type: "CI", filename: "scan.png",
+      media_type: "image/png", byte_size: 4, page_count: 1, pixel_count: 1,
+      created_by: "reviewer", created_at: "2026-08-29T00:00:00Z",
+    };
+    const unavailable = {
+      asset,
+      job: {
+        raster_text_extraction_job_id: "raster-text-job-1", asset_id: asset.asset_id, case_id: asset.case_id,
+        profile_revision: "synthetic-raster-text-v1:old", status: "unavailable", attempt_count: 0,
+        error_code: "raster_text_profile_unavailable",
+        result: { status: "unavailable", pages: [], canonical_text: null, warnings: ["raster_text_profile_unavailable"], needs_review_reasons: [] },
+        created_by: "reviewer", created_at: "2026-08-29T00:00:00Z", updated_at: "2026-08-29T00:00:01Z",
+      },
+      idempotency_reused: false,
+      current_profile_revision: null,
+      profile_superseded: true,
+    };
+    expect(decodeRasterTextExtractionEnvelope(unavailable)).toMatchObject({
+      current_profile_revision: null,
+      profile_superseded: true,
+      job: { status: "unavailable" },
+    });
+    expect(() => decodeRasterTextExtractionEnvelope({
+      ...unavailable,
+      current_profile_revision: unavailable.job.profile_revision,
+    })).toThrow("supersession does not name a newer profile");
+  });
+
+  it("explains Backend confirmation races as text-only OCR failures", () => {
+    expect(stableApiErrorMessage(503, "raster_ocr_unavailable")).toContain("OCR 텍스트");
+    expect(stableApiErrorMessage(409, "raster_profile_superseded")).toContain("이전 텍스트 초안 등록을 중단");
+  });
+
   it("creates a loopback development session without sending a bearer token", async () => {
     const calls: Array<[RequestInfo | URL, RequestInit | undefined]> = [];
     const fetcher: typeof fetch = async (input, init) => {
