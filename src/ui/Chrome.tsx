@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import {
   FONT_SCALES,
+  HIDDEN_PAGES,
   SITE_PAGES,
   STAGE_IDS,
   type SitePage,
@@ -184,7 +185,8 @@ export function Hero() {
   const state = useWorkbenchState();
   const current = state.selectedCase;
   const hero = PAGE_HERO[state.activePage];
-  const pageLabel = SITE_PAGES.find((page) => page.id === state.activePage)?.label ?? "홈";
+  const pageLabel =
+    [...SITE_PAGES, ...HIDDEN_PAGES].find((page) => page.id === state.activePage)?.label ?? "홈";
   // Every non-final crumb is a real destination; "홈" always lands on the home page.
   const trail: readonly { label: string; target?: SitePage }[] = current
     ? [{ label: "홈", target: "home" }, { label: "심사 업무함", target: "cases" }, { label: current.title }]
