@@ -159,7 +159,7 @@ function CurrentSettingsCard({ view }: { view: LlmSettingsView }) {
       <p className="admin-providers">
         {view.providers.map((entry) => (
           <span key={entry.provider} className={`admin-provider${entry.credential_present ? "" : " admin-provider--missing"}`}>
-            {providerLabel(entry.provider)} · {entry.credential_present ? "API 키 있음" : "API 키 없음"} · 기본 모델 <span className="mono">{entry.default_model}</span>
+            {providerLabel(entry.provider)} · {entry.credential_present ? "API 키 있음" : "API 키 없음"}
           </span>
         ))}
       </p>
