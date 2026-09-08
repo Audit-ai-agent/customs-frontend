@@ -826,7 +826,7 @@ export interface OriginVerification {
   fta_hints: OriginFtaHint[];
 }
 
-export type DutyRateKind = "basic" | "fta";
+export type DutyRateKind = "basic" | "wto" | "preferential" | "conditional" | "fta";
 export type DutyRequirementCode =
   | "origin_in_agreement"
   | "certificate_present"
@@ -840,6 +840,8 @@ export interface DutyRateRequirement {
 export interface DutyRate {
   rate_kind: DutyRateKind;
   agreement_code?: string | null;
+  /** 관세율구분코드 from the full reference dataset (e.g. "A", "FVN1"). */
+  code?: string | null;
   label: string;
   rate_pct: number;
   source_uri: string;

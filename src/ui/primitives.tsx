@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { useState } from "react";
 import { safeExternalHref } from "./labels";
 import { useCountUp } from "./motion";
 
@@ -153,6 +154,25 @@ export function ReportSectionCard({
       </header>
       {children}
     </section>
+  );
+}
+
+/** Copies a reference code (e.g. HS code) for portals that cannot deep-link to it. */
+export function CopyValueButton({ value, label }: { value: string; label: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <button
+      type="button"
+      className="text-link copy-value"
+      onClick={() => {
+        void navigator.clipboard?.writeText(value).then(() => {
+          setCopied(true);
+          window.setTimeout(() => setCopied(false), 1600);
+        });
+      }}
+    >
+      {copied ? "복사됨 ✓" : label}
+    </button>
   );
 }
 

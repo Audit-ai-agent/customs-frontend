@@ -6,7 +6,7 @@ import type {
   HsReferenceSearchResult,
   OriginCheckStatus,
 } from "../api/v1/types";
-import { EmptyCopy, EmptyState, ExternalSourceLink, Field, Num, RoleBoundaryNote, SectionHeading, Submit } from "./primitives";
+import { CopyValueButton, EmptyCopy, EmptyState, ExternalSourceLink, Field, Num, RoleBoundaryNote, SectionHeading, Submit } from "./primitives";
 import { GoToDocumentsButton } from "./stages";
 import { useStore, useWorkbenchState } from "./useStore";
 
@@ -532,6 +532,7 @@ export function DutyDiagnosisStage() {
 
   const applied = view.applied;
   const savings = view.savings;
+  const mainLadder = ladderSelection(view.rates);
   const dutiable = view.dutiable_value;
   const bestBlocked = view.rates.find((rate) => !rate.applicable && rate.requirements.length > 0);
   const currency = dutiable?.currency ?? "USD";
@@ -549,7 +550,12 @@ export function DutyDiagnosisStage() {
             <div className="cap">
               {dutiable ? `과세가격 ${formatMoney(dutiable.amount, currency)} (송장 통화 기준) · 세율 낮은 순 우선` : "세율 낮은 순 우선"}
             </div>
-            <RateLadderRows rates={view.rates} appliedKind={applied?.rate_kind ?? null} appliedAgreement={applied?.agreement_code ?? null} />
+            <RateLadderRows
+              rates={mainLadder.shown}
+              appliedKind={applied?.rate_kind ?? null}
+              appliedAgreement={applied?.agreement_code ?? null}
+            />
+            <LadderOverflowNote hidden={mainLadder.hidden} />
             <div className="cap" style={{ marginTop: 12, marginBottom: 0 }}>
               ⚖ 세율 스냅샷 {view.reference.as_of} 기준 · 요건 충족 세율만 적용
             </div>
@@ -631,9 +637,15 @@ export function DutyDiagnosisStage() {
 
       <section className="surface">
         <SectionHeading title="세율 출처" description={`${view.reference.source} · ${view.reference.as_of} 기준`} />
+        {view.hs_code?.code ? (
+          <p className="form-hint">
+            공식 포털은 품목별 화면으로 직접 연결되지 않습니다. 출처를 연 뒤 관세율표 검색창에 HS 코드를 붙여넣으십시오.
+            <CopyValueButton value={view.hs_code.code} label={`HS 코드 ${view.hs_code.code} 복사`} />
+          </p>
+        ) : null}
         <ul className="unsupported-stage__list">
           {view.rates.map((rate) => (
-            <li key={`${rate.rate_kind}:${rate.agreement_code ?? "basic"}`}>
+            <li key={rate.code ?? `${rate.rate_kind}:${rate.agreement_code ?? "basic"}`}>
               {`${rate.label} ${rate.rate_pct}% `}
               <ExternalSourceLink uri={rate.source_uri} />
             </li>
@@ -652,11 +664,38 @@ function potentialSaving(rates: DutyRate[], amount: number): number {
   return Math.round((amount * (basic.rate_pct - best.rate_pct)) / 100 * 100) / 100;
 }
 
+const LADDER_MAX_ROWS = 10;
+
+/** Keep the visual ladder legible: always show applicable/basic/WTO rows,
+ *  fill up with the lowest remaining rates, and report how many more
+ *  세율구분 rows exist (they stay listed in the 세율 출처 section). */
+function ladderSelection(rates: DutyRate[]): { shown: DutyRate[]; hidden: number } {
+  const priority = rates.filter(
+    (rate) => rate.applicable || rate.rate_kind === "basic" || rate.rate_kind === "wto",
+  );
+  const rest = rates
+    .filter((rate) => !priority.includes(rate))
+    .sort((left, right) => left.rate_pct - right.rate_pct);
+  const shown = [...priority, ...rest].slice(0, Math.max(LADDER_MAX_ROWS, priority.length));
+  return { shown, hidden: rates.length - shown.length };
+}
+
+function LadderOverflowNote({ hidden }: { hidden: number }) {
+  if (hidden <= 0) return null;
+  return (
+    <div className="cap" style={{ marginTop: 8, marginBottom: 0 }}>
+      외 {hidden}개 세율구분은 아래 '세율 출처' 목록에서 확인하십시오.
+    </div>
+  );
+}
+
 function RateLadder({ rates, appliedKind }: { rates: DutyRate[]; appliedKind: string | null }) {
+  const { shown, hidden } = ladderSelection(rates);
   return (
     <div className="ladder">
-      <h3>이 코드의 세율 스냅샷</h3>
-      <RateLadderRows rates={rates} appliedKind={appliedKind} appliedAgreement={null} />
+      <h3>이 코드의 세율 참조</h3>
+      <RateLadderRows rates={shown} appliedKind={appliedKind} appliedAgreement={null} />
+      <LadderOverflowNote hidden={hidden} />
     </div>
   );
 }
@@ -684,7 +723,7 @@ function RateLadderRows({
         return (
           <div
             className={`rate${isBest ? " best" : isApplied ? " applied" : ""}`}
-            key={`${rate.rate_kind}:${rate.agreement_code ?? "basic"}`}
+            key={rate.code ?? `${rate.rate_kind}:${rate.agreement_code ?? "basic"}`}
             data-duty-rate={rate.rate_kind === "basic" ? "basic" : rate.agreement_code ?? "fta"}
           >
             <div className="nm">

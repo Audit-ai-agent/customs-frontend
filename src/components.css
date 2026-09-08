@@ -769,6 +769,7 @@ textarea { min-height: 7rem; resize: vertical; line-height: 1.6; }
   background: none; border: 0; border-bottom: 1px solid currentcolor; font-size: .84rem; font-weight: 600; text-decoration: none;
 }
 .text-link:hover { color: var(--krds-primary-active); }
+.copy-value { margin-left: .4rem; cursor: pointer; }
 
 /* ── 심사 보고서 ──────────────────────────────────────────────── */
 .grounded-report { gap: .85rem; }

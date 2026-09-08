@@ -1346,10 +1346,17 @@ export function decodeOriginVerification(value: unknown): OriginVerification {
 function decodeDutyRate(value: unknown, context: string): DutyRate {
   const raw = record(value, context);
   return {
-    rate_kind: oneOf(raw.rate_kind, ["basic", "fta"] as const, `${context}.rate_kind`),
+    rate_kind: oneOf(
+      raw.rate_kind,
+      ["basic", "wto", "preferential", "conditional", "fta"] as const,
+      `${context}.rate_kind`,
+    ),
     ...(raw.agreement_code === undefined || raw.agreement_code === null
       ? {}
       : { agreement_code: requiredString(raw.agreement_code, `${context}.agreement_code`) }),
+    ...(raw.code === undefined || raw.code === null
+      ? {}
+      : { code: requiredString(raw.code, `${context}.code`) }),
     label: displayText(raw.label, `${context}.label`),
     rate_pct: nonNegativeNumber(raw.rate_pct, `${context}.rate_pct`),
     source_uri: displayText(raw.source_uri, `${context}.source_uri`),
@@ -1371,7 +1378,11 @@ function decodeDutyRate(value: unknown, context: string): DutyRate {
 function decodeDutyEstimate(value: unknown, context: string): DutyEstimate {
   const raw = record(value, context);
   return {
-    rate_kind: oneOf(raw.rate_kind, ["basic", "fta"] as const, `${context}.rate_kind`),
+    rate_kind: oneOf(
+      raw.rate_kind,
+      ["basic", "wto", "preferential", "conditional", "fta"] as const,
+      `${context}.rate_kind`,
+    ),
     ...(raw.agreement_code === undefined || raw.agreement_code === null
       ? {}
       : { agreement_code: requiredString(raw.agreement_code, `${context}.agreement_code`) }),
