@@ -1,6 +1,6 @@
 import { useState } from "react";
 import type { CorrectionProposal, ReviewRun } from "../api/v1/types";
-import { correctionHistoryLabel, correctionStatusLabel, display, formatDate } from "./labels";
+import { correctionHistoryLabel, correctionStatusLabel, display, fieldLabel, formatDate } from "./labels";
 import { AssistantLoading, EmptyCopy, RoleBoundaryNote, SectionHeading, Submit } from "./primitives";
 import { useStore, useWorkbenchState } from "./useStore";
 
@@ -22,9 +22,13 @@ export function HistoryScreen() {
         />
         {selectedRun ? <RunLineage run={selectedRun} /> : null}
         <ol className="history-timeline">
-          {state.runs.map((run) => {
+          {state.runs.map((run, index) => {
+            const ordinal = state.runs.length - index;
+            const parent = run.parent_review_run_id
+              ? state.runs.find((item) => item.review_run_id === run.parent_review_run_id)
+              : undefined;
             const relation = run.parent_review_run_id
-              ? `정정 반영 자식 실행 · 부모 ${run.parent_review_run_id.slice(0, 10)}`
+              ? `정정 반영 재심사${parent ? ` · ${formatDate(parent.created_at)} 실행 기준` : ""}`
               : "기준 심사 실행";
             return (
               <li
@@ -32,7 +36,7 @@ export function HistoryScreen() {
                 className={`history-item${state.selectedRun?.review_run_id === run.review_run_id ? " is-selected" : ""}`}
               >
                 <button className="history-button" type="button" onClick={() => void store.selectRun(run.review_run_id)}>
-                  <strong>{formatDate(run.created_at)}</strong>
+                  <strong>{`${ordinal}차 · ${formatDate(run.created_at)}`}</strong>
                   <span>
                     {display(run.assessment)} · 확인 사항 {run.finding_count}건
                   </span>
@@ -92,6 +96,7 @@ function RunLineage({ run }: { run: ReviewRun }) {
   const store = useStore();
   const state = useWorkbenchState();
   const parentId = run.parent_review_run_id;
+  const parent = parentId ? state.runs.find((item) => item.review_run_id === parentId) : undefined;
   const childCount = state.runs.filter((item) => item.parent_review_run_id === run.review_run_id).length;
   return (
     <section className="run-lineage-panel">
@@ -100,8 +105,8 @@ function RunLineage({ run }: { run: ReviewRun }) {
         {parentId ? (
           <li>
             <strong>부모 심사</strong>
-            <button className="text-link mono" type="button" onClick={() => void store.selectRun(parentId)}>
-              {parentId}
+            <button className="text-link" type="button" onClick={() => void store.selectRun(parentId)}>
+              {parent ? `${formatDate(parent.created_at)} 실행 열기` : "이전 실행 열기"}
             </button>
           </li>
         ) : (
@@ -168,6 +173,11 @@ function CorrectionProposalHistory() {
 function CorrectionProposalCard({ proposal }: { proposal: CorrectionProposal }) {
   const store = useStore();
   const state = useWorkbenchState();
+  // Reviewers know documents by file name, not by identifier.
+  const documentName = (documentId: string) =>
+    state.documents.find((item) => item.document_id === documentId)?.filename ??
+    state.selectedRun?.document_analyses.find((item) => item.document_id === documentId)?.filename ??
+    "등록 문서";
   const selfProposed = proposal.created_by === state.session?.subject;
   const canDecide = proposal.status === "proposed" && store.hasRole("approver") && !selfProposed;
   const canSelectForRevision = store.hasRole("approver") && proposal.status === "approved" && !proposal.applied_review_run_id;
@@ -183,9 +193,9 @@ function CorrectionProposalCard({ proposal }: { proposal: CorrectionProposal }) 
         <span className="correction-status">{correctionStatusLabel(proposal.status)}</span>
         <small>{formatDate(proposal.created_at)}</small>
       </header>
-      <h4>{`${proposal.field_name}: ${proposal.new_value}${proposal.unit ? ` ${proposal.unit}` : ""}`}</h4>
+      <h4>{`${fieldLabel(proposal.field_name)} → ${proposal.new_value}${proposal.unit ? ` ${proposal.unit}` : ""}`}</h4>
       <p>{proposal.reason}</p>
-      <small className="mono">{`문서 ${proposal.document_id}${proposal.fact_id ? ` · 사실 ${proposal.fact_id}` : ""}`}</small>
+      <small>{documentName(proposal.document_id)}</small>
 
       {proposal.decision ? (
         <div className="correction-decision">

@@ -85,7 +85,7 @@ const run = {
   document_analyses: [documentAnalysis],
   comparisons: [{
     comparison_id: "comparison-1",
-    rule_code: "QTY_MISMATCH_INVOICE_PACKING",
+    rule_code: "invoice_packing_quantity_unit",
     status: "mismatch",
     left: { document_id: "doc-1", item_id: null, fact_ids: ["fact-2"], display_value: "120" },
     right: { document_id: "doc-2", item_id: null, fact_ids: [], display_value: "100" },
@@ -99,14 +99,18 @@ const run = {
     { evidence_id: "evidence-2", item_id: "item-2", title: "관세율 적용", text: "관세율은 수입신고 당시의 법령에 따라 적용한다.", source_uri: "https://law.example/2", source_type: "law", source_hash: hex("d"), law_id: "LAW-2", law_name: "관세법" },
   ],
   findings: [
-    { finding_id: "finding-1", code: "QTY_MISMATCH_INVOICE_PACKING", message: "Invoice 수량과 Packing List 수량이 일치하지 않습니다.", kind: "validation_issue", severity: "high", comparison_id: "comparison-1", document_ids: ["doc-1", "doc-2"], fact_ids: ["fact-2"], evidence_ids: ["evidence-1"] },
-    { finding_id: "finding-2", code: "LOW_CONFIDENCE_FIELD", message: "HS 코드 추출 신뢰도가 기준치 미만입니다.", kind: "extraction_issue", severity: "medium", comparison_id: null, document_ids: ["doc-1"], fact_ids: [], evidence_ids: [] },
+    { finding_id: "finding-1", code: "invoice_packing_quantity_unit", message: "Invoice와 Packing List의 수량이 일치하지 않습니다.", kind: "validation_issue", severity: "high", comparison_id: "comparison-1", document_ids: ["doc-1", "doc-2"], fact_ids: ["fact-2"], evidence_ids: ["evidence-1"] },
+    { finding_id: "finding-2", code: "hs_code_presence", message: "HS 부호가 문서에 기재되어 있지 않습니다.", kind: "validation_issue", severity: "medium", comparison_id: null, document_ids: ["doc-1"], fact_ids: [], evidence_ids: [] },
   ],
   required_actions: [
-    { action_code: "inspect_quantity", message: "두 문서의 수량 원문을 확인하십시오.", finding_ids: ["finding-1"] },
+    { action_code: "human_review_required", message: "Invoice와 Packing List의 수량이 일치하지 않습니다.", finding_ids: ["finding-1"] },
+    { action_code: "human_review_required", message: "HS 부호가 문서에 기재되어 있지 않습니다.", finding_ids: ["finding-2"] },
     { action_code: "human_review_required", message: "자동 완료하지 않습니다. 담당자가 판단을 기록해야 합니다.", finding_ids: [] },
   ],
-  reviewer_decisions: [],
+  reviewer_decisions: [
+    { finding_id: "finding-2", status: "needs_information", reason_code: "supplement_requested", reason: "신고인에게 보완 자료 요청", decided_by: "local-reviewer", decided_at: NOW,
+      history: [{ status: "needs_information", reason_code: "supplement_requested", reason: "신고인에게 보완 자료 요청", decided_by: "local-reviewer", decided_at: NOW }] },
+  ],
   created_by: "local-reviewer",
   created_at: NOW,
 };
@@ -230,7 +234,11 @@ const api = {
   addDocument: async () => documents[0],
   enqueueReview: async () => ({ job_id: "job-001", case_id: "case-1", review_run_id: "run-001", status: "succeeded", created_by: "local-reviewer", created_at: NOW, updated_at: NOW }),
   getJob: async () => ({ job_id: "job-001", case_id: "case-1", review_run_id: "run-001", status: "succeeded", created_by: "local-reviewer", created_at: NOW, updated_at: NOW }),
-  setFindingDecision: async () => run,
+  setFindingDecision: async (_runId: string, findingId: string, payload: { status: string; reason_code?: string | null; reason: string }) => {
+    const reason = payload.reason || "표기·단위·반올림 차이로 실질 불일치 아님";
+    const entry = { status: payload.status, reason_code: payload.reason_code ?? null, reason, decided_by: "local-reviewer", decided_at: NOW };
+    return { finding_id: findingId, ...entry, history: [entry] };
+  },
   getHsClassification: async () => ({
     review_run_id: "run-001",
     case_id: "case-1",
@@ -280,8 +288,24 @@ const api = {
     generated_at: NOW,
     cases: { total: 3, open: 1, in_review: 1, closed: 1 },
     reviews: { total: 4, revisions: 1, no_issue_detected: 1, issues_detected: 3, indeterminate: 0, succeeded: 4, partial: 0, failed: 0 },
-    findings: { total: 2, decided: 0, open: 2 },
+    findings: { total: 2, decided: 1, open: 1 },
     closures: { cleared: 1, returned: 0 },
+    review_load: {
+      cases_with_findings: 2,
+      cases_without_findings: 1,
+      comparisons: { total: 14, passed: 9, mismatch: 3, needs_review: 1, skipped: 1 },
+      findings_by_code: [
+        { code: "invoice_packing_quantity_unit", count: 3 },
+        { code: "hs_code_presence", count: 2 },
+        { code: "invoice_total_amount", count: 1 },
+      ],
+      decision_statuses: { confirmed: 2, needs_information: 1, resolved: 1 },
+      decision_reason_codes: [
+        { code: "notation_difference", count: 2 },
+        { code: "supplement_requested", count: 1 },
+        { code: "uncoded", count: 1 },
+      ],
+    },
     daily_reviews: [
       "2026-07-23", "2026-07-24", "2026-07-25", "2026-07-26", "2026-07-27", "2026-07-28", "2026-07-29",
       "2026-07-30", "2026-07-31", "2026-08-01", "2026-08-02", "2026-08-03", "2026-08-04", "2026-08-05",

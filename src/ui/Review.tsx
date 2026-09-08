@@ -12,18 +12,23 @@ import type {
   SourceReference,
 } from "../api/v1/types";
 import {
+  DECISION_REASON_OPTIONS,
+  actionLabel,
   citationLabel,
   comparisonStatusLabel,
+  decisionReasonLabel,
   decisionStatusLabel,
   display,
   displayValue,
   documentAnalysisLabel,
+  documentTypeLabel,
+  evidenceSourceTypeLabel,
+  findingTitle,
   focusDataTarget,
   formatDate,
   groundedCitations,
   reportSectionDescription,
-  severityLabel,
-  severityTone,
+  ruleTitle,
   severityWeight,
 } from "./labels";
 import {
@@ -59,7 +64,7 @@ export function ReviewStage() {
       <header className="surface verdict-panel">
         <VerdictStamp run={run} openCount={open} />
         <div className="verdict-panel__text">
-          <p className="eyebrow">GROUNDED REVIEW REPORT</p>
+          <p className="eyebrow">근거 기반</p>
           <h2>근거 기반 심사 보고서</h2>
           <p className="summary-copy">{run.report.summary}</p>
           <p className="disclaimer">{run.report.disclaimer}</p>
@@ -243,17 +248,17 @@ function FindingCard({ finding, run }: { finding: ReviewFinding; run: ReviewRun 
   return (
     <article
       data-finding-id={finding.finding_id}
-      className={`finding-card finding-card--${finding.severity} f-sev-${severityTone(finding.severity)}${decision ? " is-settled" : ""}${focused ? " is-focused" : ""}`}
+      data-finding-code={finding.code}
+      className={`finding-card${decision ? " is-settled" : ""}${focused ? " is-focused" : ""}`}
     >
       <header className="finding-heading">
-        <span className={`severity severity--${finding.severity}`}>{severityLabel(finding.severity)}</span>
         <div>
-          <strong>{finding.code}</strong>
+          <strong>{findingTitle(finding)}</strong>
           <p>{finding.message}</p>
         </div>
         <span className={`finding-state${decision ? " is-settled" : ""}`}>{decision ? "판단 기록됨" : "판단 필요"}</span>
       </header>
-      {comparison ? <ComparisonDetail comparison={comparison} /> : null}
+      {comparison ? <ComparisonDetail comparison={comparison} findingMessage={finding.message} /> : null}
       <div className="finding-links">
         {source ? (
           <button className="text-link" type="button" onClick={() => void store.focusSource(source)}>
@@ -272,11 +277,17 @@ function FindingCard({ finding, run }: { finding: ReviewFinding; run: ReviewRun 
   );
 }
 
-function ComparisonDetail({ comparison }: { comparison: ReviewComparison }) {
+/**
+ * The compared values behind a finding. The Agent copies the comparison message
+ * into the finding message verbatim, so the sentence is shown once — on the card —
+ * and this block only adds what the card does not already say.
+ */
+function ComparisonDetail({ comparison, findingMessage }: { comparison: ReviewComparison; findingMessage: string }) {
+  const restated = comparison.message.trim() === findingMessage.trim();
   return (
     <div className={`comparison-detail comparison-detail--${comparison.status}`}>
-      <span>{`${comparison.rule_code} · ${comparisonStatusLabel(comparison.status)}`}</span>
-      <p>{comparison.message}</p>
+      <span>{`${ruleTitle(comparison.rule_code)} · ${comparisonStatusLabel(comparison.status)}`}</span>
+      {restated ? null : <p>{comparison.message}</p>}
       <dl className="comparison-values">
         <div>
           <dt>기준</dt>
@@ -297,11 +308,25 @@ function ComparisonDetail({ comparison }: { comparison: ReviewComparison }) {
   );
 }
 
+/** A recorded decision's rationale: the preset label when one was chosen, plus any words the reviewer added. */
+function DecisionReason({ entry }: { entry: ReviewerDecision["history"][number] }) {
+  const preset = decisionReasonLabel(entry.reason_code);
+  const showText = !preset || entry.reason.trim() !== preset;
+  return (
+    <>
+      {preset ? <span className="decision-reason-code">{preset}</span> : null}
+      {showText ? <p>{entry.reason}</p> : null}
+    </>
+  );
+}
+
 function DecisionPanel({ finding, decision }: { finding: ReviewFinding; decision: ReviewerDecision | undefined }) {
   const store = useStore();
   const state = useWorkbenchState();
   const [status, setStatus] = useState<FindingDecisionRequest["status"]>("confirmed");
+  const [reasonCode, setReasonCode] = useState<NonNullable<FindingDecisionRequest["reason_code"]>>("document_verified");
   const [reason, setReason] = useState("");
+  const freeTextRequired = reasonCode === "other";
   return (
     <details className="decision-panel" open={!decision}>
       <summary>{decision ? "담당자 판단 보기·수정" : "담당자 판단 기록"}</summary>
@@ -309,7 +334,7 @@ function DecisionPanel({ finding, decision }: { finding: ReviewFinding; decision
         <div className="decision-history">
           <div className="decision-current">
             <strong>담당자 판단: {decisionStatusLabel(decision.status)}</strong>
-            <p>{decision.reason}</p>
+            <DecisionReason entry={decision} />
             <small>
               {decision.decided_by} · {formatDate(decision.decided_at)}
             </small>
@@ -322,7 +347,7 @@ function DecisionPanel({ finding, decision }: { finding: ReviewFinding; decision
                 .map((entry, index) => (
                   <li key={`${entry.decided_at}-${index}`}>
                     <strong>{decisionStatusLabel(entry.status)}</strong>
-                    <span>{entry.reason}</span>
+                    <span>{decisionReasonLabel(entry.reason_code) ?? entry.reason}</span>
                     <small>
                       {entry.decided_by} · {formatDate(entry.decided_at)}
                     </small>
@@ -336,30 +361,49 @@ function DecisionPanel({ finding, decision }: { finding: ReviewFinding; decision
       )}
       {store.hasRole("reviewer") ? (
         <form
-          className="decision-form"
+          className="decision-form decision-form--coded"
           onSubmit={(event) => {
             event.preventDefault();
-            void store.decideFinding(finding.finding_id, { status, reason: reason.trim() }).then(() => setReason(""));
+            void store
+              .decideFinding(finding.finding_id, { status, reason_code: reasonCode, reason: reason.trim() })
+              .then(() => setReason(""));
           }}
         >
-          <select
-            name="status"
-            value={status}
-            onChange={(event) => setStatus(event.target.value as FindingDecisionRequest["status"])}
-          >
-            <option value="confirmed">확인함</option>
-            <option value="needs_information">추가자료 요청</option>
-            <option value="resolved">해결됨</option>
-          </select>
-          <textarea
-            name="reason"
-            required
-            rows={8}
-            maxLength={4_000}
-            placeholder="판단 사유를 기록하십시오."
-            value={reason}
-            onChange={(event) => setReason(event.target.value)}
-          />
+          <Field label="판단 상태">
+            <select
+              name="status"
+              value={status}
+              onChange={(event) => setStatus(event.target.value as FindingDecisionRequest["status"])}
+            >
+              <option value="confirmed">확인함</option>
+              <option value="needs_information">추가자료 요청</option>
+              <option value="resolved">해결됨</option>
+            </select>
+          </Field>
+          <Field label="판단 사유">
+            <select
+              name="reason_code"
+              value={reasonCode}
+              onChange={(event) => setReasonCode(event.target.value as NonNullable<FindingDecisionRequest["reason_code"]>)}
+            >
+              {DECISION_REASON_OPTIONS.map((option) => (
+                <option key={option.code} value={option.code}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Field label={freeTextRequired ? "사유 직접 기재 (필수)" : "추가 의견 (선택)"}>
+            <textarea
+              name="reason"
+              required={freeTextRequired}
+              rows={3}
+              maxLength={4_000}
+              placeholder={freeTextRequired ? "기타 사유를 구체적으로 기록하십시오." : "사전 정의 사유에 덧붙일 내용이 있으면 기록하십시오."}
+              value={reason}
+              onChange={(event) => setReason(event.target.value)}
+            />
+          </Field>
           <Submit label={decision ? "판단 수정" : "판단 기록"} disabled={state.busy} />
         </form>
       ) : (
@@ -531,7 +575,7 @@ function EvidenceList({ run }: { run: ReviewRun }) {
         className={`evidence-card${focusId === item.evidence_id ? " is-focused" : ""}`}
       >
         <header>
-          <span className="evidence-type">{item.source_type}</span>
+          <span className="evidence-type">{evidenceSourceTypeLabel(item.source_type)}</span>
           <h3>{item.title}</h3>
         </header>
         {item.law_name ? <p className="evidence-law">{item.law_name}</p> : null}
@@ -577,15 +621,31 @@ function NextSteps({ run }: { run: ReviewRun }) {
         finding_ids: [],
       },
     ];
+  // The Agent emits one action per finding whose message is the finding
+  // message verbatim. Those are already on the cards above; here they collapse
+  // into a pointer to the finding instead of repeating the sentence.
+  const findingByMessage = new Map(run.findings.map((finding) => [finding.message.trim(), finding]));
   return (
     <div className="next-step-stack">
       <ol className="next-step-list">
-        {actions.map((action, index) => (
-          <li key={`${action.action_code}-${index}`}>
-            <strong>{action.action_code}</strong>
-            <span>{action.message}</span>
-          </li>
-        ))}
+        {actions.map((action, index) => {
+          const restated = findingByMessage.get(action.message.trim());
+          return (
+            <li key={`${action.action_code}-${index}`}>
+              <strong>{restated ? "확인 사항 판단" : actionLabel(action.action_code)}</strong>
+              {restated ? (
+                <span>
+                  판단 기록 ·{" "}
+                  <button className="text-link" type="button" onClick={() => store.focusFinding(restated.finding_id)}>
+                    {findingTitle(restated)}
+                  </button>
+                </span>
+              ) : (
+                <span>{action.message}</span>
+              )}
+            </li>
+          );
+        })}
       </ol>
       <button
         className="button button--secondary"
@@ -663,7 +723,7 @@ function ReportDocuments({ run }: { run: ReviewRun }) {
           <span>
             {`${documentAnalysisLabel(analysis.document_type)} · ${analysis.extraction_status === "complete" ? "사실 추출 완료" : "추가 확인 필요"}`}
           </span>
-          <small>{analysis.declared_type ? `등록 유형: ${analysis.declared_type}` : "등록 유형 없음"}</small>
+          <small>{analysis.declared_type ? `등록 유형: ${documentAnalysisLabel(analysis.declared_type)}` : "등록 유형 없음"}</small>
         </button>
       ))}
     </div>
@@ -684,7 +744,7 @@ function ReportEvidenceRows({ run }: { run: ReviewRun }) {
         >
           <strong>{evidence.title}</strong>
           <span>{evidence.law_name ?? evidence.source_type}</span>
-          <small className="mono">source hash {evidence.source_hash.slice(0, 12)}…</small>
+          <small className="mono">원문 해시 {evidence.source_hash.slice(0, 12)}…</small>
         </button>
       ))}
     </div>

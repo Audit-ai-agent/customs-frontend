@@ -281,8 +281,20 @@ export interface ReviewComparison {
   message: string;
 }
 
+/** Coded reviewer rationale; the Backend owns the closed set. */
+export type FindingDecisionReasonCode =
+  | "document_verified"
+  | "notation_difference"
+  | "supplement_requested"
+  | "correction_proposed"
+  | "requirement_satisfied"
+  | "requirement_not_applicable"
+  | "other";
+
 export interface ReviewerDecisionHistoryItem {
   status: "confirmed" | "needs_information" | "resolved";
+  /** Absent on decisions recorded before rationale codes existed. */
+  reason_code?: FindingDecisionReasonCode | null;
   reason: string;
   decided_by: string;
   decided_at: string;
@@ -595,6 +607,8 @@ export interface EnqueueReviewRequest {
 
 export interface FindingDecisionRequest {
   status: "confirmed" | "needs_information" | "resolved";
+  /** A preset rationale; `other` (or no code) requires free text in `reason`. */
+  reason_code?: FindingDecisionReasonCode | null;
   reason: string;
 }
 
@@ -762,6 +776,15 @@ export interface OperationsMetrics {
   findings: { total: number; decided: number; open: number };
   closures: { cleared: number; returned: number };
   daily_reviews: { date: string; count: number }[];
+  /** Where the reviewer's judgement work comes from, on each case's latest run only. */
+  review_load: {
+    cases_with_findings: number;
+    cases_without_findings: number;
+    comparisons: { total: number; passed: number; mismatch: number; needs_review: number; skipped: number };
+    findings_by_code: { code: string; count: number }[];
+    decision_statuses: { confirmed: number; needs_information: number; resolved: number };
+    decision_reason_codes: { code: string; count: number }[];
+  };
 }
 
 export type OriginCheckField = "certificate_no" | "origin_country" | "hs_code";

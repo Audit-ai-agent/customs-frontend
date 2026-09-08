@@ -1,8 +1,18 @@
 import { useEffect, useRef, useState, type RefObject } from "react";
-import { CASE_FILTERS, FLOW_MAP, type CaseSortKey } from "./constants";
+import type { CaseSummary } from "../api/v1/types";
+import { CASE_FILTERS, FLOW_MAP, type CaseFilter, type CaseSortKey } from "./constants";
 import { display, formatDate } from "./labels";
 import { DashStat, EmptyCopy, Field, RoleBoundaryNote, SectionHeading, Submit } from "./primitives";
+import { CaseStateFlow } from "./StateFlow";
 import { useStore, useWorkbenchState } from "./useStore";
+
+/** Display order of the status groups: judgement work first, finished work last. */
+const GROUP_ORDER: readonly Exclude<CaseFilter, "all">[] = ["in_review", "open", "closed"];
+const GROUP_HINTS: Readonly<Record<Exclude<CaseFilter, "all">, string>> = {
+  in_review: "담당자 판단이 필요한 건",
+  open: "심사를 아직 시작하지 않은 건",
+  closed: "검토가 끝난 건 · 읽기 전용",
+};
 
 export function Dashboard() {
   const store = useStore();
@@ -83,8 +93,20 @@ export function Dashboard() {
       </div>
 
       <section className="surface dash-table-panel">
-        <SectionHeading title="Case 목록" description="행을 누르면 해당 Case의 심사 워크스페이스로 이동합니다." />
+        <SectionHeading
+          title="Case 목록"
+          description={
+            state.caseFilter === "all"
+              ? "상태별로 묶어 표시합니다. 행을 누르면 해당 Case의 심사 워크스페이스로 이동합니다."
+              : "행을 누르면 해당 Case의 심사 워크스페이스로 이동합니다."
+          }
+        />
         <CaseTable />
+      </section>
+
+      <section className="dash-flow" aria-label="Case 상태 흐름">
+        <p className="dash-flow__title">Case 상태 흐름 · 진행 전 → 검토 중 → 종료</p>
+        <CaseStateFlow />
       </section>
 
       <section className="dash-flow" aria-label="처리 흐름">
@@ -163,6 +185,12 @@ function CaseTable() {
   const state = useWorkbenchState();
   const rows = store.visibleCases();
   const sortGlyph = (key: CaseSortKey) => (state.caseSort.key === key ? (state.caseSort.ascending ? "▲" : "▼") : "↕");
+  // "전체" keeps every Case but shows them in status groups, so the judgement
+  // backlog is visible at a glance instead of interleaved with closed work.
+  const groups: { status: Exclude<CaseFilter, "all"> | null; rows: CaseSummary[] }[] =
+    state.caseFilter === "all"
+      ? GROUP_ORDER.map((status) => ({ status, rows: rows.filter((item) => item.status === status) })).filter((group) => group.rows.length)
+      : [{ status: null, rows }];
   return (
     <div className="case-table" role="table" aria-label="Case 목록">
       <div className="case-table__header" role="row">
@@ -176,7 +204,33 @@ function CaseTable() {
         </button>
         <span aria-hidden="true" />
       </div>
-      {rows.map((item) => (
+      {groups.map((group) => (
+        <div className="case-group" key={group.status ?? "filtered"} data-case-group={group.status ?? "filtered"}>
+          {group.status ? (
+            <div className={`case-group__head case-group__head--${group.status}`} role="rowgroup">
+              <span className={`status-badge status-badge--${group.status}`}>{display(group.status)}</span>
+              <span className="case-group__count">{`${group.rows.length}건`}</span>
+              <span className="case-group__hint">{GROUP_HINTS[group.status]}</span>
+            </div>
+          ) : null}
+          {group.rows.map((item) => (
+            <CaseRow key={item.case_id} item={item} />
+          ))}
+        </div>
+      ))}
+      {rows.length === 0 ? (
+        <EmptyCopy>
+          {state.cases.length ? "조건에 맞는 Case가 없습니다." : "등록된 Case가 없습니다. 아래에서 새 Case를 만드십시오."}
+        </EmptyCopy>
+      ) : null}
+    </div>
+  );
+}
+
+function CaseRow({ item }: { item: CaseSummary }) {
+  const store = useStore();
+  const state = useWorkbenchState();
+  return (
         <div className="case-row-wrap" key={item.case_id}>
           <button
             className="case-row"
@@ -212,13 +266,6 @@ function CaseTable() {
             </button>
           ) : null}
         </div>
-      ))}
-      {rows.length === 0 ? (
-        <EmptyCopy>
-          {state.cases.length ? "조건에 맞는 Case가 없습니다." : "등록된 Case가 없습니다. 아래에서 새 Case를 만드십시오."}
-        </EmptyCopy>
-      ) : null}
-    </div>
   );
 }
 

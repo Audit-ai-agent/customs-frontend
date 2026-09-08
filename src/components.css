@@ -464,6 +464,47 @@ small { color: var(--krds-muted); }
 .case-row__date { color: var(--krds-muted); font-size: .8rem; }
 .case-row__go { color: var(--krds-line-3); font-size: 1.1rem; text-align: right; }
 .case-row:hover .case-row__go { color: var(--krds-primary); }
+.case-group__head {
+  display: flex; align-items: center; gap: .6rem; padding: .55rem 1rem; background: var(--krds-surface-2);
+  border-top: 1px solid var(--krds-line); border-bottom: 1px solid var(--krds-line); font-size: .8rem;
+}
+.case-group:first-of-type .case-group__head { border-top: 0; }
+.case-group__count { color: var(--krds-ink); font-weight: 700; font-variant-numeric: tabular-nums; }
+.case-group__hint { color: var(--krds-muted); }
+.case-group .case-row:last-child { border-bottom: 0; }
+
+/* ── Case 상태 흐름 ─────────────────────────────────────────── */
+.state-flow { margin: 0; }
+.state-flow__svg { display: block; width: 100%; max-width: 52rem; height: auto; font-family: inherit; }
+.state-flow__edges line, .state-flow__loop { stroke: var(--krds-line-3); stroke-width: 2; fill: none; }
+.state-flow__arrowhead { fill: var(--krds-line-3); }
+.state-flow__edge-label { fill: var(--krds-muted); font-size: 12px; }
+.state-flow__state rect { fill: var(--krds-surface); stroke: var(--krds-line); stroke-width: 1.5; }
+.state-flow__state--open rect { stroke: var(--krds-primary); }
+.state-flow__state--in_review rect { stroke: var(--krds-danger); fill: #fdf5f3; }
+.state-flow__state--closed rect { stroke: var(--krds-success); fill: var(--krds-success-bg); }
+.state-flow__state.is-active rect { stroke-width: 3; }
+.state-flow__state-label { fill: var(--krds-ink); font-size: 15px; font-weight: 700; }
+.state-flow__state-hint { fill: var(--krds-muted); font-size: 11px; }
+.state-flow__note text { fill: var(--krds-muted); font-size: 12px; }
+.state-flow__note-strong { fill: var(--krds-danger-strong) !important; font-weight: 700; }
+
+.workflow-steps { display: grid; gap: .55rem; margin: 0; padding: 0; list-style: none; }
+.workflow-steps__item { display: grid; grid-template-columns: 1.7rem minmax(0, 1fr); gap: .65rem; align-items: start; }
+.workflow-steps__n {
+  display: grid; width: 1.7rem; height: 1.7rem; place-items: center; color: var(--krds-primary-strong);
+  background: var(--krds-primary-bg); border-radius: 50%; font-size: .8rem; font-weight: 800;
+}
+.workflow-steps__body { display: grid; gap: .1rem; }
+.workflow-steps__body strong { font-size: .92rem; }
+.workflow-steps__body span { color: var(--krds-text); font-size: .86rem; line-height: 1.55; }
+.workflow-steps__body small { color: var(--krds-primary-strong); font-size: .76rem; font-weight: 700; }
+
+.review-load { display: grid; gap: 1rem; }
+.review-load__grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(17rem, 1fr)); gap: 1.2rem; }
+.review-load__title { margin: 0 0 .5rem; color: var(--krds-ink); font-size: .9rem; font-weight: 700; }
+.review-load .mbar { grid-template-columns: minmax(7rem, 12rem) minmax(0, 1fr) 3.2rem; }
+
 .status-badge { display: inline-block; padding: .22rem .6rem; border-radius: 999px; font-size: .76rem; font-weight: 700; white-space: nowrap; }
 .status-badge--open { color: var(--krds-primary-strong); background: var(--krds-primary-bg); }
 .status-badge--in_review { color: #c02c0e; background: #fdeeea; }
@@ -852,15 +893,13 @@ textarea { min-height: 7rem; resize: vertical; line-height: 1.6; }
 
 /* ── 확인 사항 · 비교 · 근거 ──────────────────────────────────── */
 .finding-list { display: grid; gap: .7rem; }
+/* Every finding needs a judgement, so cards carry one accent rather than a severity ladder. */
 .finding-card {
   padding: 1rem; background: var(--krds-surface); border: 1px solid var(--krds-line);
-  border-left: 4px solid var(--krds-muted-2); border-radius: .625rem;
+  border-left: 4px solid var(--krds-danger); border-radius: .625rem;
 }
-.finding-card--critical, .finding-card--high { border-left-color: var(--krds-danger); }
-.finding-card--medium { border-left-color: #c08700; }
-.finding-card--low { border-left-color: var(--krds-success); }
-.finding-card.is-settled { background: var(--krds-surface-2); }
-.finding-heading { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: .7rem; align-items: flex-start; }
+.finding-card.is-settled { background: var(--krds-surface-2); border-left-color: var(--krds-success); }
+.finding-heading { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: .7rem; align-items: flex-start; }
 /* Rule codes are long unbroken tokens; they must wrap rather than widen the page. */
 .finding-heading > div { min-width: 0; }
 .finding-heading strong { overflow-wrap: anywhere; }
@@ -936,6 +975,22 @@ textarea { min-height: 7rem; resize: vertical; line-height: 1.6; }
 .decision-history-list li small { grid-column: 1 / -1; }
 .decision-empty { margin: 0 0 .6rem; color: var(--krds-muted); font-size: .84rem; }
 .decision-form { display: grid; grid-template-columns: minmax(9rem, .35fr) minmax(0, 1fr) auto; gap: .5rem; align-items: start; }
+/* Preset rationale first, free text on its own row so the long labels stay readable. */
+.decision-form--coded {
+  grid-template-columns: minmax(9rem, .35fr) minmax(0, 1fr) auto; grid-template-areas: "status reason submit" "text text text";
+  align-items: end;
+}
+.decision-form--coded .field { display: grid; gap: .3rem; min-width: 0; }
+.decision-form--coded .field:nth-child(1) { grid-area: status; }
+.decision-form--coded .field:nth-child(2) { grid-area: reason; }
+.decision-form--coded .field:nth-child(3) { grid-area: text; }
+.decision-form--coded .submit, .decision-form--coded > button { grid-area: submit; }
+.decision-form--coded textarea { min-height: 2.6rem; }
+.decision-reason-code {
+  display: inline-block; margin: .3rem 0 .15rem; padding: .2rem .55rem; color: var(--krds-primary-strong);
+  background: var(--krds-primary-bg); border-radius: 999px; font-size: .76rem; font-weight: 700;
+}
+@media (max-width: 60rem) { .decision-form--coded { grid-template-columns: 1fr; grid-template-areas: "status" "reason" "text" "submit"; align-items: stretch; } }
 /* The shared textarea helper carries rows="8"; inline reason fields stay one line tall. */
 .decision-form textarea, .correction-decision-form textarea { height: 2.6rem; min-height: 2.6rem; }
 

@@ -372,6 +372,14 @@ describe("Backend API client", () => {
       findings: { total: 2, decided: 1, open: 1 },
       closures: { cleared: 1, returned: 0 },
       daily_reviews: [{ date: "2026-08-18", count: 2 }],
+      review_load: {
+        cases_with_findings: 1,
+        cases_without_findings: 1,
+        comparisons: { total: 5, passed: 3, mismatch: 1, needs_review: 1, skipped: 0 },
+        findings_by_code: [{ code: "invoice_packing_quantity_unit", count: 2 }],
+        decision_statuses: { confirmed: 1, needs_information: 0, resolved: 0 },
+        decision_reason_codes: [{ code: "notation_difference", count: 1 }],
+      },
     };
     const calls: string[] = [];
     const fetcher: typeof fetch = async (input) => {
@@ -384,7 +392,34 @@ describe("Backend API client", () => {
     expect(result.reviews.revisions).toBe(1);
     expect(result.findings.open).toBe(1);
     expect(result.daily_reviews[0]?.count).toBe(2);
+    expect(result.review_load.comparisons.passed).toBe(3);
+    expect(result.review_load.findings_by_code[0]?.code).toBe("invoice_packing_quantity_unit");
     expect(calls).toEqual(["/api/v1/operations-metrics"]);
+  });
+
+  it("sends a preset decision rationale without prose and insists on prose for 기타", async () => {
+    const decision = {
+      finding_id: "finding-1", status: "confirmed", reason_code: "notation_difference",
+      reason: "표기·단위·반올림 차이로 실질 불일치 아님", decided_by: "reviewer", decided_at: "2026-08-18T03:00:00Z",
+      history: [{ status: "confirmed", reason_code: "notation_difference", reason: "표기·단위·반올림 차이로 실질 불일치 아님", decided_by: "reviewer", decided_at: "2026-08-18T03:00:00Z" }],
+    };
+    const calls: { url: string; init?: RequestInit | undefined }[] = [];
+    const fetcher: typeof fetch = async (input, init) => {
+      calls.push({ url: String(input), init });
+      return json(decision);
+    };
+    const api = new ApiClient(fetcher, async () => "local-token");
+    const recorded = await api.setFindingDecision("run-1", "finding-1", { status: "confirmed", reason_code: "notation_difference", reason: "" });
+    expect(recorded.reason_code).toBe("notation_difference");
+    expect(JSON.parse(String(calls[0]?.init?.body))).toEqual({ status: "confirmed", reason_code: "notation_difference", reason: "" });
+    // The contract guard runs before any request is made, so it throws synchronously.
+    expect(() => api.setFindingDecision("run-1", "finding-1", { status: "confirmed", reason_code: "other", reason: " " })).toThrow(
+      "reviewer decision reason is invalid",
+    );
+    // Decisions recorded before rationale codes existed still decode.
+    const legacyFetcher: typeof fetch = async () => json({ ...decision, reason_code: undefined, history: [{ ...decision.history[0], reason_code: undefined }] });
+    const legacy = await new ApiClient(legacyFetcher, async () => "local-token").setFindingDecision("run-1", "finding-1", { status: "confirmed", reason: "확인" });
+    expect(legacy.reason_code).toBeUndefined();
   });
 
   it("searches the HSK reference by code prefix or item name", async () => {

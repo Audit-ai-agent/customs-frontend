@@ -729,9 +729,22 @@ function decodeAction(value: unknown): RequiredAction {
   };
 }
 
+const DECISION_REASON_CODES = [
+  "document_verified",
+  "notation_difference",
+  "supplement_requested",
+  "correction_proposed",
+  "requirement_satisfied",
+  "requirement_not_applicable",
+  "other",
+] as const;
+
 function decodeReviewerDecisionEntry(value: Record<string, unknown>, context: string): ReviewerDecisionHistoryItem {
   return {
     status: oneOf(value.status, ["confirmed", "needs_information", "resolved"], `${context}.status`),
+    ...(value.reason_code === undefined || value.reason_code === null
+      ? {}
+      : { reason_code: oneOf(value.reason_code, DECISION_REASON_CODES, `${context}.reason_code`) }),
     reason: displayText(value.reason, `${context}.reason`),
     decided_by: requiredString(value.decided_by, `${context}.decided_by`),
     decided_at: requiredString(value.decided_at, `${context}.decided_at`),
@@ -1203,6 +1216,39 @@ export function decodeOperationsMetrics(value: unknown): OperationsMetrics {
         count: nonNegativeInteger(entry.count, `${context}.daily_reviews[${index}].count`),
       };
     }),
+    review_load: decodeReviewLoad(raw.review_load, `${context}.review_load`),
+  };
+}
+
+function decodeReviewLoad(value: unknown, context: string): OperationsMetrics["review_load"] {
+  const raw = record(value, context);
+  const comparisons = record(raw.comparisons, `${context}.comparisons`);
+  const statuses = record(raw.decision_statuses, `${context}.decision_statuses`);
+  const codeCounts = (holder: unknown, scope: string) =>
+    array(holder, `${context}.${scope}`).map((item, index) => {
+      const entry = record(item, `${context}.${scope}[${index}]`);
+      return {
+        code: requiredString(entry.code, `${context}.${scope}[${index}].code`),
+        count: nonNegativeInteger(entry.count, `${context}.${scope}[${index}].count`),
+      };
+    });
+  return {
+    cases_with_findings: nonNegativeInteger(raw.cases_with_findings, `${context}.cases_with_findings`),
+    cases_without_findings: nonNegativeInteger(raw.cases_without_findings, `${context}.cases_without_findings`),
+    comparisons: {
+      total: nonNegativeInteger(comparisons.total, `${context}.comparisons.total`),
+      passed: nonNegativeInteger(comparisons.passed, `${context}.comparisons.passed`),
+      mismatch: nonNegativeInteger(comparisons.mismatch, `${context}.comparisons.mismatch`),
+      needs_review: nonNegativeInteger(comparisons.needs_review, `${context}.comparisons.needs_review`),
+      skipped: nonNegativeInteger(comparisons.skipped, `${context}.comparisons.skipped`),
+    },
+    findings_by_code: codeCounts(raw.findings_by_code, "findings_by_code"),
+    decision_statuses: {
+      confirmed: nonNegativeInteger(statuses.confirmed, `${context}.decision_statuses.confirmed`),
+      needs_information: nonNegativeInteger(statuses.needs_information, `${context}.decision_statuses.needs_information`),
+      resolved: nonNegativeInteger(statuses.resolved, `${context}.decision_statuses.resolved`),
+    },
+    decision_reason_codes: codeCounts(raw.decision_reason_codes, "decision_reason_codes"),
   };
 }
 

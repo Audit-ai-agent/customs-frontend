@@ -497,7 +497,9 @@ export class ApiClient {
     findingId: string,
     payload: FindingDecisionRequest,
   ): Promise<ReviewerDecision> {
-    if (!payload.reason.trim() || payload.reason.length > 4_000) {
+    const reasonCode = payload.reason_code ?? null;
+    const preset = reasonCode !== null && reasonCode !== "other";
+    if ((!preset && !payload.reason.trim()) || payload.reason.length > 4_000) {
       throw new ContractError("reviewer decision reason is invalid");
     }
     if (!(["confirmed", "needs_information", "resolved"] as const).includes(payload.status)) {
@@ -505,7 +507,11 @@ export class ApiClient {
     }
     return this.request(
       `/review-runs/${segment(reviewRunId)}/findings/${segment(findingId)}/decision`,
-      this.json("PUT", { status: payload.status, reason: payload.reason.trim() }),
+      this.json("PUT", {
+        status: payload.status,
+        ...(reasonCode === null ? {} : { reason_code: reasonCode }),
+        reason: payload.reason.trim(),
+      }),
       (value) => {
         const decision = decodeReviewerDecision(value);
         this.assertIdentity(decision.finding_id, findingId, "Reviewer decision finding");

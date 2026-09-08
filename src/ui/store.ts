@@ -1254,7 +1254,7 @@ export class WorkbenchStore {
     this.invalidateCaseAggregates();
   }
 
-  async decideFinding(findingId: string, decision: { status: FindingDecisionRequest["status"]; reason: string }): Promise<void> {
+  async decideFinding(findingId: string, decision: FindingDecisionRequest): Promise<void> {
     if (!this.hasRole("reviewer")) {
       this.showError(new Error("확인 사항 판단은 심사자 역할에서만 기록할 수 있습니다."));
       return;

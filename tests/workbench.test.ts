@@ -138,6 +138,85 @@ describe("commercial review workspace", () => {
     dispose();
   });
 
+  it("groups the inbox by status under 전체 and lists a flat table under one filter", async () => {
+    window.location.hash = "#/cases";
+    const at = "2026-08-05T00:00:00Z";
+    const cases = [
+      { case_id: "case-a", org_id: "local-org", title: "종료된 건", status: "closed" as const, revision: 1, updated_at: at },
+      { case_id: "case-b", org_id: "local-org", title: "판단 대기 건", status: "in_review" as const, revision: 1, updated_at: at },
+      { case_id: "case-c", org_id: "local-org", title: "새 건", status: "open" as const, revision: 1, updated_at: at },
+    ];
+    const api = {
+      getSession: async () => ({ subject: "local-reviewer", org_id: "local-org", roles: ["reviewer"] }),
+      listCases: async () => ({ items: cases }),
+    };
+    const { root, dispose } = await mount(api, AUTH, "local-development");
+    const groups = Array.from(root.querySelectorAll<HTMLElement>("[data-case-group]")).map((item) => item.dataset.caseGroup);
+    expect(groups).toEqual(["in_review", "open", "closed"]);
+    expect(root.querySelector('[data-case-group="in_review"] .case-group__head')?.textContent).toContain("1건");
+    expect(root.querySelector(".state-flow__svg")).not.toBeNull();
+    expect(root.textContent).toContain("자동 종료 경로 없음");
+
+    const closedFilter = Array.from(root.querySelectorAll<HTMLButtonElement>(".dash-filter")).find((item) => item.textContent?.includes("종료"));
+    await click(closedFilter);
+    expect(Array.from(root.querySelectorAll<HTMLElement>("[data-case-group]")).map((item) => item.dataset.caseGroup)).toEqual(["filtered"]);
+    expect(root.querySelectorAll(".case-row")).toHaveLength(1);
+    dispose();
+  });
+
+  it("titles findings in Korean, shows the comparison sentence once, and records a preset decision rationale", async () => {
+    window.location.hash = "#/cases/case-1/review";
+    const caseDetail = { case_id: "case-1", org_id: "local-org", title: "입항 서류", status: "in_review" as const, revision: 1, updated_at: "2026-08-05T00:00:00Z" };
+    const run = reviewRun();
+    run.comparisons[0]!.rule_code = "invoice_packing_quantity_unit";
+    run.findings[0]!.code = "invoice_packing_quantity_unit";
+    run.required_actions = [
+      { action_code: "human_review_required", message: "수량이 일치하지 않습니다.", finding_ids: ["finding-1"] },
+      { action_code: "human_review_required", message: "자동 승인하지 않습니다.", finding_ids: [] },
+    ];
+    const recorded = {
+      finding_id: "finding-1", status: "confirmed" as const, reason_code: "notation_difference" as const,
+      reason: "표기·단위·반올림 차이로 실질 불일치 아님", decided_by: "local-reviewer", decided_at: "2026-08-05T00:05:00Z",
+      history: [{ status: "confirmed" as const, reason_code: "notation_difference" as const, reason: "표기·단위·반올림 차이로 실질 불일치 아님", decided_by: "local-reviewer", decided_at: "2026-08-05T00:05:00Z" }],
+    };
+    const api = {
+      getSession: vi.fn(async () => ({ subject: "local-reviewer", org_id: "local-org", roles: ["reviewer"] })),
+      listCases: vi.fn(async () => ({ items: [caseDetail] })),
+      getCase: vi.fn(async () => caseDetail),
+      listDocuments: vi.fn(async () => [DOCUMENT]),
+      listDocumentAssets: vi.fn(async () => []),
+      listReviewRuns: vi.fn(async () => [RUN_SUMMARY]),
+      getReviewRun: vi.fn(async () => run),
+      setFindingDecision: vi.fn(async () => recorded),
+    };
+    const { root, dispose } = await mount(api, AUTH, "local-development");
+
+    const card = root.querySelector('[data-finding-id="finding-1"]');
+    expect(card).not.toBeNull();
+    expect(card?.querySelector(".finding-heading strong")?.textContent).toBe("Invoice·Packing List 수량·단위 비교");
+    expect(card?.textContent).not.toContain("invoice_packing_quantity_unit");
+    expect(card?.querySelector(".severity")).toBeNull();
+    // The Agent repeats the comparison sentence in the finding; the card shows it once.
+    expect((card?.textContent?.match(/수량이 일치하지 않습니다\./gu) ?? []).length).toBe(1);
+    expect(root.querySelector(".next-step-list")?.textContent).not.toContain("human_review_required");
+    expect(root.querySelector(".next-step-list")?.textContent).toContain("확인 사항 판단");
+    expect(root.querySelector(".issuebar__chip:last-child")?.textContent).toContain("우선 확인 · Invoice·Packing List 수량·단위 비교");
+
+    const form = card?.querySelector<HTMLFormElement>(".decision-form");
+    const reasonCode = form?.querySelector<HTMLSelectElement>('select[name="reason_code"]');
+    const reason = form?.querySelector<HTMLTextAreaElement>('textarea[name="reason"]');
+    if (!form || !reasonCode || !reason) throw new Error("decision form is unavailable");
+    expect(reason.required).toBe(false);
+    setValue(reasonCode, "other");
+    expect(reason.required).toBe(true);
+    setValue(reasonCode, "notation_difference");
+    await submit(form);
+    expect(api.setFindingDecision).toHaveBeenCalledWith("run-1", "finding-1", { status: "confirmed", reason_code: "notation_difference", reason: "" });
+    expect(card?.querySelector(".decision-reason-code")?.textContent).toBe("표기·단위·반올림 차이로 실질 불일치 아님");
+    expect(card?.textContent).toContain("판단 기록됨");
+    dispose();
+  });
+
   it("opens a synchronous completed result and exposes workflow, comparison, and reviewer action", async () => {
     window.location.hash = "#/cases/case-1/documents";
     const caseDetail = { case_id: "case-1", org_id: "local-org", title: "입항 서류", status: "in_review" as const, revision: 1, updated_at: "2026-08-05T00:00:00Z" };
@@ -331,7 +410,10 @@ describe("commercial review workspace", () => {
 
     window.location.hash = "#/cases/case-1/history";
     await flush();
-    expect(root.textContent).toContain("정정 반영 자식 실행");
+    expect(root.textContent).toContain("정정 반영 재심사");
+    // Reviewers see the file name and a Korean field name, never raw identifiers.
+    expect(root.textContent).toContain("수량 → 12 EA");
+    expect(root.textContent).not.toContain("문서 document-1");
 
     window.location.hash = "#/cases/case-1/analysis";
     await flush();

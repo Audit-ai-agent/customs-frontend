@@ -6,7 +6,7 @@ import { Dashboard } from "./Dashboard";
 import { DocumentModal } from "./DocumentModal";
 import { HistoryScreen } from "./History";
 import { GuidePage, HomePage, HskReferencePage, LawsPage, MetricsPage, RecordsPage } from "./pages";
-import { display } from "./labels";
+import { display, findingTitle } from "./labels";
 import { Message } from "./primitives";
 import { DocumentRail, TraceRail } from "./Rails";
 import { ReviewStage } from "./Review";
@@ -261,7 +261,7 @@ function IssueBar() {
       )}
       {highest ? (
         <button className="issuebar__chip" type="button" onClick={() => store.focusFinding(highest.finding_id)}>
-          {`우선 확인 · ${highest.code}`}
+          {`우선 확인 · ${findingTitle(highest)}`}
         </button>
       ) : null}
     </div>

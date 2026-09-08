@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from "react";
-import type { HsReferenceSearch, HsReferenceSearchResult, LawSearch } from "../api/v1/types";
+import type { HsReferenceSearch, HsReferenceSearchResult, LawSearch, OperationsMetrics } from "../api/v1/types";
 import { FLOW_MAP, type SitePage } from "./constants";
-import { display, formatDate } from "./labels";
+import { decisionReasonLabel, display, formatDate, formatDay, ruleTitle } from "./labels";
 import { DashStat, EmptyCopy, ExternalSourceLink, SectionHeading } from "./primitives";
+import { CaseStateFlow, ReviewerWorkflowList } from "./StateFlow";
 import { useStore, useWorkbenchState } from "./useStore";
 
 /* ── 홈 (#/home) ─────────────────────────────────────────────────
@@ -489,13 +490,13 @@ export function RecordsPage() {
                   <span className="mono">{caseSummary.external_reference ?? caseSummary.case_id}</span>
                   <small>{caseSummary.title}</small>
                 </span>
-                <span className="records-row__date">{run.review_as_of}</span>
+                <span className="records-row__date">{formatDay(run.review_as_of)}</span>
                 <span>
                   <span className={`badge ${run.assessment === "no_issue_detected" ? "b-ok" : "b-bad"}`}>
                     {display(run.assessment)}
                   </span>
                 </span>
-                <span className="records-row__counts">{`${run.finding_count}건 · 판단 ${run.reviewer_decision_count}건`}</span>
+                <span className="records-row__counts">{`확인 사항 ${run.finding_count}건 · 판단 ${run.reviewer_decision_count}건`}</span>
                 <span className="case-row__go" aria-hidden="true">
                   ›
                 </span>
@@ -504,7 +505,7 @@ export function RecordsPage() {
           </div>
         )}
         <p className="form-hint">
-          모든 실행은 human_review_required로 기록되며 자동 종결되지 않습니다. Case 단위 상세(판단·정정 제안 이력)는 각 Case의 심사 이력 화면에서 확인합니다.
+          모든 실행은 담당자 검토 대상으로 기록되며 자동 종결되지 않습니다. Case 단위 상세(판단·정정 제안 이력)는 각 Case의 심사 이력 화면에서 확인합니다.
         </p>
       </section>
     </section>
@@ -631,6 +632,8 @@ export function MetricsPage() {
         </div>
       </section>
 
+      <ReviewLoadSection load={metrics.review_load} />
+
       <section className="surface">
         <SectionHeading title="최근 14일 심사 실행" description="하루 단위 실행 건수입니다. 빈 날도 0으로 표시합니다." />
         <div className="mcols" role="img" aria-label={`최근 14일 심사 실행, 최대 하루 ${dailyMax}건`}>
@@ -649,6 +652,87 @@ export function MetricsPage() {
           <span>{asMonthDay(lastDay)}</span>
         </div>
       </section>
+    </section>
+  );
+}
+
+/**
+ * Where the judgement work comes from. This is the measurement behind the
+ * roadmap for shrinking 검토 중: which rules raise findings most often, how
+ * the automatic comparisons split, and which coded rationale reviewers pick.
+ * A rule whose findings are mostly closed as "표기 차이" is a candidate for a
+ * tighter comparison rule, not for automatic closure.
+ */
+function ReviewLoadSection({ load }: { load: OperationsMetrics["review_load"] }) {
+  const judged = load.cases_with_findings + load.cases_without_findings;
+  const findingShare = judged > 0 ? Math.round((load.cases_with_findings / judged) * 100) : null;
+  const comparisonMax = Math.max(load.comparisons.passed, load.comparisons.mismatch, load.comparisons.needs_review, load.comparisons.skipped, 1);
+  const codeMax = Math.max(...load.findings_by_code.map((item) => item.count), 1);
+  const reasonMax = Math.max(...load.decision_reason_codes.map((item) => item.count), 1);
+  const reasonLabel = (code: string) => (code === "uncoded" ? "사유 코드 없음 (자유 기재)" : decisionReasonLabel(code as never) ?? code);
+  return (
+    <section className="surface" data-metrics-review-load>
+      <SectionHeading
+        title="검토 부담 분석"
+        description="각 Case의 최신 심사 실행 기준으로, 담당자 판단이 어디에서 생기는지 셉니다. 검토 중 건을 줄이려면 이 분포에서 자주 뜨는 규칙부터 손봅니다."
+      />
+      {judged === 0 ? (
+        <EmptyCopy>아직 집계할 심사 실행이 없습니다.</EmptyCopy>
+      ) : (
+        <div className="review-load">
+          <div className="mmeter">
+            <div className="mmeter__row">
+              <strong className="mono">{findingShare === null ? "–" : `${findingShare}%`}</strong>
+              <span>
+                {`확인 사항이 1건 이상 남은 Case 비율 — ${judged}건 중 ${load.cases_with_findings}건, `}
+                <b>{`확인 사항 없음 ${load.cases_without_findings}건`}</b>
+              </span>
+            </div>
+            <div className="mmeter__track">
+              <div className="mmeter__fill" style={{ width: `${findingShare ?? 0}%` }} />
+            </div>
+          </div>
+
+          <div className="review-load__grid">
+            <div>
+              <h3 className="review-load__title">{`자동 비교 결과 · ${load.comparisons.total}건`}</h3>
+              <div className="mbar-list" aria-label="자동 비교 결과 분포">
+                <MetricBarRow label="일치" value={load.comparisons.passed} max={comparisonMax} />
+                <MetricBarRow label="불일치" value={load.comparisons.mismatch} max={comparisonMax} />
+                <MetricBarRow label="검토 필요" value={load.comparisons.needs_review} max={comparisonMax} />
+                <MetricBarRow label="비교 제외" value={load.comparisons.skipped} max={comparisonMax} />
+              </div>
+            </div>
+            <div>
+              <h3 className="review-load__title">확인 사항이 많이 뜨는 규칙</h3>
+              {load.findings_by_code.length === 0 ? (
+                <EmptyCopy>남은 확인 사항이 없습니다.</EmptyCopy>
+              ) : (
+                <div className="mbar-list" aria-label="규칙별 확인 사항 건수">
+                  {load.findings_by_code.slice(0, 8).map((item) => (
+                    <MetricBarRow key={item.code} label={ruleTitle(item.code)} value={item.count} max={codeMax} />
+                  ))}
+                </div>
+              )}
+            </div>
+            <div>
+              <h3 className="review-load__title">담당자 판단 사유 분포</h3>
+              {load.decision_reason_codes.length === 0 ? (
+                <EmptyCopy>기록된 판단이 없습니다.</EmptyCopy>
+              ) : (
+                <div className="mbar-list" aria-label="판단 사유 분포">
+                  {load.decision_reason_codes.map((item) => (
+                    <MetricBarRow key={item.code} label={reasonLabel(item.code)} value={item.count} max={reasonMax} />
+                  ))}
+                </div>
+              )}
+              <p className="form-hint">
+                {`판단 상태 — 확인함 ${load.decision_statuses.confirmed} · 추가자료 요청 ${load.decision_statuses.needs_information} · 해결됨 ${load.decision_statuses.resolved}`}
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
     </section>
   );
 }
@@ -680,7 +764,17 @@ export function GuidePage() {
       </section>
 
       <section className="surface">
-        <SectionHeading title="처리 절차" description="서류 등록에서 담당자 확정까지의 실제 파이프라인입니다." />
+        <SectionHeading title="Case 상태 흐름" description="Case는 세 가지 상태만 가지며, 종료는 담당자가 직접 기록할 때만 일어납니다." />
+        <CaseStateFlow />
+      </section>
+
+      <section className="surface">
+        <SectionHeading title="담당자 업무 순서" description="한 Case를 등록부터 종료까지 처리하는 순서와 각 단계의 결과입니다." />
+        <ReviewerWorkflowList />
+      </section>
+
+      <section className="surface">
+        <SectionHeading title="AI 처리 절차" description="심사 시작 버튼 뒤에서 실행되는 실제 파이프라인입니다." />
         <ol className="guide-steps">
           {FLOW_MAP.map((step) => (
             <li key={step.step}>

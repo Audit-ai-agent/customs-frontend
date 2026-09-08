@@ -11,6 +11,7 @@ import type {
   CorrectionProposal,
   DocumentFact,
   DocumentType,
+  FindingDecisionReasonCode,
   ExtractionJob,
   ExtractionPreview,
   RasterTextExtractionEnvelope,
@@ -213,6 +214,89 @@ export function rasterTextExtractionNotice(envelope: RasterTextExtractionEnvelop
   return `${rasterTextExtractionStatusLabel(envelope.job.status)}. ${descriptions[envelope.job.status]}`;
 }
 
+/**
+ * Reviewer-facing titles for the Agent's rule and finding codes. The code
+ * itself is an internal identifier; it never becomes the card title. Unknown
+ * codes fall back to a neutral Korean title rather than the raw token.
+ */
+const RULE_TITLES: Readonly<Record<string, string>> = {
+  document_type_classification: "문서 유형 판별 확인",
+  document_pair_selection: "비교 대상 문서 선택 확인",
+  invoice_packing_item_match: "Invoice·Packing List 품목 대응",
+  invoice_packing_quantity_unit: "Invoice·Packing List 수량·단위 비교",
+  invoice_line_amount: "Invoice 품목 금액 계산 확인",
+  invoice_total_amount: "Invoice 합계 금액 확인",
+  invoice_certificate_origin: "Invoice·원산지증명서 원산지 비교",
+  export_declaration_presence: "수출신고서 유무 확인",
+  export_declaration_destination_country: "수출신고서 목적국 비교",
+  export_destination_country_missing: "수출 목적국 정보 누락",
+  invoice_export_declaration_item_match: "Invoice·수출신고서 품목 대응",
+  invoice_export_declaration_quantity_unit: "Invoice·수출신고서 수량·단위 비교",
+  hs_code_presence: "HS 부호 기재 확인",
+  required_field_presence: "필수 기재 항목 누락",
+  field_source_invalid: "추출 값 원문 근거 확인",
+  line_item_field_source_invalid: "품목 값 원문 근거 확인",
+  line_item_source_invalid: "품목 원문 근거 확인",
+  classification_source_invalid: "문서 유형 원문 근거 확인",
+  data_readiness_invalid: "법령 데이터 준비 상태 확인",
+  data_contract_invalid: "법령 데이터 계약 확인",
+  guidance_contract_invalid: "안내 자료 계약 확인",
+  guidance_registry_version_mismatch: "안내 자료 버전 불일치",
+};
+
+export function ruleTitle(code: string): string {
+  return RULE_TITLES[code] ?? "담당자 확인 사항";
+}
+
+export function findingTitle(finding: Pick<ReviewFinding, "code" | "kind">): string {
+  const known = RULE_TITLES[finding.code];
+  if (known) return known;
+  return finding.kind === "regulatory_finding" ? "법령 요건 확인 사항" : "문서 정합성 확인 사항";
+}
+
+export function actionLabel(code: string): string {
+  const labels: Readonly<Record<string, string>> = {
+    human_review_required: "담당자 검토 필요",
+    inspect_quantity: "수량 확인",
+  };
+  return labels[code] ?? "담당자 조치";
+}
+
+export function evidenceSourceTypeLabel(value: string): string {
+  const labels: Readonly<Record<string, string>> = {
+    law: "법령",
+    customs_requirement: "통관 요건",
+    guidance: "공식 안내",
+  };
+  return labels[value] ?? "참고 자료";
+}
+
+/** Reviewer-facing name for a document field the Agent extracted. */
+export function fieldLabel(value: string): string {
+  const labels: Readonly<Record<string, string>> = {
+    quantity: "수량", unit: "단위", amount: "금액", total_amount: "합계 금액", unit_price: "단가", currency: "통화",
+    hs_code: "HS 부호", origin_country: "원산지", destination_country: "목적국", description: "품명",
+    invoice_number: "Invoice 번호", invoice_date: "Invoice 일자", gross_weight: "총중량", net_weight: "순중량",
+    consignee: "수하인", shipper: "송하인", certificate_no: "증명서 번호",
+  };
+  return labels[value] ?? value.replace(/_/gu, " ");
+}
+
+export const DECISION_REASON_OPTIONS: ReadonlyArray<{ code: FindingDecisionReasonCode; label: string }> = [
+  { code: "document_verified", label: "원본 서류 대조 결과 이상 없음" },
+  { code: "notation_difference", label: "표기·단위·반올림 차이로 실질 불일치 아님" },
+  { code: "supplement_requested", label: "신고인에게 보완 자료 요청" },
+  { code: "correction_proposed", label: "정정 제안으로 처리" },
+  { code: "requirement_satisfied", label: "법령 요건 충족 확인" },
+  { code: "requirement_not_applicable", label: "해당 요건 미적용 대상" },
+  { code: "other", label: "기타 (직접 기재)" },
+];
+
+export function decisionReasonLabel(code: FindingDecisionReasonCode | null | undefined): string | null {
+  if (!code) return null;
+  return DECISION_REASON_OPTIONS.find((option) => option.code === code)?.label ?? null;
+}
+
 export function severityLabel(value: ReviewFinding["severity"]): string {
   const labels: Record<ReviewFinding["severity"], string> = { critical: "긴급", high: "높음", medium: "보통", low: "낮음" };
   return labels[value];
@@ -265,6 +349,12 @@ export function displayValue(value: string | null | undefined): string {
 export function formatDate(value: string): string {
   const parsed = new Date(value);
   return Number.isNaN(parsed.getTime()) ? value : new Intl.DateTimeFormat("ko-KR", { dateStyle: "medium", timeStyle: "short" }).format(parsed);
+}
+
+/** A calendar date such as the review basis date, without a time of day. */
+export function formatDay(value: string): string {
+  const parsed = /^\d{4}-\d{2}-\d{2}$/u.test(value) ? new Date(`${value}T00:00:00`) : new Date(value);
+  return Number.isNaN(parsed.getTime()) ? value : new Intl.DateTimeFormat("ko-KR", { dateStyle: "medium" }).format(parsed);
 }
 
 export function userMessage(error: unknown, fallback: string): string {
