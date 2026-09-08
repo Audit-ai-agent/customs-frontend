@@ -5,9 +5,22 @@ import {
   type BrowserSession,
 } from "./auth";
 
+/**
+ * The hidden admin screen is reached by typing its address. Accept the plain
+ * path form (`/admin`) as well as the hash route (`/#/admin`) by rewriting the
+ * path before login starts, so the OIDC return address already carries the hash.
+ */
+function normalizeTypedPath(): void {
+  const path = window.location.pathname.replace(/\/+$/, "");
+  if (path === "/admin" && !window.location.hash) {
+    window.history.replaceState({}, document.title, `/${window.location.search}#/admin`);
+  }
+}
+
 async function bootstrap(): Promise<void> {
   const root = document.querySelector<HTMLElement>("#app");
   if (!root) throw new Error("Application root is missing");
+  normalizeTypedPath();
 
   const bootstrapClient = new ApiClient();
   try {
