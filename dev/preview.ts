@@ -159,6 +159,24 @@ const contents: Record<string, string> = {
 // The role switch is live so the approver-only affordances can be reviewed too.
 let actor: "reviewer" | "approver" = "reviewer";
 
+const LLM_SETTINGS_BASELINE = {
+  provider: "openai" as const,
+  model: "gpt-5.6-luna",
+  max_tokens: 16384,
+  timeout_seconds: 90,
+  source: "environment" as const,
+  version: 1,
+  updated_at: null as string | null,
+  error_code: null as string | null,
+  service_mode: "functional-uat",
+  adjustable: true,
+  providers: [
+    { provider: "openai" as const, credential_present: true, default_model: "gpt-4.1-mini" },
+    { provider: "anthropic" as const, credential_present: false, default_model: "claude-haiku-4-5-20251001" },
+  ],
+};
+let llmSettings = { ...LLM_SETTINGS_BASELINE };
+
 const previewRasterAsset = {
   asset_id: "asset-raster-preview",
   case_id: "case-1",
@@ -284,6 +302,33 @@ const api = {
       { law_id: "LAW-FTA", law_name: "자유무역협정의 이행을 위한 관세법의 특례에 관한 법률", hierarchy: "법률", article_count: 46 },
     ],
   }),
+  // Hidden #/admin page: mutable so 저장/되돌리기 reflect in the preview.
+  getLlmSettings: async () => ({ ...llmSettings }),
+  updateLlmSettings: async (update: { provider?: "openai" | "anthropic"; model?: string; max_tokens?: number; timeout_seconds?: number }) => {
+    const provider = update.provider ?? llmSettings.provider;
+    const providerChanged = provider !== llmSettings.provider;
+    llmSettings = {
+      ...llmSettings,
+      provider,
+      model: update.model ?? (providerChanged ? llmSettings.providers.find((entry) => entry.provider === provider)?.default_model ?? llmSettings.model : llmSettings.model),
+      max_tokens: update.max_tokens ?? llmSettings.max_tokens,
+      timeout_seconds: update.timeout_seconds ?? llmSettings.timeout_seconds,
+      source: "override" as const,
+      version: llmSettings.version + 1,
+      updated_at: new Date().toISOString(),
+    };
+    return { ...llmSettings };
+  },
+  resetLlmSettings: async () => {
+    llmSettings = { ...LLM_SETTINGS_BASELINE, version: llmSettings.version + 1 };
+    return { ...llmSettings };
+  },
+  testLlmSettings: async (update: { model?: string } = {}) => {
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    const model = update.model ?? llmSettings.model;
+    const ok = !model.includes("bad");
+    return { ok, provider: llmSettings.provider, model, latency_ms: ok ? 842 : 1203, error_code: ok ? null : "provider_request_failed" };
+  },
   getOperationsMetrics: async () => ({
     generated_at: NOW,
     cases: { total: 3, open: 1, in_review: 1, closed: 1 },

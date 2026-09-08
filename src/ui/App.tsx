@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import { ACTIVE_JOB_STATES, STAGES, STAGE_IDS, type StageView } from "./constants";
+import { AdminPage } from "./Admin";
 import { AssistantScreen } from "./Assistant";
 import { CaseSubNav, GlobalNav, Hero, SiteFooter, Topbar, UtilityBar } from "./Chrome";
 import { Dashboard } from "./Dashboard";
@@ -89,6 +90,8 @@ function PageScreen() {
       return <MetricsPage />;
     case "guide":
       return <GuidePage />;
+    case "admin":
+      return <AdminPage />;
     default:
       return state.selectedCase ? <CaseScreen /> : <Dashboard />;
   }

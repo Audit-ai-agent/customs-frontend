@@ -31,6 +31,11 @@ export function roleLabel(value: string): string {
   return labels[value] ?? value;
 }
 
+export function providerLabel(value: string): string {
+  const labels: Record<string, string> = { openai: "OpenAI", anthropic: "Anthropic (Claude)" };
+  return labels[value] ?? value;
+}
+
 export function display(value: string): string {
   const labels: Record<string, string> = {
     open: "진행 전", in_review: "검토 중", closed: "종료", queued: "대기", running: "처리 중", succeeded: "완료", failed: "실패",

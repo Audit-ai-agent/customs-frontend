@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { stableApiErrorMessage } from "../src/api/user-facing-errors";
 import { ApiClient } from "../src/api/v1/client";
-import { decodeRasterTextExtractionEnvelope } from "../src/api/v1/decoders";
+import { decodeLlmConnectionTest, decodeLlmSettings, decodeRasterTextExtractionEnvelope } from "../src/api/v1/decoders";
 
 function json(value: unknown, status = 200): Response {
   return new Response(JSON.stringify(value), { status, headers: { "content-type": "application/json" } });
@@ -444,5 +444,60 @@ describe("Backend API client", () => {
     expect(result.results[0]?.ancestors[0]?.name_ko).toBe("의류");
     expect(calls).toEqual([`/api/v1/hsk-reference?q=${encodeURIComponent("티셔츠")}`]);
     expect(() => api.searchHskReference("   ")).toThrow("HSK reference search query is invalid");
+  });
+});
+
+describe("admin LLM settings contract", () => {
+  const view = {
+    provider: "openai", model: "gpt-5.6-luna", max_tokens: 16384, timeout_seconds: 90, source: "environment", version: 1,
+    updated_at: null, error_code: null, service_mode: "functional-uat", adjustable: true,
+    providers: [
+      { provider: "openai", credential_present: true, default_model: "gpt-4.1-mini" },
+      { provider: "anthropic", credential_present: false, default_model: "claude-haiku-4-5-20251001" },
+    ],
+  };
+
+  it("decodes the settings view and rejects an unknown provider or unsafe model name", () => {
+    expect(decodeLlmSettings(view).model).toBe("gpt-5.6-luna");
+    expect(() => decodeLlmSettings({ ...view, provider: "gemini" })).toThrow("llm settings.provider: unsupported value");
+    expect(() => decodeLlmSettings({ ...view, model: "gpt 5; rm -rf" })).toThrow("llm settings.model: model name expected");
+    expect(() => decodeLlmSettings({ ...view, source: "cache" })).toThrow("llm settings.source: unsupported value");
+    expect(() => decodeLlmSettings({ ...view, providers: [{ provider: "openai", credential_present: "yes", default_model: "x" }] }))
+      .toThrow("credential_present: boolean expected");
+    expect(decodeLlmConnectionTest({ ok: false, provider: null, model: null, latency_ms: null, error_code: "provider_request_failed" }).ok).toBe(false);
+    expect(() => decodeLlmConnectionTest({ ok: "true", provider: null, model: null, latency_ms: null, error_code: null })).toThrow("ok: boolean expected");
+  });
+
+  it("validates updates locally and sends only the given fields to the approver-only routes", async () => {
+    const calls: { url: string; method: string | undefined; body: string | undefined }[] = [];
+    const fetcher: typeof fetch = async (input, init) => {
+      calls.push({ url: String(input), method: init?.method, body: typeof init?.body === "string" ? init.body : undefined });
+      return json(String(input).endsWith("/test") ? { ok: true, provider: "openai", model: "gpt-5.5", latency_ms: 10, error_code: null } : view);
+    };
+    const api = new ApiClient(fetcher, async () => "local-token");
+
+    await api.getLlmSettings();
+    await api.updateLlmSettings({ model: " gpt-5.5 ", max_tokens: 8192 });
+    await api.resetLlmSettings();
+    await api.testLlmSettings();
+    expect(calls.map((call) => [call.url, call.method, call.body])).toEqual([
+      ["/api/v1/admin/llm-settings", "GET", undefined],
+      ["/api/v1/admin/llm-settings", "PUT", JSON.stringify({ model: "gpt-5.5", max_tokens: 8192 })],
+      ["/api/v1/admin/llm-settings", "DELETE", undefined],
+      ["/api/v1/admin/llm-settings/test", "POST", "{}"],
+    ]);
+
+    expect(() => api.updateLlmSettings({})).toThrow("llm settings update is empty");
+    expect(() => api.updateLlmSettings({ max_tokens: 100 })).toThrow("between 256 and 16384");
+    expect(() => api.updateLlmSettings({ timeout_seconds: 0 })).toThrow("between 1 and 300");
+    expect(() => api.updateLlmSettings({ model: "bad model!" })).toThrow("llm model name is invalid");
+    expect(() => api.updateLlmSettings({ provider: "gemini" as never })).toThrow("llm provider is invalid");
+    expect(calls).toHaveLength(4);
+  });
+
+  it("maps the admin error codes to stable Korean messages", () => {
+    expect(stableApiErrorMessage(422, "llm_credential_missing")).toContain("API 키가 서버에 없습니다");
+    expect(stableApiErrorMessage(422, "llm_settings_invalid")).toContain("설정 값이 올바르지 않습니다");
+    expect(stableApiErrorMessage(409, "llm_settings_unavailable")).toContain("로컬 개발 모드");
   });
 });

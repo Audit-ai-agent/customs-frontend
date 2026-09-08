@@ -62,7 +62,7 @@ export const FLOW_MAP: readonly { step: string; label: string; hint: string }[] 
  * Site pages behind the KRDS global navigation. Every page is either backed by
  * real Backend v1 calls or explains exactly why it is not (metrics).
  */
-export type SitePage = "home" | "cases" | "hsk" | "laws" | "records" | "metrics" | "guide";
+export type SitePage = "home" | "cases" | "hsk" | "laws" | "records" | "metrics" | "guide" | "admin";
 
 export const SITE_PAGES: readonly { id: SitePage; label: string; hash: string }[] = [
   { id: "home", label: "홈", hash: "#/home" },
@@ -74,13 +74,25 @@ export const SITE_PAGES: readonly { id: SitePage; label: string; hash: string }[
   { id: "guide", label: "이용안내", hash: "#/guide" },
 ];
 
+/**
+ * Pages that resolve from a typed URL only. They are deliberately absent from
+ * the global navigation and from every in-app link: an operator reaches the
+ * admin panel by entering its address, and the Backend still enforces the
+ * approver role on every call it makes.
+ */
+export const HIDDEN_PAGES: readonly { id: SitePage; label: string; hash: string }[] = [
+  { id: "admin", label: "관리자 설정", hash: "#/admin" },
+];
+
+const ROUTABLE_PAGES: readonly { id: SitePage; label: string; hash: string }[] = [...SITE_PAGES, ...HIDDEN_PAGES];
+
 export function pageHash(page: SitePage): string {
-  return SITE_PAGES.find((item) => item.id === page)?.hash ?? "#/home";
+  return ROUTABLE_PAGES.find((item) => item.id === page)?.hash ?? "#/home";
 }
 
 export function parseRoute(hash: string): { page: SitePage; caseId: string | null; view: WorkspaceView } {
   const fallback = { page: "home" as SitePage, caseId: null, view: "documents" as WorkspaceView };
-  const staticPage = SITE_PAGES.find((item) => item.hash === hash);
+  const staticPage = ROUTABLE_PAGES.find((item) => item.hash === hash);
   if (staticPage) return { ...fallback, page: staticPage.id };
   const match = /^#\/cases\/([^/]+)(?:\/([a-z]+))?$/u.exec(hash);
   if (!match) return fallback;

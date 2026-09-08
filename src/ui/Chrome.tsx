@@ -176,6 +176,7 @@ const PAGE_HERO: Record<SitePage, { title: string; subtitle: string }> = {
   records: { title: "심사 기록", subtitle: "모든 Case의 AI 심사 실행 이력을 한 목록으로 봅니다." },
   metrics: { title: "운영 지표", subtitle: "저장된 Case·심사 실행을 서버가 집계한 수치입니다. 추정치 없음." },
   guide: { title: "이용안내", subtitle: "서비스 절차·역할·단축키와 책임 범위를 안내합니다." },
+  admin: { title: "관리자 설정", subtitle: "AI 심사에 쓰는 LLM 제공자·모델·응답 한도를 확인하고 변경합니다. 승인자 역할에서만 변경할 수 있습니다." },
 };
 
 export function Hero() {

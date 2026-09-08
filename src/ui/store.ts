@@ -21,6 +21,9 @@ import type {
   JobRecord,
   LawCatalog,
   LawSearch,
+  LlmConnectionTest,
+  LlmSettingsUpdate,
+  LlmSettingsView,
   OperationsMetrics,
   OriginVerification,
   RasterTextExtractionEnvelope,
@@ -113,6 +116,13 @@ export interface WorkbenchState {
   metrics: OperationsMetrics | null;
   metricsLoading: boolean;
   metricsError: string | null;
+  /** Operator-adjustable LLM settings (hidden #/admin page); null until first load. */
+  llmSettings: LlmSettingsView | null;
+  llmSettingsLoading: boolean;
+  llmSettingsError: string | null;
+  llmSettingsSaving: boolean;
+  llmTestResult: LlmConnectionTest | null;
+  llmTestRunning: boolean;
   cases: CaseSummary[];
   selectedCase: CaseDetail | null;
   documents: CaseDocument[];
@@ -195,6 +205,12 @@ const INITIAL_STATE: WorkbenchState = {
   metrics: null,
   metricsLoading: false,
   metricsError: null,
+  llmSettings: null,
+  llmSettingsLoading: false,
+  llmSettingsError: null,
+  llmSettingsSaving: false,
+  llmTestResult: null,
+  llmTestRunning: false,
   cases: [],
   selectedCase: null,
   documents: [],
@@ -521,6 +537,7 @@ export class WorkbenchStore {
         await this.ensureLawsLoaded();
       }
       if (route.page === "metrics") await this.ensureMetricsLoaded();
+      if (route.page === "admin") await this.ensureLlmSettingsLoaded();
       return;
     }
     // A route change is a navigation: the source overlay must not survive it.
@@ -624,6 +641,81 @@ export class WorkbenchStore {
       this.patch({ metricsError: userMessage(error, "운영 지표를 불러오지 못했습니다.") });
     } finally {
       this.patch({ metricsLoading: false });
+    }
+  }
+
+  /* ── admin: LLM settings (hidden #/admin page, approver only) ──── */
+
+  async ensureLlmSettingsLoaded(): Promise<void> {
+    if (this.state.llmSettings !== null || this.state.llmSettingsLoading) return;
+    await this.loadLlmSettings();
+  }
+
+  async refreshLlmSettings(): Promise<void> {
+    if (this.state.llmSettingsLoading) return;
+    await this.loadLlmSettings();
+  }
+
+  private async loadLlmSettings(): Promise<void> {
+    this.patch({ llmSettingsLoading: true, llmSettingsError: null });
+    try {
+      this.patch({ llmSettings: await this.api.getLlmSettings() });
+    } catch (error) {
+      this.patch({ llmSettingsError: userMessage(error, "LLM 설정을 불러오지 못했습니다.") });
+    } finally {
+      this.patch({ llmSettingsLoading: false });
+    }
+  }
+
+  /** Applies the override on the Agent; the next AI review uses it without a restart. */
+  async saveLlmSettings(update: LlmSettingsUpdate): Promise<void> {
+    if (!this.hasRole("approver")) {
+      this.patch({ llmSettingsError: "LLM 설정 변경은 승인자 역할에서만 가능합니다." });
+      return;
+    }
+    if (this.state.llmSettingsSaving) return;
+    this.patch({ llmSettingsSaving: true, llmSettingsError: null, notice: null });
+    try {
+      const view = await this.api.updateLlmSettings(update);
+      this.patch({ llmSettings: view, llmTestResult: null, notice: `LLM 설정을 저장했습니다. 현재 모델: ${view.model}` });
+    } catch (error) {
+      this.patch({ llmSettingsError: userMessage(error, "LLM 설정을 저장하지 못했습니다.") });
+    } finally {
+      this.patch({ llmSettingsSaving: false });
+    }
+  }
+
+  async resetLlmSettings(): Promise<void> {
+    if (!this.hasRole("approver")) {
+      this.patch({ llmSettingsError: "LLM 설정 변경은 승인자 역할에서만 가능합니다." });
+      return;
+    }
+    if (this.state.llmSettingsSaving) return;
+    this.patch({ llmSettingsSaving: true, llmSettingsError: null, notice: null });
+    try {
+      const view = await this.api.resetLlmSettings();
+      this.patch({ llmSettings: view, llmTestResult: null, notice: "LLM 설정을 서버 환경 기본값으로 되돌렸습니다." });
+    } catch (error) {
+      this.patch({ llmSettingsError: userMessage(error, "LLM 설정을 되돌리지 못했습니다.") });
+    } finally {
+      this.patch({ llmSettingsSaving: false });
+    }
+  }
+
+  /** One minimal provider request; `null` tests the active configuration. Never saves. */
+  async testLlmSettings(update: LlmSettingsUpdate | null): Promise<void> {
+    if (!this.hasRole("approver")) {
+      this.patch({ llmSettingsError: "연결 테스트는 승인자 역할에서만 가능합니다." });
+      return;
+    }
+    if (this.state.llmTestRunning) return;
+    this.patch({ llmTestRunning: true, llmTestResult: null, llmSettingsError: null });
+    try {
+      this.patch({ llmTestResult: await this.api.testLlmSettings(update ?? {}) });
+    } catch (error) {
+      this.patch({ llmSettingsError: userMessage(error, "연결 테스트를 실행하지 못했습니다.") });
+    } finally {
+      this.patch({ llmTestRunning: false });
     }
   }
 

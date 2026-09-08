@@ -18,6 +18,8 @@ import {
   decodeJob,
   decodeLawCatalog,
   decodeLawSearch,
+  decodeLlmConnectionTest,
+  decodeLlmSettings,
   decodeOperationsMetrics,
   decodeOriginVerification,
   decodeProblem,
@@ -59,6 +61,9 @@ import type {
   HsSelectionRequest,
   JobRecord,
   LawCatalog,
+  LlmConnectionTest,
+  LlmSettingsUpdate,
+  LlmSettingsView,
   LawSearch,
   OperationsMetrics,
   OriginVerification,
@@ -438,6 +443,33 @@ export class ApiClient {
     return this.request("/operations-metrics", { method: "GET" }, decodeOperationsMetrics);
   }
 
+  /* ── admin: LLM settings (approver only; reached from the hidden #/admin page) ── */
+
+  getLlmSettings(): Promise<LlmSettingsView> {
+    return this.request("/admin/llm-settings", { method: "GET" }, decodeLlmSettings);
+  }
+
+  updateLlmSettings(update: LlmSettingsUpdate): Promise<LlmSettingsView> {
+    const payload = validateLlmSettingsUpdate(update);
+    if (Object.keys(payload).length === 0) throw new ContractError("llm settings update is empty");
+    return this.request("/admin/llm-settings", this.json("PUT", payload), decodeLlmSettings);
+  }
+
+  resetLlmSettings(): Promise<LlmSettingsView> {
+    return this.request("/admin/llm-settings", { method: "DELETE" }, decodeLlmSettings);
+  }
+
+  /** Tests the candidate settings (or the active ones when `update` is empty) without saving. */
+  testLlmSettings(update: LlmSettingsUpdate = {}): Promise<LlmConnectionTest> {
+    return this.request(
+      "/admin/llm-settings/test",
+      this.json("POST", validateLlmSettingsUpdate(update)),
+      decodeLlmConnectionTest,
+      true,
+      AI_WORKFLOW_TIMEOUT_MS,
+    );
+  }
+
   searchLaws(query: string, topK?: number): Promise<LawSearch> {
     const trimmed = query.trim();
     if (!trimmed || trimmed.length > 200) throw new ContractError("law search query is invalid");
@@ -777,6 +809,34 @@ export class ApiClient {
       throw new ContractError(label + " belongs to a different organization");
     }
   }
+}
+
+function validateLlmSettingsUpdate(update: LlmSettingsUpdate): LlmSettingsUpdate {
+  const payload: LlmSettingsUpdate = {};
+  if (update.provider !== undefined) {
+    if (update.provider !== "openai" && update.provider !== "anthropic") throw new ContractError("llm provider is invalid");
+    payload.provider = update.provider;
+  }
+  if (update.model !== undefined) {
+    const model = update.model.trim();
+    if (!model || model.length > 128 || !/^[A-Za-z0-9][A-Za-z0-9._:-]*$/u.test(model)) {
+      throw new ContractError("llm model name is invalid");
+    }
+    payload.model = model;
+  }
+  if (update.max_tokens !== undefined) {
+    if (!Number.isInteger(update.max_tokens) || update.max_tokens < 256 || update.max_tokens > 16_384) {
+      throw new ContractError("llm max_tokens must be an integer between 256 and 16384");
+    }
+    payload.max_tokens = update.max_tokens;
+  }
+  if (update.timeout_seconds !== undefined) {
+    if (!Number.isFinite(update.timeout_seconds) || update.timeout_seconds < 1 || update.timeout_seconds > 300) {
+      throw new ContractError("llm timeout_seconds must be between 1 and 300");
+    }
+    payload.timeout_seconds = update.timeout_seconds;
+  }
+  return payload;
 }
 
 export class ApiError extends Error {

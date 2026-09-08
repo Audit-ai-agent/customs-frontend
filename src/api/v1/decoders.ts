@@ -44,6 +44,8 @@ import type {
   HsSelection,
   JobRecord,
   LawCatalog,
+  LlmConnectionTest,
+  LlmSettingsView,
   LawSearch,
   OperationsMetrics,
   OriginCheck,
@@ -1170,6 +1172,64 @@ export function decodeLawCatalog(value: unknown): LawCatalog {
         article_count: nonNegativeInteger(entry.article_count, `${entryContext}.article_count`),
       };
     }),
+  };
+}
+
+const LLM_PROVIDERS = ["openai", "anthropic"] as const;
+
+function llmModelName(value: unknown, context: string): string {
+  const result = requiredString(value, context);
+  if (result.length > 128 || !/^[A-Za-z0-9][A-Za-z0-9._:-]*$/u.test(result)) {
+    throw new ContractError(`${context}: model name expected`);
+  }
+  return result;
+}
+
+function nullableString(value: unknown, context: string): string | null {
+  return value === null || value === undefined ? null : requiredString(value, context);
+}
+
+export function decodeLlmSettings(value: unknown): LlmSettingsView {
+  const context = "llm settings";
+  const raw = record(value, context);
+  const maxTokens = positiveInteger(raw.max_tokens, `${context}.max_tokens`);
+  if (maxTokens > 1_000_000) throw new ContractError(`${context}.max_tokens: out of range`);
+  const timeout = nonNegativeNumber(raw.timeout_seconds, `${context}.timeout_seconds`);
+  if (timeout <= 0 || timeout > 3600) throw new ContractError(`${context}.timeout_seconds: out of range`);
+  return {
+    provider: oneOf(raw.provider, LLM_PROVIDERS, `${context}.provider`),
+    model: llmModelName(raw.model, `${context}.model`),
+    max_tokens: maxTokens,
+    timeout_seconds: timeout,
+    source: oneOf(raw.source, ["environment", "override"] as const, `${context}.source`),
+    version: positiveInteger(raw.version, `${context}.version`),
+    updated_at: nullableString(raw.updated_at, `${context}.updated_at`),
+    error_code: nullableString(raw.error_code, `${context}.error_code`),
+    service_mode: requiredString(raw.service_mode, `${context}.service_mode`),
+    adjustable: booleanValue(raw.adjustable, `${context}.adjustable`),
+    providers: array(raw.providers, `${context}.providers`).map((item, index) => {
+      const entry = record(item, `${context}.providers[${index}]`);
+      return {
+        provider: oneOf(entry.provider, LLM_PROVIDERS, `${context}.providers[${index}].provider`),
+        credential_present: booleanValue(entry.credential_present, `${context}.providers[${index}].credential_present`),
+        default_model: llmModelName(entry.default_model, `${context}.providers[${index}].default_model`),
+      };
+    }),
+  };
+}
+
+export function decodeLlmConnectionTest(value: unknown): LlmConnectionTest {
+  const context = "llm connection test";
+  const raw = record(value, context);
+  return {
+    ok: booleanValue(raw.ok, `${context}.ok`),
+    provider: nullableString(raw.provider, `${context}.provider`),
+    model: nullableString(raw.model, `${context}.model`),
+    latency_ms:
+      raw.latency_ms === null || raw.latency_ms === undefined
+        ? null
+        : nonNegativeInteger(raw.latency_ms, `${context}.latency_ms`),
+    error_code: nullableString(raw.error_code, `${context}.error_code`),
   };
 }
 

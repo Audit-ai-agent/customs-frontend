@@ -891,3 +891,45 @@ export interface DutyAssessment {
     blocked_requirements: string[];
   } | null;
 }
+
+// ── Admin: operator-adjustable LLM settings (approver only) ──────
+
+export type LlmProvider = "openai" | "anthropic";
+
+export interface LlmProviderAvailability {
+  provider: LlmProvider;
+  credential_present: boolean;
+  default_model: string;
+}
+
+export interface LlmSettingsView {
+  provider: LlmProvider;
+  model: string;
+  max_tokens: number;
+  timeout_seconds: number;
+  /** "environment" = as deployed; "override" = changed by an operator at runtime. */
+  source: "environment" | "override";
+  version: number;
+  updated_at: string | null;
+  error_code: string | null;
+  service_mode: string;
+  /** False in local-development, where the deterministic analyzer ignores these settings. */
+  adjustable: boolean;
+  providers: LlmProviderAvailability[];
+}
+
+/** Every field is optional; the Backend rejects an empty update. */
+export interface LlmSettingsUpdate {
+  provider?: LlmProvider;
+  model?: string;
+  max_tokens?: number;
+  timeout_seconds?: number;
+}
+
+export interface LlmConnectionTest {
+  ok: boolean;
+  provider: string | null;
+  model: string | null;
+  latency_ms: number | null;
+  error_code: string | null;
+}
