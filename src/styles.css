@@ -13,6 +13,8 @@
 @import "./components.css";
 @import "./krds.css";
 @import "./motion.css";
+@import "./stages.css";
+@import "./review.css";
 
 /* ── 원본 파일 업로드 · 추출 검수 패널 ─────────────────────────────
    The binary-asset upload flow has no mockup counterpart, so its styles live

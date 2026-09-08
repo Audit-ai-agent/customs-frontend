@@ -1,0 +1,38 @@
+/* 단계 화면(서류 등록·교차 검증·관세 진단) 전용 보조 스타일. 상태 색은 앰버(검토)·초록(일치)·회색(제외)만 쓴다. */
+
+.comparison-rule { font-weight: 600; }
+.comparison-status {
+  display: inline-flex; align-items: center; font-size: 11.5px; font-weight: 700;
+  padding: 2px 9px; border-radius: 999px; background: var(--krds-surface-2); color: var(--krds-muted);
+}
+.comparison-status--pass { background: var(--krds-success-bg); color: var(--krds-success-strong); }
+.comparison-status--needs_review, .comparison-status--mismatch { background: #fff4d6; color: #7a4b00; }
+.comparison-status--skip { background: var(--krds-surface-2); color: var(--krds-muted); }
+
+.asset-confirmed-note {
+  display: flex; flex-wrap: wrap; align-items: center; gap: .5rem;
+  margin: .6rem 0 0; padding: .6rem .9rem; border-radius: .5rem;
+  background: var(--krds-success-bg); color: var(--krds-success-strong); font-size: 12.5px;
+}
+.asset-confirmed-note .text-link { background: none; border: 0; padding: 0; cursor: pointer; font: inherit; }
+
+.origin-fta { margin-top: 1rem; }
+.origin-fta__title { font-size: 13px; font-weight: 700; margin: 0 0 .4rem; }
+.origin-fta__notice { font-size: 12.5px; color: var(--krds-muted); margin: 0 0 .5rem; }
+.origin-fta__list { list-style: none; margin: 0; padding: 0; display: grid; gap: .4rem; }
+.origin-fta__item { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem .75rem; font-size: 12.5px; }
+.origin-fta__item small { color: var(--krds-muted); }
+.origin-fta__item.is-covered { padding: .5rem .75rem; border: 1px solid var(--krds-success-strong); border-radius: .5rem; background: var(--krds-success-bg); }
+.origin-fta__others { margin-top: .6rem; }
+.origin-fta__others > summary { cursor: pointer; font-size: 12.5px; color: var(--krds-muted); }
+.origin-fta__others > ul { margin-top: .5rem; }
+
+.ladder-more { margin-top: .75rem; }
+.ladder-more > summary { cursor: pointer; font-size: 12.5px; font-weight: 600; color: var(--krds-muted); }
+.ladder-more .cap { margin: .4rem 0 .6rem; }
+
+.rate-source-groups { display: grid; gap: .5rem; }
+.rate-source-group { border: 1px solid var(--krds-line); border-radius: .5rem; padding: .5rem .9rem; background: var(--krds-surface); }
+.rate-source-group > summary { cursor: pointer; font-size: 13px; font-weight: 600; }
+.rate-source-group ul { margin: .5rem 0 0; padding-left: 1.2rem; display: grid; gap: .3rem; font-size: 12.5px; }
+.rate-source-group__flag { margin-left: .5rem; color: var(--krds-muted); }

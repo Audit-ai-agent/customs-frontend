@@ -1,9 +1,8 @@
 import { useEffect, useRef, useState, type RefObject } from "react";
 import type { CaseSummary } from "../api/v1/types";
-import { CASE_FILTERS, FLOW_MAP, type CaseFilter, type CaseSortKey } from "./constants";
+import { CASE_FILTERS, type CaseFilter, type CaseSortKey } from "./constants";
 import { display, formatDate } from "./labels";
 import { DashStat, EmptyCopy, Field, RoleBoundaryNote, SectionHeading, Submit } from "./primitives";
-import { CaseStateFlow } from "./StateFlow";
 import { useStore, useWorkbenchState } from "./useStore";
 
 /** Display order of the status groups: judgement work first, finished work last. */
@@ -13,6 +12,19 @@ const GROUP_HINTS: Readonly<Record<Exclude<CaseFilter, "all">, string>> = {
   open: "심사를 아직 시작하지 않은 건",
   closed: "검토가 끝난 건 · 읽기 전용",
 };
+
+/** The four status cards double as the filter: one set of numbers, one control. */
+const STAT_CARDS: readonly { id: CaseFilter; label: string; hint: string; tone?: string }[] = [
+  { id: "all", label: "전체 Case", hint: "업무함에 등록된 전체 건" },
+  { id: "open", label: "진행 전", hint: "심사를 아직 시작하지 않은 건", tone: "open" },
+  { id: "in_review", label: "검토 중", hint: "담당자 판단이 필요한 건", tone: "review" },
+  { id: "closed", label: "종료", hint: "검토가 끝난 건", tone: "done" },
+];
+
+/** An internal `case_…` id is never something a person should read as a reference. */
+export function referenceLabel(item: Pick<CaseSummary, "external_reference">): string {
+  return item.external_reference?.trim() ? item.external_reference : "미지정";
+}
 
 export function Dashboard() {
   const store = useStore();
@@ -37,11 +49,10 @@ export function Dashboard() {
 
   return (
     <section className="dashboard">
-      <div className="dash-head">
-        <div>
-          <h2>심사 대기 · 진행 현황</h2>
-          <p className="sub">건을 클릭하면 심사 워크스페이스로 이동합니다. 탭·검색·정렬로 목록을 좁힐 수 있습니다.</p>
-        </div>
+      <div className="dash-head dash-head--compact">
+        <p className="sub">
+          {`등록된 Case ${state.cases.length}건 · 상태 카드를 누르면 목록이 그 상태로 좁혀지고, 행을 누르면 심사 워크스페이스로 이동합니다.`}
+        </p>
         {store.hasRole("reviewer") ? (
           <button className="new-btn" type="button" onClick={() => store.setCreateCaseOpen(true)}>
             ＋ 새 Case 등록
@@ -49,28 +60,22 @@ export function Dashboard() {
         ) : null}
       </div>
 
-      <div className="dash-stats">
-        <DashStat label="전체 Case" value={counts.all} hint="업무함에 등록된 전체 건" />
-        <DashStat label="진행 전" value={counts.open} hint="심사를 아직 시작하지 않은 건" tone="open" />
-        <DashStat label="검토 중" value={counts.in_review} hint="담당자 판단이 필요한 건" tone="review" />
-        <DashStat label="종료" value={counts.closed} hint="검토가 끝난 건" tone="done" />
+      <div className="dash-stats" role="group" aria-label="상태 필터">
+        {STAT_CARDS.map((card) => (
+          <DashStat
+            key={card.id}
+            label={card.label}
+            value={counts[card.id]}
+            hint={card.hint}
+            {...(card.tone ? { tone: card.tone } : {})}
+            filterId={card.id}
+            active={state.caseFilter === card.id}
+            onClick={() => store.setCaseFilter(card.id)}
+          />
+        ))}
       </div>
 
-      <div className="dash-tools">
-        <div className="dash-filters" role="group" aria-label="상태 필터">
-          {CASE_FILTERS.map((filter) => (
-            <button
-              key={filter.id}
-              type="button"
-              className={`dash-filter${state.caseFilter === filter.id ? " is-active" : ""}`}
-              aria-pressed={state.caseFilter === filter.id}
-              onClick={() => store.setCaseFilter(filter.id)}
-            >
-              <span>{filter.label}</span>
-              <span className="dash-filter__count">{counts[filter.id]}</span>
-            </button>
-          ))}
-        </div>
+      <div className="dash-tools dash-tools--search-only">
         <div className="dash-search">
           <span className="dash-search__icon" aria-hidden="true">
             ⌕
@@ -94,7 +99,7 @@ export function Dashboard() {
 
       <section className="surface dash-table-panel">
         <SectionHeading
-          title="Case 목록"
+          title={state.caseFilter === "all" ? "Case 목록" : `Case 목록 · ${CASE_FILTERS.find((filter) => filter.id === state.caseFilter)?.label ?? ""}`}
           description={
             state.caseFilter === "all"
               ? "상태별로 묶어 표시합니다. 행을 누르면 해당 Case의 심사 워크스페이스로 이동합니다."
@@ -102,31 +107,6 @@ export function Dashboard() {
           }
         />
         <CaseTable />
-      </section>
-
-      <section className="dash-flow" aria-label="Case 상태 흐름">
-        <p className="dash-flow__title">Case 상태 흐름 · 진행 전 → 검토 중 → 종료</p>
-        <CaseStateFlow />
-      </section>
-
-      <section className="dash-flow" aria-label="처리 흐름">
-        <p className="dash-flow__title">처리 흐름 · 서류 등록에서 담당자 확정까지</p>
-        <ol className="dash-flow__row">
-          {FLOW_MAP.map((step, index) => (
-            <li className="dash-flow__step" key={step.step}>
-              <span className="dash-flow__n">{step.step}</span>
-              <span className="dash-flow__tx">
-                <strong>{step.label}</strong>
-                <span>{step.hint}</span>
-              </span>
-              {index === FLOW_MAP.length - 1 ? null : (
-                <span className="dash-flow__arrow" aria-hidden="true">
-                  →
-                </span>
-              )}
-            </li>
-          ))}
-        </ol>
       </section>
 
       {!store.hasRole("reviewer") ? (
@@ -185,6 +165,8 @@ function CaseTable() {
   const state = useWorkbenchState();
   const rows = store.visibleCases();
   const sortGlyph = (key: CaseSortKey) => (state.caseSort.key === key ? (state.caseSort.ascending ? "▲" : "▼") : "↕");
+  const sortState = (key: CaseSortKey) =>
+    state.caseSort.key === key ? { "aria-sort": (state.caseSort.ascending ? "ascending" : "descending") as "ascending" | "descending" } : {};
   // "전체" keeps every Case but shows them in status groups, so the judgement
   // backlog is visible at a glance instead of interleaved with closed work.
   const groups: { status: Exclude<CaseFilter, "all"> | null; rows: CaseSummary[] }[] =
@@ -194,12 +176,12 @@ function CaseTable() {
   return (
     <div className="case-table" role="table" aria-label="Case 목록">
       <div className="case-table__header" role="row">
-        <button className="case-table__sort" type="button" onClick={() => store.toggleCaseSort("reference")}>
+        <span role="columnheader">Case 제목</span>
+        <button className="case-table__sort" type="button" role="columnheader" {...sortState("reference")} onClick={() => store.toggleCaseSort("reference")}>
           {`참조번호 ${sortGlyph("reference")}`}
         </button>
-        <span>Case 제목</span>
-        <span>상태</span>
-        <button className="case-table__sort" type="button" onClick={() => store.toggleCaseSort("updated")}>
+        <span role="columnheader">상태</span>
+        <button className="case-table__sort" type="button" role="columnheader" {...sortState("updated")} onClick={() => store.toggleCaseSort("updated")}>
           {`최근 수정 ${sortGlyph("updated")}`}
         </button>
         <span aria-hidden="true" />
@@ -230,42 +212,43 @@ function CaseTable() {
 function CaseRow({ item }: { item: CaseSummary }) {
   const store = useStore();
   const state = useWorkbenchState();
+  const reference = referenceLabel(item);
   return (
-        <div className="case-row-wrap" key={item.case_id}>
-          <button
-            className="case-row"
-            type="button"
-            role="row"
-            disabled={state.busy}
-            onClick={() => void store.openCase(item.case_id)}
-          >
-            <span className="case-row__ref mono">{item.external_reference ?? item.case_id}</span>
-            <span className="case-row__title">{item.title}</span>
-            <span>
-              <span className={`status-badge status-badge--${item.status}`}>{display(item.status)}</span>
-            </span>
-            <span className="case-row__date">{formatDate(item.updated_at)}</span>
-            <span className="case-row__go" aria-hidden="true">
-              ›
-            </span>
-          </button>
-          {store.hasRole("reviewer") ? (
-            <button
-              className="case-row__delete"
-              type="button"
-              title="Case 삭제"
-              aria-label={`${item.title} 삭제`}
-              disabled={state.busy}
-              onClick={() => {
-                if (window.confirm(`"${item.title}" Case를 삭제할까요?\n문서·업로드 파일·심사 기록이 함께 삭제되며 되돌릴 수 없습니다.`)) {
-                  void store.deleteCase(item.case_id);
-                }
-              }}
-            >
-              🗑
-            </button>
-          ) : null}
-        </div>
+    <div className="case-row-wrap" key={item.case_id}>
+      <button
+        className="case-row"
+        type="button"
+        role="row"
+        disabled={state.busy}
+        onClick={() => void store.openCase(item.case_id)}
+      >
+        <span className="case-row__title">{item.title}</span>
+        <span className={`case-row__ref${reference === "미지정" ? " case-row__ref--none" : " mono"}`}>{reference}</span>
+        <span>
+          <span className={`status-badge status-badge--${item.status}`}>{display(item.status)}</span>
+        </span>
+        <span className="case-row__date">{formatDate(item.updated_at)}</span>
+        <span className="case-row__go" aria-hidden="true">
+          ›
+        </span>
+      </button>
+      {store.hasRole("reviewer") ? (
+        <button
+          className="case-row__delete"
+          type="button"
+          title="Case 삭제"
+          aria-label={`${item.title} 삭제`}
+          disabled={state.busy}
+          onClick={() => {
+            if (window.confirm(`"${item.title}" Case를 삭제할까요?\n문서·업로드 파일·심사 기록이 함께 삭제되며 되돌릴 수 없습니다.`)) {
+              void store.deleteCase(item.case_id);
+            }
+          }}
+        >
+          🗑
+        </button>
+      ) : null}
+    </div>
   );
 }
 
@@ -274,11 +257,13 @@ function CreateCaseForm({ titleRef }: { titleRef?: RefObject<HTMLInputElement | 
   const state = useWorkbenchState();
   const [title, setTitle] = useState("");
   const [reference, setReference] = useState("");
+  const ready = title.trim().length > 0;
   return (
     <form
       className="case-create-form"
       onSubmit={(event) => {
         event.preventDefault();
+        if (!ready) return;
         void store.createCase({ title: title.trim(), reference: reference.trim() }).then(() => {
           setTitle("");
           setReference("");
@@ -298,18 +283,19 @@ function CreateCaseForm({ titleRef }: { titleRef?: RefObject<HTMLInputElement | 
             onChange={(event) => setTitle(event.target.value)}
           />
         </Field>
-        <Field label="업무 참조번호">
+        <Field label="업무 참조번호 (선택)">
           <input
             name="reference"
             type="text"
             maxLength={200}
-            placeholder="선택 입력"
+            placeholder="예: 수입신고번호 12345-26-000001"
             value={reference}
             onChange={(event) => setReference(event.target.value)}
           />
         </Field>
       </div>
-      <Submit label="새 Case 만들기" disabled={state.busy} />
+      <p className="form-hint">업무 참조번호는 수입신고번호·사내 관리번호처럼 업무에서 쓰는 번호입니다. 비우면 목록에 "미지정"으로 표시됩니다.</p>
+      <Submit label="새 Case 만들기" disabled={state.busy || !ready} primary />
     </form>
   );
 }

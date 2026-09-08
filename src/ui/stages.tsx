@@ -10,10 +10,12 @@ import {
   extractionPreviewText,
   extractionStatusLabel,
   extractionUnavailableMessage,
+  fieldLabel,
   focusDataTarget,
   rasterTextExtractionStatusLabel,
   rasterTextPreviewText,
   rasterTextWarningLabel,
+  ruleTitle,
 } from "./labels";
 import { EmptyCopy, EmptyState, Field, Metric, RoleBoundaryNote, SectionHeading, Submit } from "./primitives";
 import { DutyDiagnosisStage, HsClassificationCard, OriginVerificationCard } from "./trade";
@@ -160,7 +162,8 @@ function AssetRow({ entry }: { entry: AssetWorkbenchEntry }) {
   // The Backend does not link assets to their confirmed documents, so a prior
   // session's confirmation is recognized by the default confirm filename.
   const confirmedFilename = asset.filename.replace(/\.(pdf|jpe?g|png)$/iu, "") + ".txt";
-  const confirmed = entry.confirmed || state.documents.some((document) => document.filename === confirmedFilename);
+  const confirmedDocument = state.documents.find((document) => document.filename === confirmedFilename) ?? null;
+  const confirmed = entry.confirmed || confirmedDocument !== null;
   const preview = extraction?.result ?? null;
   const confirmable =
     !confirmed &&
@@ -186,16 +189,33 @@ function AssetRow({ entry }: { entry: AssetWorkbenchEntry }) {
                 ? extractionStatusLabel(extraction.status)
                 : "추출 전"}
         </span>
-        {!extraction && !extracting && !confirmed ? (
+        {(!extraction || extraction.status === "failed" || extraction.status === "unavailable") &&
+        !extracting &&
+        !confirmed ? (
           <button className="btn" type="button" onClick={() => void store.runExtraction(asset.asset_id)}>
-            자동 추출 실행
+            {extraction ? "자동 추출 다시 실행" : "자동 추출 실행"}
           </button>
         ) : null}
       </header>
       {extraction && extraction.status === "unavailable" ? (
         <p className="asset-row__note">{extractionUnavailableMessage(extraction.result?.warnings)}</p>
       ) : null}
-      <RasterTextExtractionPanel entry={entry} confirmed={confirmed} />
+      {confirmed ? (
+        <p className="asset-confirmed-note" data-asset-confirmed>
+          확정됨 · 검수한 텍스트가 활성 문서로 등록되어 있습니다.
+          {confirmedDocument ? (
+            <button
+              className="text-link"
+              type="button"
+              onClick={() => void store.openDocumentModal(confirmedDocument.document_id)}
+            >
+              원문 보기
+            </button>
+          ) : null}
+        </p>
+      ) : (
+        <RasterTextExtractionPanel entry={entry} confirmed={confirmed} />
+      )}
       {confirmable && preview && store.hasRole("reviewer") ? (
         <ConfirmExtractionPanel
           assetId={asset.asset_id}
@@ -238,14 +258,19 @@ function RasterTextExtractionPanel({ entry, confirmed }: { entry: AssetWorkbench
       </div>
 
       {!job && store.hasRole("reviewer") ? (
-        <button
-          className="btn"
-          type="button"
-          disabled={entry.rasterTextExtracting || state.busy || confirmed}
-          onClick={() => void store.runRasterTextExtraction(entry.asset.asset_id)}
-        >
-          {entry.rasterTextExtracting ? "OCR 요청 중…" : "스캔·이미지 OCR 실행"}
-        </button>
+        <div className="raster-text-panel__actions">
+          <button
+            className="btn btn--secondary"
+            type="button"
+            disabled={entry.rasterTextExtracting || state.busy || confirmed}
+            onClick={() => void store.runRasterTextExtraction(entry.asset.asset_id)}
+          >
+            {entry.rasterTextExtracting ? "OCR 요청 중…" : "스캔·이미지 OCR 실행"}
+          </button>
+          <span className="form-hint">
+            스캔한 PDF나 사진처럼 내장 텍스트가 없어 위의 자동 추출이 비어 있을 때 사용합니다.
+          </span>
+        </div>
       ) : null}
 
       {job ? (
@@ -468,8 +493,14 @@ function ConfirmExtractionPanel({
   const state = useWorkbenchState();
   const [text, setText] = useState(initialText);
   const [filename, setFilename] = useState(initialFilename);
+  const panelRef = useRef<HTMLDetailsElement>(null);
+  // The two-step flow (upload → 검수·확정) is easy to miss when the panel opens
+  // below the fold; bring it into view once when it appears.
+  useEffect(() => {
+    panelRef.current?.scrollIntoView?.({ block: "nearest", behavior: "smooth" });
+  }, []);
   return (
-    <details className="asset-confirm-panel" open>
+    <details className="asset-confirm-panel" open ref={panelRef}>
       <summary>{needsReview ? "부분 추출 텍스트 검수·확정" : "추출 텍스트 검수·확정"}</summary>
       <p className="form-hint">
         추출 결과는 검수용 후보일 뿐입니다. 아래 내용을 원본과 대조해 수정한 뒤 확정해야 심사 입력이 됩니다.
@@ -639,6 +670,12 @@ export function CrosscheckStage() {
   );
 }
 
+/** A comparison operand that is a bare field key (e.g. `hs_code`) reads as its Korean label. */
+function comparisonValue(value: string | null | undefined): string {
+  const text = displayValue(value);
+  return /^[a-z][a-z0-9]*(?:_[a-z0-9]+)+$/u.test(text) ? fieldLabel(text) : text;
+}
+
 export function ComparisonTable({ comparisons }: { comparisons: ReviewComparison[] }) {
   const store = useStore();
   const state = useWorkbenchState();
@@ -669,9 +706,19 @@ export function ComparisonTable({ comparisons }: { comparisons: ReviewComparison
           className={`comparison-row comparison-row--${comparison.status}${focusId === comparison.comparison_id ? " is-focused" : ""}`}
           onClick={() => void store.focusComparison(comparison)}
         >
-          <span>{comparison.rule_code}</span>
-          <span>{comparisonStatusLabel(comparison.status)}</span>
-          <span className="mono">{`${displayValue(comparison.left.display_value)} ↔ ${displayValue(comparison.right.display_value)}`}</span>
+          <span className="comparison-rule" title={comparison.rule_code}>
+            {ruleTitle(comparison.rule_code)}
+          </span>
+          <span>
+            <span className={`comparison-status comparison-status--${comparison.status}`}>
+              {comparisonStatusLabel(comparison.status)}
+            </span>
+          </span>
+          <span className="mono">
+            {comparison.right.display_value?.trim()
+              ? `${comparisonValue(comparison.left.display_value)} ↔ ${comparisonValue(comparison.right.display_value)}`
+              : comparisonValue(comparison.left.display_value)}
+          </span>
           <span>{comparison.message}</span>
         </button>
       ))}

@@ -11,36 +11,37 @@ import {
 import { display, roleLabel } from "./labels";
 import { useStore, useWorkbenchState } from "./useStore";
 
-/** KRDS utility bar: text sizing, the local development role switch, and sign-out. */
-export function UtilityBar() {
+const UUID_LIKE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;
+
+/**
+ * What the header calls the signed-in person. The OIDC subject is an opaque
+ * identifier (often a UUID) that nobody can read; it stays available as a
+ * tooltip, and the visible label falls back to a generic account name.
+ */
+export function sessionDisplayName(subject: string | undefined): string {
+  if (!subject) return "세션 확인 중";
+  return UUID_LIKE.test(subject) ? "기관 계정" : subject;
+}
+
+/** Text-size buttons: the KRDS utility that used to live in its own bar. */
+function TextSizeControl() {
   const store = useStore();
   const state = useWorkbenchState();
   return (
-    <div className="g-utilbar">
-      <div className="g-inner">
-        <span className="g-utilbar__site">통관 AI 사전심사 · 업무시스템</span>
-        <div className="g-utilbar__tools">
-          <div className="g-zoom" role="group" aria-label="본문 글자 크기 조절">
-            <span className="g-zoom__label">글자크기</span>
-            {FONT_SCALES.map(([scale, glyph, name]) => (
-              <button
-                key={name}
-                type="button"
-                className={`g-zoom__button${state.fontScale === scale ? " is-selected" : ""}`}
-                aria-label={`글자 크기 ${name}`}
-                aria-pressed={state.fontScale === scale}
-                onClick={() => store.setFontScale(scale)}
-              >
-                {glyph}
-              </button>
-            ))}
-          </div>
-          <RoleSwitch />
-          <button className="g-lnk" type="button" onClick={() => store.logout()}>
-            로그아웃
-          </button>
-        </div>
-      </div>
+    <div className="g-zoom" role="group" aria-label="본문 글자 크기 조절">
+      <span className="g-zoom__label">글자크기</span>
+      {FONT_SCALES.map(([scale, glyph, name]) => (
+        <button
+          key={name}
+          type="button"
+          className={`g-zoom__button${state.fontScale === scale ? " is-selected" : ""}`}
+          aria-label={`글자 크기 ${name}`}
+          aria-pressed={state.fontScale === scale}
+          onClick={() => store.setFontScale(scale)}
+        >
+          {glyph}
+        </button>
+      ))}
     </div>
   );
 }
@@ -76,14 +77,15 @@ function RoleSwitch() {
 }
 
 /**
- * The mockup topbar. The case chip only appears inside a case, and the sign-in
- * identity comes from the Backend session rather than a hard-coded name.
+ * One header row: brand, the case chip inside a case, the text-size and
+ * sign-out utilities, and the signed-in identity as a readable name plus role
+ * chips. Raw session identifiers never render as text.
  */
 export function Topbar({ right }: { right?: ReactNode }) {
   const store = useStore();
   const state = useWorkbenchState();
   const session = state.session;
-  const subject = session?.subject ?? "세션 확인 중";
+  const name = sessionDisplayName(session?.subject);
   return (
     <div className="topbar">
       <button className="brand" type="button" onClick={() => store.goToPage("home")} aria-label="홈으로 이동">
@@ -97,15 +99,31 @@ export function Topbar({ right }: { right?: ReactNode }) {
       </button>
       <div className="spacer" />
       {right}
-      <div className="user">
-        <span className="mono">{subject}</span>
-        <div className="avatar" aria-hidden="true">
-          {subject.slice(0, 1).toUpperCase()}
-        </div>
+      <div className="topbar__tools">
+        <TextSizeControl />
+        <RoleSwitch />
       </div>
-      <div className="user-roles">
-        {session?.org_id ? <small>{session.org_id}</small> : null}
-        {session?.roles.length ? <small>{session.roles.map(roleLabel).join(", ")}</small> : null}
+      <div className="user" data-session-user>
+        <div className="avatar" aria-hidden="true">
+          {name.slice(0, 1).toUpperCase()}
+        </div>
+        <div className="user__identity">
+          <span className="user__name" {...(session?.subject ? { title: `계정 ID ${session.subject}` } : {})}>
+            {name}
+          </span>
+          {session?.roles.length ? (
+            <span className="user__roles" aria-label="역할">
+              {session.roles.map((role) => (
+                <span key={role} className="role-chip">
+                  {roleLabel(role)}
+                </span>
+              ))}
+            </span>
+          ) : null}
+        </div>
+        <button className="g-lnk" type="button" onClick={() => store.logout()}>
+          로그아웃
+        </button>
       </div>
     </div>
   );
@@ -180,6 +198,9 @@ const PAGE_HERO: Record<SitePage, { title: string; subtitle: string }> = {
   admin: { title: "관리자 설정", subtitle: "AI 심사에 쓰는 LLM 제공자·모델·응답 한도를 확인하고 변경합니다. 승인자 역할에서만 변경할 수 있습니다." },
 };
 
+/** Pages whose hero keeps its explanatory sentence; every other page gets the compact one-row hero. */
+const HERO_WITH_SUBTITLE: ReadonlySet<SitePage> = new Set<SitePage>(["home", "guide"]);
+
 export function Hero() {
   const store = useStore();
   const state = useWorkbenchState();
@@ -193,13 +214,13 @@ export function Hero() {
     : state.activePage === "home"
       ? [{ label: "홈" }]
       : [{ label: "홈", target: "home" }, { label: pageLabel }];
-  const subtitle = current
-    ? `${current.external_reference ?? current.case_id} · ${display(current.status)} · 활성 문서 ${store.activeDocuments().length}건`
-    : state.activePage === "cases"
-      ? `등록된 Case ${state.cases.length}건 · 문서와 근거를 한 화면에서 검토합니다.`
-      : hero.subtitle;
+  const compact = current !== null || !HERO_WITH_SUBTITLE.has(state.activePage);
+  // Inside a case the second line collapses into inline meta beside the title.
+  const caseMeta = current
+    ? `${current.external_reference ?? "참조번호 미지정"} · ${display(current.status)} · 활성 문서 ${store.activeDocuments().length}건`
+    : null;
   return (
-    <div className="g-hero">
+    <div className={`g-hero${compact ? " g-hero--compact" : ""}`}>
       <div className="g-inner">
         <p className="g-crumb" aria-label="현재 위치">
           {trail.map((step, index) => (
@@ -227,12 +248,17 @@ export function Hero() {
         </p>
         <div className="g-hero__row">
           <div className="g-hero__text">
-            <h1 className="g-title">{current ? current.title : hero.title}</h1>
-            <p className="g-title-sub">{subtitle}</p>
+            <h1 className="g-title">
+              {current ? current.title : hero.title}
+              {caseMeta ? <span className="g-title-meta">{caseMeta}</span> : null}
+            </h1>
+            {!compact && hero.subtitle ? <p className="g-title-sub">{hero.subtitle}</p> : null}
           </div>
           {current ? (
             <div className="case-actions">
-              <span className="human-review-badge">항상 사람 검토 필요</span>
+              <span className="human-review-badge" title="AI 결과는 자동 승인되지 않으며 담당자가 확정합니다.">
+                항상 사람 검토 필요
+              </span>
               <StartReviewButton />
             </div>
           ) : null}
@@ -263,11 +289,14 @@ export function StartReviewButton() {
 }
 
 export function SiteFooter() {
+  const store = useStore();
   return (
     <footer className="g-footer">
       <div className="g-inner">
-        <p className="g-footer__title">통관 AI 사전심사 작업대</p>
-        <p className="g-footer__note">KRDS(대한민국 정부 디자인 시스템) 문법을 적용한 업무 화면입니다.</p>
+        <p className="g-footer__title">
+          {`통관 AI 사전심사 작업대 · ${store.mode === "functional-uat" ? "기능 UAT" : "팀 개발 환경"}`}
+        </p>
+        <p className="g-footer__note">문의: 시스템 관리자 · 모든 AI 결과는 담당자 검토 후 확정됩니다.</p>
       </div>
     </footer>
   );

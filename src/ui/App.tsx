@@ -2,12 +2,12 @@ import { useEffect, useRef } from "react";
 import { ACTIVE_JOB_STATES, STAGES, STAGE_IDS, type StageView } from "./constants";
 import { AdminPage } from "./Admin";
 import { AssistantScreen } from "./Assistant";
-import { CaseSubNav, GlobalNav, Hero, SiteFooter, Topbar, UtilityBar } from "./Chrome";
+import { CaseSubNav, GlobalNav, Hero, SiteFooter, Topbar } from "./Chrome";
 import { Dashboard } from "./Dashboard";
 import { DocumentModal } from "./DocumentModal";
 import { HistoryScreen } from "./History";
 import { GuidePage, HomePage, HskReferencePage, LawsPage, MetricsPage, RecordsPage } from "./pages";
-import { display, findingTitle } from "./labels";
+import { display, findingDisplayTitle } from "./labels";
 import { Message } from "./primitives";
 import { DocumentRail, TraceRail } from "./Rails";
 import { ReviewStage } from "./Review";
@@ -57,7 +57,6 @@ export function App() {
   return (
     <div className="g-page">
       {state.busy ? <div className="g-progress" role="status" aria-label="요청을 처리하고 있습니다" /> : null}
-      <UtilityBar />
       <Topbar right={<CaseChip />} />
       <GlobalNav />
       <main className="g-main" id="main-content" aria-busy={state.busy}>
@@ -104,7 +103,7 @@ function CaseChip() {
   return (
     <div className="ship-chip">
       <span className="dot" />
-      심사 건 <b className="mono">{current.external_reference ?? current.case_id}</b>
+      심사 건 <b className="mono">{current.external_reference ?? "참조번호 미지정"}</b>
       <span>· {display(current.status)}</span>
     </div>
   );
@@ -248,6 +247,9 @@ function IssueBar() {
   }
 
   const highest = store.highestOpenFinding();
+  const highestComparison = highest?.comparison_id
+    ? state.selectedRun.comparisons.find((item) => item.comparison_id === highest.comparison_id)
+    : undefined;
   return (
     <div className="issuebar" role="status">
       <span className="issuebar__icon" aria-hidden="true">
@@ -264,7 +266,7 @@ function IssueBar() {
       )}
       {highest ? (
         <button className="issuebar__chip" type="button" onClick={() => store.focusFinding(highest.finding_id)}>
-          {`우선 확인 · ${findingTitle(highest)}`}
+          {`우선 확인 · ${findingDisplayTitle(highest, highestComparison)}`}
         </button>
       ) : null}
     </div>

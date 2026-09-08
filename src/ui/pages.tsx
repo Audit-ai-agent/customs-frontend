@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from "react";
-import type { HsReferenceSearch, HsReferenceSearchResult, LawSearch, OperationsMetrics } from "../api/v1/types";
-import { FLOW_MAP, type SitePage } from "./constants";
-import { decisionReasonLabel, display, formatDate, formatDay, ruleTitle } from "./labels";
-import { DashStat, EmptyCopy, ExternalSourceLink, SectionHeading } from "./primitives";
+import type { CaseSummary, HsReferenceSearch, HsReferenceSearchResult, LawSearch, OperationsMetrics, ReviewRunSummary } from "../api/v1/types";
+import { FLOW_MAP, STAGES, type CaseFilter } from "./constants";
+import { referenceLabel } from "./Dashboard";
+import { decisionReasonLabel, formatDate, formatDay, ruleTitle } from "./labels";
+import { DashStat, DisabledReason, EmptyCopy, ExternalSourceLink, SectionHeading } from "./primitives";
 import { CaseStateFlow, ReviewerWorkflowList } from "./StateFlow";
 import { useStore, useWorkbenchState } from "./useStore";
 
@@ -10,58 +11,100 @@ import { useStore, useWorkbenchState } from "./useStore";
  * KRDS 방문(visiting) 서비스 패턴: 서비스가 무엇인지, 지금 무엇을 하면
  * 되는지, 어디로 가면 되는지를 첫 화면에서 답한다. 수치는 전부 실데이터. */
 
-const HOME_TASKS: readonly { page: SitePage; title: string; copy: string }[] = [
-  { page: "cases", title: "심사 업무함", copy: "Case를 등록하고 서류·심사·판단을 한 화면에서 처리합니다." },
-  { page: "hsk", title: "HSK 분류 참조", copy: "관세청 참조표에서 코드·품명으로 HSK 분류를 검색합니다." },
-  { page: "laws", title: "법령 조회", copy: "심사가 실제 인용한 법령 근거를 모아 확인합니다." },
-  { page: "records", title: "심사 기록", copy: "모든 Case의 AI 심사 실행 이력을 봅니다." },
-  { page: "metrics", title: "운영 지표", copy: "Case·심사 실행의 서버 집계 수치를 봅니다." },
-  { page: "guide", title: "이용안내", copy: "절차·역할·단축키와 책임 범위를 안내합니다." },
+/** The four status cards: on the home page they jump to the inbox filtered by that status. */
+const HOME_STATS: readonly { id: CaseFilter; label: string; hint: string; tone?: string }[] = [
+  { id: "all", label: "전체 Case", hint: "업무함에 등록된 전체 건" },
+  { id: "open", label: "진행 전", hint: "심사를 아직 시작하지 않은 건", tone: "open" },
+  { id: "in_review", label: "검토 중", hint: "담당자 판단이 필요한 건", tone: "review" },
+  { id: "closed", label: "종료", hint: "검토가 끝난 건", tone: "done" },
 ];
+
+const HOME_TODO_LIMIT = 5;
 
 export function HomePage() {
   const store = useStore();
   const state = useWorkbenchState();
   const counts = store.caseCounts();
+  const todo = [...state.cases]
+    .filter((item) => item.status === "in_review")
+    .sort((left, right) => right.updated_at.localeCompare(left.updated_at));
+  const shown = todo.slice(0, HOME_TODO_LIMIT);
+  const goToInbox = (filter: CaseFilter) => {
+    store.setCaseFilter(filter);
+    store.goToPage("cases");
+  };
   return (
     <section className="page-grid" data-home-page>
       <section className="surface">
-        <SectionHeading title="바로 가기" description="자주 쓰는 업무 화면입니다. 카드를 누르면 이동합니다." />
-        <div className="home-cards">
-          {HOME_TASKS.map((task) => (
-            <button key={task.page} className="home-card" type="button" onClick={() => store.goToPage(task.page)}>
-              <strong>{task.title}</strong>
-              <span>{task.copy}</span>
-              <span className="home-card__go" aria-hidden="true">
-                →
-              </span>
-            </button>
+        <SectionHeading
+          title="심사 현황"
+          description={`등록된 Case ${state.cases.length}건의 상태별 현황입니다. 카드를 누르면 그 상태의 목록으로 이동합니다.`}
+        />
+        <div className="dash-stats" role="group" aria-label="상태별 Case 수">
+          {HOME_STATS.map((card) => (
+            <DashStat
+              key={card.id}
+              label={card.label}
+              value={counts[card.id]}
+              hint={card.hint}
+              {...(card.tone ? { tone: card.tone } : {})}
+              filterId={card.id}
+              onClick={() => goToInbox(card.id)}
+            />
           ))}
         </div>
       </section>
 
-      <section className="surface">
-        <SectionHeading
-          title="심사 현황"
-          description={`등록된 Case ${state.cases.length}건의 상태별 현황입니다. 카드 수치는 실시간 목록 기준입니다.`}
-        />
-        <div className="dash-stats">
-          <DashStat label="전체 Case" value={counts.all} hint="업무함에 등록된 전체 건" />
-          <DashStat label="진행 전" value={counts.open} hint="심사를 아직 시작하지 않은 건" tone="open" />
-          <DashStat label="검토 중" value={counts.in_review} hint="담당자 판단이 필요한 건" tone="review" />
-          <DashStat label="종료" value={counts.closed} hint="검토가 끝난 건" tone="done" />
+      <section className="surface" data-home-todo>
+        <div className="dash-head dash-head--compact">
+          <SectionHeading
+            title="내가 처리할 건"
+            description={
+              todo.length
+                ? `담당자 판단이 필요한 검토 중 건 ${todo.length}건 중 최근 수정된 ${shown.length}건입니다. 행을 누르면 통관 심사 단계로 이동합니다.`
+                : "담당자 판단이 필요한 검토 중 건이 없습니다."
+            }
+          />
+          {todo.length > shown.length ? (
+            <button className="btn" type="button" onClick={() => goToInbox("in_review")}>
+              {`검토 중 ${todo.length}건 전체 보기`}
+            </button>
+          ) : null}
         </div>
+        {shown.length === 0 ? (
+          <EmptyCopy>지금 판단을 기다리는 건이 없습니다. 새 Case는 심사 업무함에서 등록합니다.</EmptyCopy>
+        ) : (
+          <div className="home-todo" role="list">
+            {shown.map((item) => (
+              <button
+                key={item.case_id}
+                type="button"
+                role="listitem"
+                className="home-todo__row"
+                disabled={state.busy}
+                onClick={() => void store.openCase(item.case_id, "review")}
+              >
+                <span className="home-todo__title">{item.title}</span>
+                <span className="home-todo__ref">{referenceLabel(item)}</span>
+                <span className="home-todo__date">{formatDate(item.updated_at)}</span>
+                <span className="case-row__go" aria-hidden="true">
+                  ›
+                </span>
+              </button>
+            ))}
+          </div>
+        )}
       </section>
 
       <section className="surface">
-        <SectionHeading title="처리 절차" description="서류 등록에서 담당자 확정까지 — 모든 결과는 담당자 검토를 거칩니다." />
+        <SectionHeading title="처리 절차" description="Case 워크스페이스의 네 단계와 같습니다. 모든 결과는 담당자 검토를 거칩니다." />
         <ol className="guide-steps">
-          {FLOW_MAP.map((step) => (
-            <li key={step.step}>
-              <span className="guide-steps__n">{step.step}</span>
+          {STAGES.map((stage) => (
+            <li key={stage.id}>
+              <span className="guide-steps__n">{stage.step}</span>
               <span className="guide-steps__tx">
-                <strong>{step.label}</strong>
-                <span>{step.hint}</span>
+                <strong>{stage.label}</strong>
+                <span>{stage.hint}</span>
               </span>
             </li>
           ))}
@@ -81,6 +124,22 @@ const OFFICIAL_LAW_SOURCES: readonly { name: string; copy: string; uri: string }
   { name: "관세청 UNI-PASS", copy: "실제 적용 세율·수입 요건 확인", uri: "https://unipass.customs.go.kr/clip/index.do" },
   { name: "관세청 FTA 포털", copy: "협정별 원산지 기준·증명 서식", uri: "https://www.customs.go.kr/ftaportalkor/main.do" },
 ];
+
+/** Long article bodies start clamped to two lines; the reader opens the ones they need. */
+function LawArticleText({ text }: { text: string }) {
+  const [expanded, setExpanded] = useState(false);
+  const long = text.length > 140;
+  return (
+    <div className="law-item__body">
+      <p className={`law-item__text${long && !expanded ? " law-item__text--clamp" : ""}`}>{text}</p>
+      {long ? (
+        <button className="text-toggle" type="button" aria-expanded={expanded} onClick={() => setExpanded((value) => !value)}>
+          {expanded ? "접기" : "더 보기"}
+        </button>
+      ) : null}
+    </div>
+  );
+}
 
 /** Real free-text statute search over the loaded Data law store. */
 function LawSearchSection() {
@@ -137,6 +196,7 @@ function LawSearchSection() {
           {searching ? "검색 중…" : "법령 검색"}
         </button>
       </form>
+      {text.trim().length < 2 ? <DisabledReason>검색어를 두 글자 이상 입력하면 검색 버튼이 활성화됩니다.</DisabledReason> : null}
       {error !== null ? <p className="unsupported-inline">{error}</p> : null}
       {view !== null ? (
         view.results.length === 0 ? (
@@ -150,7 +210,7 @@ function LawSearchSection() {
                   <strong>{result.title}</strong>
                   <ExternalSourceLink uri={result.source_uri} />
                 </div>
-                <p className="law-item__text">{result.text}</p>
+                <LawArticleText text={result.text} />
                 <p className="law-item__cites">
                   {`${result.law_name}${result.valid_from ? ` · 시행 ${result.valid_from}` : ""}${result.valid_to ? ` ~ ${result.valid_to}` : " ~ 현재"} · 관련도 ${result.score.toFixed(2)}`}
                 </p>
@@ -241,9 +301,9 @@ export function LawsPage() {
                         <strong>{entry.title}</strong>
                         <ExternalSourceLink uri={entry.source_uri} />
                       </div>
-                      <p className="law-item__text">{entry.text}</p>
+                      <LawArticleText text={entry.text} />
                       <p className="law-item__cites">
-                        {`인용 Case: ${entry.citedIn.map((cited) => cited.external_reference ?? cited.case_id).join(", ")}`}
+                        {`인용 Case: ${entry.citedIn.map((cited) => cited.title).join(", ")}`}
                       </p>
                     </article>
                   ))}
@@ -364,6 +424,13 @@ export function HskReferencePage() {
                   : "품명 역검색 — 참조표 품목명과 대조한 결과입니다."}
               </p>
             ) : null}
+            {view.results.length > 0 ? (
+              <p className="form-hint" data-hsk-page-count>
+                {view.truncated
+                  ? `결과 ${view.results.length}건 표시 · 결과가 더 있습니다. 검색어를 좁히면 나머지가 보입니다.`
+                  : `결과 ${view.results.length}건`}
+              </p>
+            ) : null}
             {view.results.length === 0 ? (
               <EmptyCopy>
                 {fullCodeMiss
@@ -396,9 +463,6 @@ export function HskReferencePage() {
                 ))}
               </div>
             )}
-            {view.truncated ? (
-              <p className="form-hint">결과가 더 있습니다 — 검색어를 좁히면 나머지가 보입니다.</p>
-            ) : null}
           </>
         )}
       </section>
@@ -439,6 +503,28 @@ export function HskReferencePage() {
 /* ── 심사 기록 (#/records) ───────────────────────────────────────
  * KRDS 목록 탐색 패턴: 전체 Case의 심사 실행을 한 목록으로. */
 
+/**
+ * The verdict cell is a count, not a red badge: "확인 N건 · 판단 M건" with a
+ * dot that is amber while judgements are outstanding and green once every
+ * finding has one (or there was nothing to judge).
+ */
+function RecordVerdict({ run }: { run: ReviewRunSummary }) {
+  const open = Math.max(0, run.finding_count - run.reviewer_decision_count);
+  const tone = run.execution_status === "failed" ? "failed" : open > 0 ? "pending" : "settled";
+  const label = run.execution_status === "failed"
+    ? "실행 실패"
+    : run.finding_count === 0
+      ? "확인 사항 없음"
+      : `확인 ${run.finding_count}건 · 판단 ${run.reviewer_decision_count}건`;
+  return (
+    <span className={`records-row__verdict records-row__verdict--${tone}`} data-record-verdict={tone}>
+      <span className="records-row__dot" aria-hidden="true" />
+      <span>{label}</span>
+      {open > 0 ? <small>{`미판단 ${open}건`}</small> : null}
+    </span>
+  );
+}
+
 export function RecordsPage() {
   const store = useStore();
   const state = useWorkbenchState();
@@ -472,8 +558,7 @@ export function RecordsPage() {
               <span>실행일</span>
               <span>Case</span>
               <span>기준일</span>
-              <span>판정</span>
-              <span>확인 사항</span>
+              <span>확인 사항 · 판단</span>
               <span aria-hidden="true" />
             </div>
             {records.map(({ caseSummary, run }) => (
@@ -487,16 +572,11 @@ export function RecordsPage() {
               >
                 <span className="records-row__date">{formatDate(run.created_at)}</span>
                 <span className="records-row__case">
-                  <span className="mono">{caseSummary.external_reference ?? caseSummary.case_id}</span>
-                  <small>{caseSummary.title}</small>
+                  <span className="records-row__title">{caseSummary.title}</span>
+                  <small>{`참조번호 ${referenceLabel(caseSummary)}`}</small>
                 </span>
                 <span className="records-row__date">{formatDay(run.review_as_of)}</span>
-                <span>
-                  <span className={`badge ${run.assessment === "no_issue_detected" ? "b-ok" : "b-bad"}`}>
-                    {display(run.assessment)}
-                  </span>
-                </span>
-                <span className="records-row__counts">{`확인 사항 ${run.finding_count}건 · 판단 ${run.reviewer_decision_count}건`}</span>
+                <RecordVerdict run={run} />
                 <span className="case-row__go" aria-hidden="true">
                   ›
                 </span>
@@ -516,6 +596,12 @@ export function RecordsPage() {
  * 모든 수치는 Backend가 저장된 Case·심사 실행에서 그대로 센 값이다
  * (GET /operations-metrics). 추정·샘플링 없음. 시각 문법: 단일 색조
  * 막대(크기 비교), 상태·범례는 색이 아니라 텍스트 라벨이 식별한다. */
+
+/** Rule codes without a Korean title still get a distinct label instead of seven identical generic ones. */
+function ruleChartLabel(code: string): string {
+  const title = ruleTitle(code);
+  return title === "담당자 확인 사항" ? `${title} (${code.replace(/_/gu, " ")})` : title;
+}
 
 function MetricBarRow({ label, value, max }: { label: string; value: number; max: number }) {
   const width = max > 0 ? Math.max(value > 0 ? 3 : 0, Math.round((value / max) * 100)) : 0;
@@ -710,7 +796,7 @@ function ReviewLoadSection({ load }: { load: OperationsMetrics["review_load"] })
               ) : (
                 <div className="mbar-list" aria-label="규칙별 확인 사항 건수">
                   {load.findings_by_code.slice(0, 8).map((item) => (
-                    <MetricBarRow key={item.code} label={ruleTitle(item.code)} value={item.count} max={codeMax} />
+                    <MetricBarRow key={item.code} label={ruleChartLabel(item.code)} value={item.count} max={codeMax} />
                   ))}
                 </div>
               )}
@@ -773,9 +859,12 @@ export function GuidePage() {
         <ReviewerWorkflowList />
       </section>
 
-      <section className="surface">
-        <SectionHeading title="AI 처리 절차" description="심사 시작 버튼 뒤에서 실행되는 실제 파이프라인입니다." />
-        <ol className="guide-steps">
+      <section className="surface surface--secondary">
+        <SectionHeading
+          title="AI가 내부적으로 수행하는 단계"
+          description="심사 시작 버튼 뒤에서 Agent가 실행하는 내부 파이프라인입니다. 담당자가 보는 화면 단계는 위 업무 순서와 워크스페이스의 4단계입니다."
+        />
+        <ol className="guide-steps guide-steps--secondary">
           {FLOW_MAP.map((step) => (
             <li key={step.step}>
               <span className="guide-steps__n">{step.step}</span>
@@ -790,7 +879,7 @@ export function GuidePage() {
 
       <section className="surface">
         <SectionHeading title="역할과 권한" description="심사자와 승인자는 서로 다른 책임을 가집니다." />
-        <div className="sheet">
+        <div className="sheet sheet--text">
           <div className="sheet-body">
             <div className="row">
               <span className="k">심사자</span>
@@ -806,7 +895,7 @@ export function GuidePage() {
 
       <section className="surface">
         <SectionHeading title="키보드 단축키" description="입력창에 포커스가 없을 때 동작합니다." />
-        <div className="sheet">
+        <div className="sheet sheet--text">
           <div className="sheet-body">
             {GUIDE_SHORTCUTS.map((shortcut) => (
               <div className="row" key={shortcut.keys}>

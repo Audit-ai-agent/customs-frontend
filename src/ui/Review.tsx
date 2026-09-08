@@ -19,15 +19,18 @@ import {
   decisionReasonLabel,
   decisionStatusLabel,
   display,
+  displayComparisonValue,
   displayValue,
   documentAnalysisLabel,
   documentTypeLabel,
   evidenceSourceTypeLabel,
-  findingTitle,
+  findingDisplayTitle,
+  findingKindLabel,
   focusDataTarget,
   formatDate,
   groundedCitations,
   reportSectionDescription,
+  reviewerSentence,
   ruleTitle,
   severityWeight,
 } from "./labels";
@@ -215,64 +218,153 @@ function VerdictStamp({ run, openCount }: { run: ReviewRun; openCount: number })
 
 /* ── findings ────────────────────────────────────────────────── */
 
+function comparisonFor(finding: ReviewFinding, run: ReviewRun): ReviewComparison | undefined {
+  return finding.comparison_id ? run.comparisons.find((item) => item.comparison_id === finding.comparison_id) : undefined;
+}
+
+/** Findings grouped by their display title, in first-appearance order. */
+function groupFindings(findings: ReviewFinding[], run: ReviewRun): { title: string; items: ReviewFinding[] }[] {
+  const groups: { title: string; items: ReviewFinding[] }[] = [];
+  for (const finding of findings) {
+    const title = findingDisplayTitle(finding, comparisonFor(finding, run));
+    const group = groups.find((entry) => entry.title === title);
+    if (group) group.items.push(finding);
+    else groups.push({ title, items: [finding] });
+  }
+  return groups;
+}
+
 function FindingList({ findings, run }: { findings: ReviewFinding[]; run: ReviewRun }) {
   const state = useWorkbenchState();
   const containerRef = useRef<HTMLDivElement>(null);
   const focusId = state.findingFocusId;
+  const decided = new Set(run.reviewer_decisions.map((decision) => decision.finding_id));
+  const unjudged = findings.filter((finding) => !decided.has(finding.finding_id));
+  // One card is open at a time; the first outstanding judgement starts open.
+  const [expandedId, setExpandedId] = useState<string | null>(unjudged[0]?.finding_id ?? null);
 
   useEffect(() => {
-    if (focusId) focusDataTarget(containerRef.current, "data-finding-id", focusId);
+    if (focusId) {
+      setExpandedId(focusId);
+      focusDataTarget(containerRef.current, "data-finding-id", focusId);
+    }
   }, [focusId]);
 
   if (!findings.length) {
     return <EmptyState title="등록된 확인 사항이 없습니다." copy="그래도 결과는 자동 완료되지 않으며 담당자 검토가 필요합니다." />;
   }
+  const done = findings.length - unjudged.length;
+  const goToNext = () => {
+    const currentIndex = unjudged.findIndex((finding) => finding.finding_id === expandedId);
+    const next = unjudged[(currentIndex + 1) % unjudged.length] ?? unjudged[0];
+    if (!next) return;
+    setExpandedId(next.finding_id);
+    focusDataTarget(containerRef.current, "data-finding-id", next.finding_id);
+  };
   return (
     <div className="finding-list" ref={containerRef}>
-      {findings.map((finding) => (
-        <FindingCard key={finding.finding_id} finding={finding} run={run} />
+      <div className="finding-progress" role="status" aria-live="polite">
+        <div className="finding-progress__text">
+          <strong>{`판단 ${findings.length}건 중 ${done}건 기록`}</strong>
+          <span>{unjudged.length ? `미판단 ${unjudged.length}건` : "모든 확인 사항에 판단이 기록되었습니다."}</span>
+        </div>
+        <progress className="finding-progress__bar" max={findings.length} value={done} aria-label="판단 기록 진행률" />
+        <button className="button button--secondary" type="button" onClick={goToNext} disabled={!unjudged.length}>
+          다음 미판단으로
+        </button>
+      </div>
+      {groupFindings(findings, run).map((group) => (
+        <section className="finding-group" key={group.title} data-finding-group={group.title}>
+          <h4 className="finding-group__title">
+            {group.title} <span className="finding-group__count">{`· ${group.items.length}건`}</span>
+          </h4>
+          {group.items.map((finding) => (
+            <FindingCard
+              key={finding.finding_id}
+              finding={finding}
+              run={run}
+              title={group.title}
+              expanded={expandedId === finding.finding_id}
+              onToggle={() => setExpandedId(expandedId === finding.finding_id ? null : finding.finding_id)}
+            />
+          ))}
+        </section>
       ))}
     </div>
   );
 }
 
-function FindingCard({ finding, run }: { finding: ReviewFinding; run: ReviewRun }) {
+function FindingCard({
+  finding,
+  run,
+  title,
+  expanded,
+  onToggle,
+}: {
+  finding: ReviewFinding;
+  run: ReviewRun;
+  title: string;
+  expanded: boolean;
+  onToggle: () => void;
+}) {
   const store = useStore();
   const state = useWorkbenchState();
   const decision = run.reviewer_decisions.find((item) => item.finding_id === finding.finding_id);
-  const comparison = finding.comparison_id
-    ? run.comparisons.find((item) => item.comparison_id === finding.comparison_id)
-    : undefined;
+  const comparison = comparisonFor(finding, run);
   const source = store.sourceForFinding(finding);
   const focused = state.findingFocusId === finding.finding_id;
+  const message = reviewerSentence(finding.message);
+  const reasonLabel = decision ? decisionReasonLabel(decision.reason_code) : null;
   return (
     <article
       data-finding-id={finding.finding_id}
       data-finding-code={finding.code}
-      className={`finding-card${decision ? " is-settled" : ""}${focused ? " is-focused" : ""}`}
+      className={`finding-card${decision ? " is-settled" : ""}${focused ? " is-focused" : ""}${expanded ? " is-expanded" : " is-collapsed"}`}
     >
       <header className="finding-heading">
         <div>
-          <strong>{findingTitle(finding)}</strong>
-          <p>{finding.message}</p>
+          <strong>{title}</strong>
+          <span className="finding-kind">{findingKindLabel(finding)}</span>
+          <p>{message}</p>
+          {!expanded && comparison ? (
+            <p className="finding-summary">
+              {`기준 ${displayComparisonValue(comparison.expected_value ?? comparison.left.display_value)} · 관측 ${displayComparisonValue(
+                comparison.observed_value ?? comparison.right.display_value,
+              )}${comparison.unit ? ` · ${comparison.unit}` : ""}`}
+            </p>
+          ) : null}
+          {!expanded && decision ? (
+            <p className="finding-summary finding-summary--decision">
+              {`담당자 판단: ${decisionStatusLabel(decision.status)}${reasonLabel ? ` · ${reasonLabel}` : ""}`}
+            </p>
+          ) : null}
         </div>
-        <span className={`finding-state${decision ? " is-settled" : ""}`}>{decision ? "판단 기록됨" : "판단 필요"}</span>
+        <div className="finding-heading__side">
+          <span className={`finding-state${decision ? " is-settled" : ""}`}>{decision ? "판단 기록됨" : "판단 필요"}</span>
+          <button className="button button--secondary finding-toggle" type="button" aria-expanded={expanded} onClick={onToggle}>
+            {expanded ? "접기" : decision ? "자세히" : "판단하기"}
+          </button>
+        </div>
       </header>
-      {comparison ? <ComparisonDetail comparison={comparison} findingMessage={finding.message} /> : null}
-      <div className="finding-links">
-        {source ? (
-          <button className="text-link" type="button" onClick={() => void store.focusSource(source)}>
-            문서 원문 인용 보기
-          </button>
-        ) : null}
-        {finding.evidence_ids.length ? (
-          <button className="text-link" type="button" onClick={() => store.focusEvidence(finding.evidence_ids[0] as string)}>
-            연결된 법령 근거 {finding.evidence_ids.length}건
-          </button>
-        ) : null}
-      </div>
-      <DecisionPanel finding={finding} decision={decision} />
-      <CorrectionProposalPanel finding={finding} source={source} />
+      {expanded ? (
+        <>
+          {comparison ? <ComparisonDetail comparison={comparison} findingMessage={message} /> : null}
+          <div className="finding-links">
+            {source ? (
+              <button className="text-link" type="button" onClick={() => void store.focusSource(source)}>
+                문서 원문 인용 보기
+              </button>
+            ) : null}
+            {finding.evidence_ids.length ? (
+              <button className="text-link" type="button" onClick={() => store.focusEvidence(finding.evidence_ids[0] as string)}>
+                연결된 법령 근거 {finding.evidence_ids.length}건
+              </button>
+            ) : null}
+          </div>
+          <DecisionPanel finding={finding} decision={decision} />
+          <CorrectionProposalPanel finding={finding} source={source} />
+        </>
+      ) : null}
     </article>
   );
 }
@@ -283,19 +375,20 @@ function FindingCard({ finding, run }: { finding: ReviewFinding; run: ReviewRun 
  * and this block only adds what the card does not already say.
  */
 function ComparisonDetail({ comparison, findingMessage }: { comparison: ReviewComparison; findingMessage: string }) {
-  const restated = comparison.message.trim() === findingMessage.trim();
+  const comparisonMessage = reviewerSentence(comparison.message);
+  const restated = comparisonMessage.trim() === findingMessage.trim();
   return (
     <div className={`comparison-detail comparison-detail--${comparison.status}`}>
       <span>{`${ruleTitle(comparison.rule_code)} · ${comparisonStatusLabel(comparison.status)}`}</span>
-      {restated ? null : <p>{comparison.message}</p>}
+      {restated ? null : <p>{comparisonMessage}</p>}
       <dl className="comparison-values">
         <div>
           <dt>기준</dt>
-          <dd className="mono">{displayValue(comparison.expected_value ?? comparison.left.display_value)}</dd>
+          <dd className="mono">{displayComparisonValue(comparison.expected_value ?? comparison.left.display_value)}</dd>
         </div>
         <div>
           <dt>관측</dt>
-          <dd className="mono">{displayValue(comparison.observed_value ?? comparison.right.display_value)}</dd>
+          <dd className="mono">{displayComparisonValue(comparison.observed_value ?? comparison.right.display_value)}</dd>
         </div>
         {comparison.unit ? (
           <div>
@@ -323,10 +416,12 @@ function DecisionReason({ entry }: { entry: ReviewerDecision["history"][number] 
 function DecisionPanel({ finding, decision }: { finding: ReviewFinding; decision: ReviewerDecision | undefined }) {
   const store = useStore();
   const state = useWorkbenchState();
-  const [status, setStatus] = useState<FindingDecisionRequest["status"]>("confirmed");
-  const [reasonCode, setReasonCode] = useState<NonNullable<FindingDecisionRequest["reason_code"]>>("document_verified");
+  // Nothing is preselected: a judgement must be chosen deliberately before it can be recorded.
+  const [status, setStatus] = useState<FindingDecisionRequest["status"] | "">("");
+  const [reasonCode, setReasonCode] = useState<NonNullable<FindingDecisionRequest["reason_code"]> | "">("");
   const [reason, setReason] = useState("");
   const freeTextRequired = reasonCode === "other";
+  const canSubmit = status !== "" && reasonCode !== "" && (!freeTextRequired || reason.trim().length > 0) && !state.busy;
   return (
     <details className="decision-panel" open={!decision}>
       <summary>{decision ? "담당자 판단 보기·수정" : "담당자 판단 기록"}</summary>
@@ -364,17 +459,24 @@ function DecisionPanel({ finding, decision }: { finding: ReviewFinding; decision
           className="decision-form decision-form--coded"
           onSubmit={(event) => {
             event.preventDefault();
+            if (status === "" || reasonCode === "" || (freeTextRequired && !reason.trim())) return;
             void store
               .decideFinding(finding.finding_id, { status, reason_code: reasonCode, reason: reason.trim() })
-              .then(() => setReason(""));
+              .then(() => {
+                setReason("");
+                setStatus("");
+                setReasonCode("");
+              });
           }}
         >
           <Field label="판단 상태">
             <select
               name="status"
               value={status}
-              onChange={(event) => setStatus(event.target.value as FindingDecisionRequest["status"])}
+              required
+              onChange={(event) => setStatus(event.target.value as FindingDecisionRequest["status"] | "")}
             >
+              <option value="">선택하십시오</option>
               <option value="confirmed">확인함</option>
               <option value="needs_information">추가자료 요청</option>
               <option value="resolved">해결됨</option>
@@ -384,8 +486,10 @@ function DecisionPanel({ finding, decision }: { finding: ReviewFinding; decision
             <select
               name="reason_code"
               value={reasonCode}
-              onChange={(event) => setReasonCode(event.target.value as NonNullable<FindingDecisionRequest["reason_code"]>)}
+              required
+              onChange={(event) => setReasonCode(event.target.value as NonNullable<FindingDecisionRequest["reason_code"]> | "")}
             >
+              <option value="">선택하십시오</option>
               {DECISION_REASON_OPTIONS.map((option) => (
                 <option key={option.code} value={option.code}>
                   {option.label}
@@ -404,7 +508,10 @@ function DecisionPanel({ finding, decision }: { finding: ReviewFinding; decision
               onChange={(event) => setReason(event.target.value)}
             />
           </Field>
-          <Submit label={decision ? "판단 수정" : "판단 기록"} disabled={state.busy} />
+          <Submit label={decision ? "판단 수정" : "판단 기록"} disabled={!canSubmit} />
+          {!canSubmit && !state.busy ? (
+            <p className="form-hint decision-form__hint">판단 상태와 사유를 모두 선택하면 기록할 수 있습니다.</p>
+          ) : null}
         </form>
       ) : (
         <RoleBoundaryNote>확인 사항 판단은 심사자 역할에서만 기록할 수 있습니다.</RoleBoundaryNote>
@@ -625,27 +732,45 @@ function NextSteps({ run }: { run: ReviewRun }) {
   // message verbatim. Those are already on the cards above; here they collapse
   // into a pointer to the finding instead of repeating the sentence.
   const findingByMessage = new Map(run.findings.map((finding) => [finding.message.trim(), finding]));
+  // Identical "record a judgement" pointers collapse into one line per rule title with a count.
+  type Row = { key: string; label: string; title?: string; findingIds: string[]; message?: string };
+  const rows: Row[] = [];
+  for (const [index, action] of actions.entries()) {
+    const restated = findingByMessage.get(action.message.trim());
+    if (restated) {
+      const title = findingDisplayTitle(restated, comparisonFor(restated, run));
+      const key = `judge:${title}`;
+      const existing = rows.find((row) => row.key === key);
+      if (existing) existing.findingIds.push(restated.finding_id);
+      else rows.push({ key, label: "확인 사항 판단", title, findingIds: [restated.finding_id] });
+    } else {
+      rows.push({
+        key: `${action.action_code}-${index}`,
+        label: actionLabel(action.action_code),
+        findingIds: [],
+        message: reviewerSentence(action.message),
+      });
+    }
+  }
   return (
     <div className="next-step-stack">
       <ol className="next-step-list">
-        {actions.map((action, index) => {
-          const restated = findingByMessage.get(action.message.trim());
-          return (
-            <li key={`${action.action_code}-${index}`}>
-              <strong>{restated ? "확인 사항 판단" : actionLabel(action.action_code)}</strong>
-              {restated ? (
-                <span>
-                  판단 기록 ·{" "}
-                  <button className="text-link" type="button" onClick={() => store.focusFinding(restated.finding_id)}>
-                    {findingTitle(restated)}
-                  </button>
-                </span>
-              ) : (
-                <span>{action.message}</span>
-              )}
-            </li>
-          );
-        })}
+        {rows.map((row) => (
+          <li key={row.key}>
+            <strong>{row.label}</strong>
+            {row.title ? (
+              <span>
+                판단 기록 ·{" "}
+                <button className="text-link" type="button" onClick={() => store.focusFinding(row.findingIds[0] as string)}>
+                  {row.title}
+                </button>
+                {row.findingIds.length > 1 ? <span className="next-step-count">{` · ${row.findingIds.length}건`}</span> : null}
+              </span>
+            ) : (
+              <span>{row.message}</span>
+            )}
+          </li>
+        ))}
       </ol>
       <button
         className="button button--secondary"

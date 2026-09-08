@@ -66,16 +66,48 @@ export function TraceCount({ value, label }: { value: number; label: string }) {
   );
 }
 
-export function DashStat({ label, value, hint, tone }: { label: string; value: number; hint: string; tone?: string }) {
-  return (
-    <div className={`dash-stat${tone ? ` dash-stat--${tone}` : ""}`}>
+export function DashStat({
+  label,
+  value,
+  hint,
+  tone,
+  onClick,
+  active,
+  filterId,
+}: {
+  label: string;
+  value: number;
+  hint: string;
+  tone?: string;
+  /** When given, the card is a filter button rather than a passive number. */
+  onClick?: () => void;
+  active?: boolean;
+  filterId?: string;
+}) {
+  const className = `dash-stat${tone ? ` dash-stat--${tone}` : ""}${onClick ? " dash-stat--filter" : ""}${active ? " is-active" : ""}`;
+  const body = (
+    <>
       <span className="dash-stat__label">{label}</span>
       <strong className="dash-stat__value mono">
         <Num value={value} />
       </strong>
       <span className="dash-stat__hint">{hint}</span>
-    </div>
+    </>
   );
+  if (onClick) {
+    return (
+      <button
+        type="button"
+        className={className}
+        aria-pressed={active ?? false}
+        {...(filterId ? { "data-case-filter": filterId } : {})}
+        onClick={onClick}
+      >
+        {body}
+      </button>
+    );
+  }
+  return <div className={className}>{body}</div>;
 }
 
 export function EmptyState({ title, copy, children }: { title: string; copy: string; children?: ReactNode }) {
@@ -118,11 +150,20 @@ export function Field({ label, children }: { label: string; children: ReactNode 
   );
 }
 
-export function Submit({ label, disabled }: { label: string; disabled: boolean }) {
+export function Submit({ label, disabled, primary = false }: { label: string; disabled: boolean; primary?: boolean }) {
   return (
-    <button className="button button--secondary" type="submit" disabled={disabled}>
+    <button className={primary ? "button button--primary" : "button button--secondary"} type="submit" disabled={disabled}>
       {label}
     </button>
+  );
+}
+
+/** Says why a disabled control is disabled, right next to it. */
+export function DisabledReason({ children }: { children: ReactNode }) {
+  return (
+    <p className="disabled-reason" role="note">
+      {children}
+    </p>
   );
 }
 

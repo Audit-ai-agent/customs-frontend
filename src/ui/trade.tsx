@@ -6,7 +6,9 @@ import type {
   HsReferenceSearchResult,
   OriginCheckStatus,
 } from "../api/v1/types";
-import { CopyValueButton, EmptyCopy, EmptyState, ExternalSourceLink, Field, Num, RoleBoundaryNote, SectionHeading, Submit } from "./primitives";
+import type { OriginFtaHint } from "../api/v1/types";
+import { safeExternalHref } from "./labels";
+import { CopyValueButton, EmptyCopy, EmptyState, Field, Num, RoleBoundaryNote, SectionHeading, Submit } from "./primitives";
 import { GoToDocumentsButton } from "./stages";
 import { useStore, useWorkbenchState } from "./useStore";
 
@@ -453,15 +455,61 @@ export function OriginVerificationCard() {
           </div>
         </div>
       ) : null}
-      <div className="form-hint" data-origin-fta>
-        {view.fta_hints.map((hint) => (
-          <p key={hint.agreement_code}>
-            {`${hint.agreement_name} — ${hint.origin_covered ? "원산지 대상국" : "대상국 아님"} · 필요 서식: ${hint.certificate_form} `}
-            <ExternalSourceLink uri={hint.source_uri} />
-          </p>
-        ))}
-      </div>
+      <OriginFtaHints hints={view.fta_hints} originCountry={view.origin_country ?? null} />
     </section>
+  );
+}
+
+/** Agreement-specific official page (www.fta.go.kr/<agreement>/) named by the agreement itself. */
+function AgreementLink({ hint }: { hint: OriginFtaHint }) {
+  const href = safeExternalHref(hint.source_uri);
+  if (!href) return <span>{hint.agreement_name}</span>;
+  return (
+    <a className="text-link" href={href} target="_blank" rel="noopener noreferrer" data-origin-agreement-link>
+      {`${hint.agreement_name} 협정 안내 ↗`}
+    </a>
+  );
+}
+
+function OriginFtaHints({ hints, originCountry }: { hints: OriginFtaHint[]; originCountry: string | null }) {
+  if (!hints.length) return null;
+  const covered = hints.filter((hint) => hint.origin_covered);
+  const others = hints.filter((hint) => !hint.origin_covered);
+  return (
+    <div className="origin-fta" data-origin-fta>
+      <h4 className="origin-fta__title">협정 적용 가능성</h4>
+      {originCountry === null ? (
+        <p className="origin-fta__notice" data-origin-fta-unknown>
+          원산지를 확인하지 못해 협정 대상 여부를 판단할 수 없습니다. 원산지증명서 또는 송장의 원산지 값을 보완하십시오.
+        </p>
+      ) : covered.length === 0 ? (
+        <p className="origin-fta__notice">{`원산지 ${originCountry}은(는) 아래 협정 중 대상국이 아닙니다.`}</p>
+      ) : null}
+      {covered.length > 0 ? (
+        <ul className="origin-fta__list" data-origin-fta-covered>
+          {covered.map((hint) => (
+            <li key={hint.agreement_code} className="origin-fta__item is-covered">
+              <span className="badge b-ok">원산지 대상국</span>
+              <AgreementLink hint={hint} />
+              <small>{`필요 서식: ${hint.certificate_form}`}</small>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      {others.length > 0 ? (
+        <details className="origin-fta__others" data-origin-fta-others>
+          <summary>{`대상 아님 ${others.length}건 보기`}</summary>
+          <ul className="origin-fta__list">
+            {others.map((hint) => (
+              <li key={hint.agreement_code} className="origin-fta__item">
+                <AgreementLink hint={hint} />
+                <small>{`필요 서식: ${hint.certificate_form}`}</small>
+              </li>
+            ))}
+          </ul>
+        </details>
+      ) : null}
+    </div>
   );
 }
 
@@ -555,7 +603,11 @@ export function DutyDiagnosisStage() {
               appliedKind={applied?.rate_kind ?? null}
               appliedAgreement={applied?.agreement_code ?? null}
             />
-            <LadderOverflowNote hidden={mainLadder.hidden} />
+            <LadderOverflow
+              rates={mainLadder.hiddenRates}
+              appliedKind={applied?.rate_kind ?? null}
+              appliedAgreement={applied?.agreement_code ?? null}
+            />
             <div className="cap" style={{ marginTop: 12, marginBottom: 0 }}>
               ⚖ 세율 스냅샷 {view.reference.as_of} 기준 · 요건 충족 세율만 적용
             </div>
@@ -643,14 +695,7 @@ export function DutyDiagnosisStage() {
             <CopyValueButton value={view.hs_code.code} label={`HS 코드 ${view.hs_code.code} 복사`} />
           </p>
         ) : null}
-        <ul className="unsupported-stage__list">
-          {view.rates.map((rate) => (
-            <li key={rate.code ?? `${rate.rate_kind}:${rate.agreement_code ?? "basic"}`}>
-              {`${rate.label} ${rate.rate_pct}% `}
-              <ExternalSourceLink uri={rate.source_uri} />
-            </li>
-          ))}
-        </ul>
+        <RateSourceGroups rates={view.rates} />
       </section>
     </section>
   );
@@ -664,38 +709,88 @@ function potentialSaving(rates: DutyRate[], amount: number): number {
   return Math.round((amount * (basic.rate_pct - best.rate_pct)) / 100 * 100) / 100;
 }
 
-const LADDER_MAX_ROWS = 10;
-
-/** Keep the visual ladder legible: always show applicable/basic/WTO rows,
- *  fill up with the lowest remaining rates, and report how many more
- *  세율구분 rows exist (they stay listed in the 세율 출처 section). */
-function ladderSelection(rates: DutyRate[]): { shown: DutyRate[]; hidden: number } {
-  const priority = rates.filter(
+/** Keep the visual ladder legible: rows the case can actually use
+ *  (applicable, or 기본세율/WTO) stay visible; every 요건 미충족 row is kept
+ *  behind one collapsed group so nothing is lost, only deferred. */
+function ladderSelection(rates: DutyRate[]): { shown: DutyRate[]; hiddenRates: DutyRate[] } {
+  const shown = rates.filter(
     (rate) => rate.applicable || rate.rate_kind === "basic" || rate.rate_kind === "wto",
   );
-  const rest = rates
-    .filter((rate) => !priority.includes(rate))
+  const hiddenRates = rates
+    .filter((rate) => !shown.includes(rate))
     .sort((left, right) => left.rate_pct - right.rate_pct);
-  const shown = [...priority, ...rest].slice(0, Math.max(LADDER_MAX_ROWS, priority.length));
-  return { shown, hidden: rates.length - shown.length };
+  return { shown, hiddenRates };
 }
 
-function LadderOverflowNote({ hidden }: { hidden: number }) {
-  if (hidden <= 0) return null;
+function LadderOverflow({
+  rates,
+  appliedKind,
+  appliedAgreement,
+}: {
+  rates: DutyRate[];
+  appliedKind: string | null;
+  appliedAgreement: string | null;
+}) {
+  if (!rates.length) return null;
   return (
-    <div className="cap" style={{ marginTop: 8, marginBottom: 0 }}>
-      외 {hidden}개 세율구분은 아래 '세율 출처' 목록에서 확인하십시오.
-    </div>
+    <details className="ladder-more" data-duty-ladder-more>
+      <summary>{`요건 미충족 ${rates.length}건 보기`}</summary>
+      <p className="cap">원산지·증명서 요건이 충족되면 적용 가능해지는 세율입니다. 세율 낮은 순입니다.</p>
+      <RateLadderRows rates={rates} appliedKind={appliedKind} appliedAgreement={appliedAgreement} />
+    </details>
   );
 }
 
 function RateLadder({ rates, appliedKind }: { rates: DutyRate[]; appliedKind: string | null }) {
-  const { shown, hidden } = ladderSelection(rates);
+  const { shown, hiddenRates } = ladderSelection(rates);
   return (
     <div className="ladder">
       <h3>이 코드의 세율 참조</h3>
       <RateLadderRows rates={shown} appliedKind={appliedKind} appliedAgreement={null} />
-      <LadderOverflowNote hidden={hidden} />
+      <LadderOverflow rates={hiddenRates} appliedKind={appliedKind} appliedAgreement={null} />
+    </div>
+  );
+}
+
+const RATE_KIND_GROUPS: readonly { kind: DutyRate["rate_kind"]; label: string; open: boolean }[] = [
+  { kind: "basic", label: "기본세율", open: true },
+  { kind: "wto", label: "WTO 협정세율", open: true },
+  { kind: "preferential", label: "특혜세율 (APTA·최빈개도국 등)", open: false },
+  { kind: "conditional", label: "조건부 세율", open: false },
+  { kind: "fta", label: "FTA 협정세율", open: false },
+];
+
+/** 세율 출처: one collapsed group per 세율 종류; the link text is the rate itself. */
+function RateSourceGroups({ rates }: { rates: DutyRate[] }) {
+  return (
+    <div className="rate-source-groups" data-duty-sources>
+      {RATE_KIND_GROUPS.map((group) => {
+        const rows = rates.filter((rate) => rate.rate_kind === group.kind);
+        if (!rows.length) return null;
+        return (
+          <details key={group.kind} className="rate-source-group" open={group.open} data-duty-source-group={group.kind}>
+            <summary>{`${group.label} · ${rows.length}건`}</summary>
+            <ul>
+              {rows.map((rate) => {
+                const href = safeExternalHref(rate.source_uri);
+                const text = `${rate.label} ${rate.rate_pct}%`;
+                return (
+                  <li key={rate.code ?? `${rate.rate_kind}:${rate.agreement_code ?? "basic"}`}>
+                    {href ? (
+                      <a className="text-link" href={href} target="_blank" rel="noopener noreferrer">
+                        {`${text} ↗`}
+                      </a>
+                    ) : (
+                      <span>{text}</span>
+                    )}
+                    {rate.applicable ? null : <small className="rate-source-group__flag">요건 미충족</small>}
+                  </li>
+                );
+              })}
+            </ul>
+          </details>
+        );
+      })}
     </div>
   );
 }
@@ -709,6 +804,7 @@ function RateLadderRows({
   appliedKind: string | null;
   appliedAgreement: string | null;
 }) {
+  if (!rates.length) return null;
   const maxRate = Math.max(...rates.map((rate) => rate.rate_pct), 1);
   const lowest = Math.min(...rates.map((rate) => rate.rate_pct));
   const ordered = [...rates].sort((left, right) => left.rate_pct - right.rate_pct);
@@ -724,7 +820,7 @@ function RateLadderRows({
           <div
             className={`rate${isBest ? " best" : isApplied ? " applied" : ""}`}
             key={rate.code ?? `${rate.rate_kind}:${rate.agreement_code ?? "basic"}`}
-            data-duty-rate={rate.rate_kind === "basic" ? "basic" : rate.agreement_code ?? "fta"}
+            data-duty-rate={rate.agreement_code ?? rate.rate_kind}
           >
             <div className="nm">
               <span className="rk">{index + 1}</span>

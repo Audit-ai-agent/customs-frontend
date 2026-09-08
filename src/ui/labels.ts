@@ -238,6 +238,12 @@ const RULE_TITLES: Readonly<Record<string, string>> = {
   invoice_export_declaration_item_match: "Invoice·수출신고서 품목 대응",
   invoice_export_declaration_quantity_unit: "Invoice·수출신고서 수량·단위 비교",
   hs_code_presence: "HS 부호 기재 확인",
+  bill_packing_bl_no: "B/L·포장명세서 B/L 번호 비교",
+  bill_packing_container: "B/L·포장명세서 컨테이너 번호 비교",
+  bill_packing_gross_weight: "B/L·포장명세서 총중량 비교",
+  awb_packing_awb_no: "AWB·포장명세서 AWB 번호 비교",
+  awb_packing_gross_weight: "AWB·포장명세서 총중량 비교",
+  invoice_export_declaration_hs_code: "Invoice·수출신고서 HS 부호 비교",
   required_field_presence: "필수 기재 항목 누락",
   field_source_invalid: "추출 값 원문 근거 확인",
   line_item_field_source_invalid: "품목 값 원문 근거 확인",
@@ -259,6 +265,34 @@ export function findingTitle(finding: Pick<ReviewFinding, "code" | "kind">): str
   return finding.kind === "regulatory_finding" ? "법령 요건 확인 사항" : "문서 정합성 확인 사항";
 }
 
+/** The generic category of a finding, shown as a small tag beside its specific title. */
+export function findingKindLabel(finding: Pick<ReviewFinding, "kind">): string {
+  return finding.kind === "regulatory_finding" ? "법령 요건 확인 사항" : "문서 정합성 확인 사항";
+}
+
+/** The first sentence of an Agent message, for use as a title when no rule title exists. */
+export function firstSentence(text: string): string {
+  const trimmed = text.trim();
+  const match = /^(.+?[.!?。])(?:\s|$)/u.exec(trimmed);
+  return (match?.[1] ?? trimmed).replace(/[.!?。]$/u, "").trim();
+}
+
+/**
+ * Card title: the finding's own rule title → the linked comparison's rule title →
+ * the first sentence of the message. Never the generic category.
+ */
+export function findingDisplayTitle(
+  finding: Pick<ReviewFinding, "code" | "kind" | "message">,
+  comparison?: Pick<ReviewComparison, "rule_code"> | null,
+): string {
+  const own = RULE_TITLES[finding.code];
+  if (own) return own;
+  const linked = comparison ? RULE_TITLES[comparison.rule_code] : undefined;
+  if (linked) return linked;
+  const sentence = firstSentence(reviewerSentence(finding.message));
+  return sentence || findingKindLabel(finding);
+}
+
 export function actionLabel(code: string): string {
   const labels: Readonly<Record<string, string>> = {
     human_review_required: "담당자 검토 필요",
@@ -277,14 +311,78 @@ export function evidenceSourceTypeLabel(value: string): string {
 }
 
 /** Reviewer-facing name for a document field the Agent extracted. */
+const FIELD_LABELS: Readonly<Record<string, string>> = {
+  quantity: "수량", unit: "단위", amount: "금액", total_amount: "합계 금액", total: "합계", unit_price: "단가", currency: "통화",
+  hs_code: "HS 부호", origin_country: "원산지", country_of_origin: "원산지", destination_country: "목적국", description: "품명",
+  invoice_number: "Invoice 번호", invoice_no: "Invoice 번호", invoice_date: "Invoice 일자",
+  gross_weight: "총중량", gross_weight_kg: "총중량(kg)", net_weight: "순중량", net_weight_kg: "순중량(kg)",
+  consignee: "수하인", shipper: "송하인", exporter: "수출자", importer: "수입자", certificate_no: "증명서 번호",
+  packing_no: "포장명세서 번호", packing_list_no: "포장명세서 번호", shipping_marks: "선적 표시(Shipping Marks)",
+  bl_no: "B/L 번호", awb_no: "AWB 번호", container_numbers: "컨테이너 번호", container_no: "컨테이너 번호",
+  port_of_loading: "선적항", port_of_discharge: "양륙항", vessel: "선박명", vessel_name: "선박명",
+  incoterms: "인도조건(Incoterms)", payment_terms: "결제 조건", packages: "포장 수", package_count: "포장 수",
+  item_no: "품목 번호", awb_number: "AWB 번호", bl_number: "B/L 번호",
+};
+
 export function fieldLabel(value: string): string {
-  const labels: Readonly<Record<string, string>> = {
-    quantity: "수량", unit: "단위", amount: "금액", total_amount: "합계 금액", unit_price: "단가", currency: "통화",
-    hs_code: "HS 부호", origin_country: "원산지", destination_country: "목적국", description: "품명",
-    invoice_number: "Invoice 번호", invoice_date: "Invoice 일자", gross_weight: "총중량", net_weight: "순중량",
-    consignee: "수하인", shipper: "송하인", certificate_no: "증명서 번호",
-  };
-  return labels[value] ?? value.replace(/_/gu, " ");
+  return FIELD_LABELS[value] ?? value.replace(/_/gu, " ");
+}
+
+/** The Korean label for a known extraction field key, or null when the value is not a field key. */
+export function knownFieldLabel(value: string): string | null {
+  return FIELD_LABELS[value.trim()] ?? null;
+}
+
+const FIELD_KEY_TOKEN = /(?<![A-Za-z0-9_])[a-z][a-z0-9]*(?:_[a-z0-9]+)+(?![A-Za-z0-9_])/gu;
+
+/**
+ * A compared value that is really a field key (`hs_code`, `packing_no`) is shown by its
+ * Korean label; every other value is shown as-is (or as "확인 불가" when empty).
+ */
+export function displayComparisonValue(value: string | null | undefined): string {
+  const shown = displayValue(value);
+  const known = knownFieldLabel(shown);
+  if (known) return known;
+  return /^[a-z][a-z0-9]*(?:_[a-z0-9]+)+$/u.test(shown) ? fieldLabel(shown) : shown;
+}
+
+/** Replaces raw field keys inside an Agent sentence with their Korean labels. */
+export function humanizeFieldKeys(text: string): string {
+  return text.replace(FIELD_KEY_TOKEN, (token) => knownFieldLabel(token) ?? token);
+}
+
+const HANGUL_START = 0xac00;
+const HANGUL_END = 0xd7a3;
+
+/** Whether a noun's last character ends in a final consonant (받침), for particle agreement. */
+export function endsWithFinalConsonant(word: string): boolean | null {
+  const trimmed = word.replace(/[)\]"'”’]+$/u, "");
+  const last = trimmed[trimmed.length - 1];
+  if (!last) return null;
+  const code = last.charCodeAt(0);
+  if (code >= HANGUL_START && code <= HANGUL_END) return (code - HANGUL_START) % 28 !== 0;
+  if (/[0-9]/u.test(last)) return "013678".includes(last);
+  if (/[A-Za-z]/u.test(last)) return /[lmnrLMNR]/u.test(last);
+  return null;
+}
+
+/**
+ * Agent sentences interpolate field labels without particle agreement
+ * ("HS 코드을"). Fix 을/를 and 이/가 after the word they attach to.
+ */
+export function fixParticles(text: string): string {
+  return text.replace(/([가-힣A-Za-z0-9)\]]+)(을|를|이|가)(?=[\s.,;:!?]|$)/gu, (whole, word: string, particle: string) => {
+    const closed = endsWithFinalConsonant(word);
+    if (closed === null) return whole;
+    if (particle === "을" || particle === "를") return `${word}${closed ? "을" : "를"}`;
+    // "이/가": only swap when the word is clearly a noun ending; leave 이 after a 받침 word as-is.
+    return `${word}${closed ? "이" : "가"}`;
+  });
+}
+
+/** One reviewer-facing sentence: field keys labelled, particles agreed. */
+export function reviewerSentence(text: string): string {
+  return fixParticles(humanizeFieldKeys(text));
 }
 
 export const DECISION_REASON_OPTIONS: ReadonlyArray<{ code: FindingDecisionReasonCode; label: string }> = [

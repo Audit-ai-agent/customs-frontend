@@ -84,6 +84,13 @@ export function HistoryScreen() {
         >
           {canRevise ? "선택한 정정으로 재심사" : "승인자 역할에서 재심사"}
         </button>
+        {canRevise && !selectedCount ? (
+          <p className="disabled-reason" role="note">
+            {approvedCount
+              ? "재심사 버튼은 위에서 승인된 정정 제안을 하나 이상 선택하면 활성화됩니다."
+              : "승인된 정정 제안이 없어 재심사를 실행할 수 없습니다. 제안이 승인되면 여기서 선택할 수 있습니다."}
+          </p>
+        ) : null}
         {!canRevise ? (
           <RoleBoundaryNote>승인자 역할에서 승인된 제안을 선택해 자식 심사를 실행할 수 있습니다.</RoleBoundaryNote>
         ) : null}

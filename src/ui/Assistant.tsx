@@ -45,7 +45,7 @@ export function AssistantScreen() {
                 disabled={loading || state.assistantSending}
                 onClick={() => void store.selectAssistantConversation(conversation)}
               >
-                <strong>{conversation.title ?? "제목 없는 대화"}</strong>
+                <strong>{conversationTitle(conversation.title, selected ? state.assistantMessages : [])}</strong>
                 <small>{formatDate(conversation.updated_at)}</small>
               </button>
             );
@@ -228,4 +228,12 @@ function MessageItem({ item }: { item: AssistantMessage }) {
       ) : null}
     </li>
   );
+}
+
+/** An untitled conversation takes the first question's opening words as its title. */
+function conversationTitle(title: string | null | undefined, messages: readonly { role: string; content: string }[]): string {
+  if (title) return title;
+  const first = messages.find((message) => message.role === "user")?.content.trim();
+  if (!first) return "제목 없는 대화";
+  return first.length > 20 ? `${first.slice(0, 20)}…` : first;
 }

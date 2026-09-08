@@ -123,6 +123,106 @@ async function mount(api: unknown, auth: unknown, mode: "local-development" | "f
   };
 }
 
+describe("chrome, home, and records", () => {
+  it("names the signed-in person readably, shows role chips, and never prints the session UUID", async () => {
+    window.location.hash = "#/cases";
+    const subject = "7cc8fe39-ac47-4c6f-8411-f9ff84175eb7";
+    const api = {
+      getSession: async () => ({ subject, org_id: "local-functional", roles: ["approver", "reviewer"] }),
+      listCases: async () => ({ items: [] }),
+    };
+    const { root, dispose } = await mount(api, AUTH, "functional-uat");
+    const user = root.querySelector("[data-session-user]");
+    expect(user?.textContent).not.toContain(subject);
+    expect(user?.textContent).toContain("기관 계정");
+    expect(Array.from(user?.querySelectorAll(".role-chip") ?? []).map((chip) => chip.textContent)).toEqual(["승인자", "심사자"]);
+    expect(user?.querySelector(".user__name")?.getAttribute("title")).toContain(subject);
+    // One header row: the text-size control now lives beside the identity instead of in a separate bar.
+    expect(root.querySelector(".g-utilbar")).toBeNull();
+    expect(root.querySelector(".topbar .g-zoom")).not.toBeNull();
+    dispose();
+  });
+
+  it("lists the reviewer's pending in-review cases on the home page and jumps to a filtered inbox", async () => {
+    window.location.hash = "#/home";
+    const at = "2026-08-05T00:00:00Z";
+    const cases = [
+      { case_id: "case-a", org_id: "local-org", title: "종료된 건", status: "closed" as const, revision: 1, updated_at: at },
+      { case_id: "case-b", org_id: "local-org", title: "판단 대기 건", external_reference: "IMP-1", status: "in_review" as const, revision: 1, updated_at: "2026-08-06T00:00:00Z" },
+      { case_id: "case-c", org_id: "local-org", title: "새 건", status: "open" as const, revision: 1, updated_at: at },
+    ];
+    const api = {
+      getSession: async () => ({ subject: "local-reviewer", org_id: "local-org", roles: ["reviewer"] }),
+      listCases: async () => ({ items: cases }),
+    };
+    const { root, dispose } = await mount(api, AUTH, "local-development");
+    expect(root.textContent).not.toContain("바로 가기");
+    const todo = root.querySelector("[data-home-todo]");
+    expect(todo?.querySelectorAll(".home-todo__row")).toHaveLength(1);
+    expect(todo?.textContent).toContain("판단 대기 건");
+    expect(todo?.textContent).not.toContain("종료된 건");
+    // The pipeline shown on home is the workspace's own four stages.
+    expect(root.textContent).toContain("관세 진단");
+    expect(root.textContent).not.toContain("AI 사전심사 · 제한형");
+
+    await click(root.querySelector('[data-home-page] .dash-stat[data-case-filter="closed"]'));
+    expect(window.location.hash).toBe("#/cases");
+    expect(root.querySelector('.dash-stat[data-case-filter="closed"]')?.getAttribute("aria-pressed")).toBe("true");
+    expect(root.querySelectorAll(".case-row")).toHaveLength(1);
+    dispose();
+  });
+
+  it("shows review records as counts with the case title first, not a red badge over an internal id", async () => {
+    window.location.hash = "#/records";
+    const caseDetail = { case_id: "case-1", org_id: "local-org", title: "입항 서류", status: "in_review" as const, revision: 1, updated_at: "2026-08-05T00:00:00Z" };
+    const api = {
+      getSession: async () => ({ subject: "local-reviewer", org_id: "local-org", roles: ["reviewer"] }),
+      listCases: async () => ({ items: [caseDetail] }),
+      listReviewRuns: async () => [{ ...RUN_SUMMARY, finding_count: 3, reviewer_decision_count: 1 }],
+    };
+    const { root, dispose } = await mount(api, AUTH, "local-development");
+    const row = root.querySelector(".records-row");
+    expect(row?.querySelector(".records-row__title")?.textContent).toBe("입항 서류");
+    expect(row?.textContent).toContain("참조번호 미지정");
+    expect(row?.textContent).not.toContain("case-1");
+    expect(row?.querySelector(".badge")).toBeNull();
+    const verdict = row?.querySelector("[data-record-verdict]");
+    expect(verdict?.getAttribute("data-record-verdict")).toBe("pending");
+    expect(verdict?.textContent).toContain("확인 3건 · 판단 1건");
+    expect(verdict?.textContent).toContain("미판단 2건");
+    dispose();
+  });
+
+  it("keeps the new-case submit disabled until a title is typed and explains the reference field", async () => {
+    window.location.hash = "#/cases";
+    const createCase = vi.fn(async () => ({ case_id: "case-new", org_id: "local-org", title: "새 건", status: "open" as const, revision: 0, updated_at: "2026-08-05T00:00:00Z" }));
+    const api = {
+      getSession: async () => ({ subject: "local-reviewer", org_id: "local-org", roles: ["reviewer"] }),
+      listCases: async () => ({ items: [] }),
+      createCase,
+      getCase: async () => ({ case_id: "case-new", org_id: "local-org", title: "새 건", status: "open" as const, revision: 0, updated_at: "2026-08-05T00:00:00Z" }),
+      listDocuments: async () => [],
+      listDocumentAssets: async () => [],
+      listReviewRuns: async () => [],
+    };
+    const { root, dispose } = await mount(api, AUTH, "local-development");
+    await click(root.querySelector(".new-btn"));
+    const form = root.querySelector<HTMLFormElement>(".case-create-form");
+    const submitButton = form?.querySelector<HTMLButtonElement>('button[type="submit"]');
+    if (!form || !submitButton) throw new Error("create-case form is unavailable");
+    expect(submitButton.disabled).toBe(true);
+    expect(submitButton.className).toContain("button--primary");
+    expect(form.textContent).toContain("수입신고번호·사내 관리번호");
+    const title = form.querySelector<HTMLInputElement>('input[name="title"]');
+    if (!title) throw new Error("title input is unavailable");
+    setValue(title, "새 건");
+    expect(submitButton.disabled).toBe(false);
+    await submit(form);
+    expect(createCase).toHaveBeenCalledWith({ title: "새 건", external_reference: null });
+    dispose();
+  });
+});
+
 describe("commercial review workspace", () => {
   it("renders the no-secret local-development workspace", async () => {
     window.location.hash = "#/cases";
@@ -131,8 +231,11 @@ describe("commercial review workspace", () => {
       listCases: async () => ({ items: [] }),
     };
     const { root, dispose } = await mount(api, AUTH, "local-development");
-    expect(root.textContent).toContain("문서와 근거를 한 화면에서 검토합니다.");
+    expect(root.textContent).toContain("심사 워크스페이스로 이동합니다.");
     expect(root.textContent).toContain("팀 개발 환경");
+    // The footer speaks to the person, not about the design system.
+    expect(root.querySelector(".g-footer")?.textContent).toContain("문의: 시스템 관리자");
+    expect(root.querySelector(".g-footer")?.textContent).not.toContain("KRDS");
     expect(root.textContent).toContain("검토 중");
     expect(root.textContent).not.toContain("릴리스");
     dispose();
@@ -154,11 +257,16 @@ describe("commercial review workspace", () => {
     const groups = Array.from(root.querySelectorAll<HTMLElement>("[data-case-group]")).map((item) => item.dataset.caseGroup);
     expect(groups).toEqual(["in_review", "open", "closed"]);
     expect(root.querySelector('[data-case-group="in_review"] .case-group__head')?.textContent).toContain("1건");
-    expect(root.querySelector(".state-flow__svg")).not.toBeNull();
-    expect(root.textContent).toContain("자동 종료 경로 없음");
+    // Reference material (state flow, pipeline) no longer sits under the work list; it lives on the guide page.
+    expect(root.querySelector(".state-flow__svg")).toBeNull();
+    expect(root.querySelector(".dash-filter")).toBeNull();
+    // An internal case id is never shown as a reference.
+    expect(root.textContent).not.toContain("case-a");
+    expect(root.querySelectorAll(".case-row__ref--none")).toHaveLength(3);
 
-    const closedFilter = Array.from(root.querySelectorAll<HTMLButtonElement>(".dash-filter")).find((item) => item.textContent?.includes("종료"));
+    const closedFilter = root.querySelector<HTMLButtonElement>('.dash-stat[data-case-filter="closed"]');
     await click(closedFilter);
+    expect(closedFilter?.getAttribute("aria-pressed")).toBe("true");
     expect(Array.from(root.querySelectorAll<HTMLElement>("[data-case-group]")).map((item) => item.dataset.caseGroup)).toEqual(["filtered"]);
     expect(root.querySelectorAll(".case-row")).toHaveLength(1);
     dispose();
@@ -210,6 +318,9 @@ describe("commercial review workspace", () => {
     setValue(reasonCode, "other");
     expect(reason.required).toBe(true);
     setValue(reasonCode, "notation_difference");
+    const statusSelect = form.querySelector<HTMLSelectElement>('select[name="status"]');
+    if (!statusSelect) throw new Error("decision status select is unavailable");
+    setValue(statusSelect, "confirmed");
     await submit(form);
     expect(api.setFindingDecision).toHaveBeenCalledWith("run-1", "finding-1", { status: "confirmed", reason_code: "notation_difference", reason: "" });
     expect(card?.querySelector(".decision-reason-code")?.textContent).toBe("표기·단위·반올림 차이로 실질 불일치 아님");

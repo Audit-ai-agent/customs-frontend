@@ -71,7 +71,8 @@ export function showLoginScreen(root: HTMLElement, mode: FrontendRuntimeMode): P
       hint.textContent = "팀 개발 세션은 이 PC의 Backend가 loopback 호출에만 발급하며, 역할은 이용 중에도 바꿀 수 있습니다.";
     }
 
-    card.append(brand, copy, actions, hint);
+    const contact = el("p", "login-hint login-contact", "계정 문제는 시스템 관리자에게 문의하십시오.");
+    card.append(brand, copy, actions, hint, contact);
     screen.append(card);
     root.replaceChildren(screen);
     heading.focus?.();
