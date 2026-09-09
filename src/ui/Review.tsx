@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import type {
   AssistantCitation,
   CreateCorrectionProposalRequest,
@@ -259,7 +259,8 @@ function FindingList({ findings, run }: { findings: ReviewFinding[]; run: Review
     const next = unjudged[(currentIndex + 1) % unjudged.length] ?? unjudged[0];
     if (!next) return;
     setExpandedId(next.finding_id);
-    focusDataTarget(containerRef.current, "data-finding-id", next.finding_id);
+    // Scroll after the open card has finished collapsing so the target lands where it will stay.
+    window.setTimeout(() => focusDataTarget(containerRef.current, "data-finding-id", next.finding_id), COLLAPSE_MS);
   };
   return (
     <div className="finding-list" ref={containerRef}>
@@ -333,17 +334,21 @@ function FindingCard({
           <strong>{title}</strong>
           <span className="finding-kind">{findingKindLabel(finding)}</span>
           <p>{message}</p>
-          {!expanded && comparison ? (
-            <p className="finding-summary">
-              {`기준 ${displayComparisonValue(comparison.expected_value ?? comparison.left.display_value)} · 관측 ${displayComparisonValue(
-                comparison.observed_value ?? comparison.right.display_value,
-              )}${comparison.unit ? ` · ${comparison.unit}` : ""}`}
-            </p>
-          ) : null}
-          {!expanded && decision ? (
-            <p className="finding-summary finding-summary--decision">
-              {`담당자 판단: ${decisionStatusLabel(decision.status)}${reasonLabel ? ` · ${reasonLabel}` : ""}`}
-            </p>
+          {comparison || decision ? (
+            <Collapsible open={!expanded}>
+              {comparison ? (
+                <p className="finding-summary">
+                  {`기준 ${displayComparisonValue(comparison.expected_value ?? comparison.left.display_value)} · 관측 ${displayComparisonValue(
+                    comparison.observed_value ?? comparison.right.display_value,
+                  )}${comparison.unit ? ` · ${comparison.unit}` : ""}`}
+                </p>
+              ) : null}
+              {decision ? (
+                <p className="finding-summary finding-summary--decision">
+                  {`담당자 판단: ${decisionStatusLabel(decision.status)}${reasonLabel ? ` · ${reasonLabel}` : ""}`}
+                </p>
+              ) : null}
+            </Collapsible>
           ) : null}
         </div>
         <div className="finding-heading__side">
@@ -353,7 +358,7 @@ function FindingCard({
           </button>
         </div>
       </header>
-      {expanded ? (
+      <Collapsible open={expanded}>
         <>
           {comparison ? <ComparisonDetail comparison={comparison} findingMessage={message} /> : null}
           <div className="finding-links">
@@ -371,8 +376,40 @@ function FindingCard({
           <DecisionPanel finding={finding} decision={decision} />
           <CorrectionProposalPanel finding={finding} source={source} />
         </>
-      ) : null}
+      </Collapsible>
     </article>
+  );
+}
+
+/** Height + opacity transition for the card body. The body stays mounted while it
+ *  closes so the collapse animates instead of snapping, then unmounts. */
+const COLLAPSE_MS = 280;
+
+function Collapsible({ open, children }: { open: boolean; children: ReactNode }) {
+  const ref = useRef<HTMLDivElement | null>(null);
+  const [mounted, setMounted] = useState(open);
+  const [shown, setShown] = useState(open);
+  useEffect(() => {
+    if (open) {
+      setMounted(true);
+      return;
+    }
+    setShown(false);
+    const timer = window.setTimeout(() => setMounted(false), COLLAPSE_MS);
+    return () => window.clearTimeout(timer);
+  }, [open]);
+  // Once the closed body is in the DOM, commit its 0fr layout before switching to open
+  // so the browser has a start state to transition from.
+  useLayoutEffect(() => {
+    if (!open || !mounted || shown) return;
+    void ref.current?.offsetHeight;
+    setShown(true);
+  }, [open, mounted, shown]);
+  if (!mounted) return null;
+  return (
+    <div ref={ref} className={`collapsible${shown ? " is-open" : ""}`} aria-hidden={!open} inert={!open ? true : undefined}>
+      <div className="collapsible__inner">{children}</div>
+    </div>
   );
 }
 

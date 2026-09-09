@@ -13,6 +13,30 @@
 .finding-card.is-collapsed {
   padding: .75rem 1rem;
 }
+.finding-card {
+  transition: padding var(--mo-state) var(--mo-ease-out), box-shadow var(--mo-hover) ease, border-color var(--mo-hover) ease;
+}
+
+/* Body expand/collapse: grid-row 0fr → 1fr animates height without measuring it. */
+.collapsible {
+  display: grid;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  transition: grid-template-rows var(--mo-state) var(--mo-ease-out), opacity var(--mo-hover) ease;
+}
+.collapsible.is-open {
+  grid-template-rows: 1fr;
+  opacity: 1;
+  transition: grid-template-rows var(--mo-state) var(--mo-ease-out), opacity var(--mo-state) ease .06s;
+}
+.collapsible__inner {
+  min-height: 0;
+  overflow: hidden;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .finding-card, .collapsible, .collapsible.is-open { transition: none; }
+}
 .finding-state {
   color: var(--krds-warning-strong);
   background: var(--krds-warning-bg);
