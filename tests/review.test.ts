@@ -194,6 +194,27 @@ describe("통관 심사 · 확인 사항 카드", () => {
     dispose();
   });
 
+  it("toggles a card from anywhere on its heading, not only the button", async () => {
+    window.location.hash = "#/cases/case-1/review";
+    const { root, dispose } = await mount(api(reviewRun()));
+    const cards = () => Array.from(root.querySelectorAll<HTMLElement>(".finding-card"));
+    expect(cards()[2]?.classList.contains("is-expanded")).toBe(false);
+    // Clicking the title text of a collapsed card opens it.
+    await click(cards()[2]?.querySelector(".finding-heading strong"));
+    expect(cards()[2]?.classList.contains("is-expanded")).toBe(true);
+    expect(cards().filter((card) => card.classList.contains("is-expanded"))).toHaveLength(1);
+    // Clicking the message of the open card collapses it again.
+    await click(cards()[2]?.querySelector(".finding-heading p"));
+    expect(cards()[2]?.classList.contains("is-expanded")).toBe(false);
+    // The button still works on its own without double-toggling.
+    await click(cards()[2]?.querySelector(".finding-toggle"));
+    expect(cards()[2]?.classList.contains("is-expanded")).toBe(true);
+    // Clicks inside the expanded body (the decision form) do not collapse the card.
+    await click(cards()[2]?.querySelector(".decision-form"));
+    expect(cards()[2]?.classList.contains("is-expanded")).toBe(true);
+    dispose();
+  });
+
   it("shows progress, groups by rule title, and aggregates next steps", async () => {
     window.location.hash = "#/cases/case-1/review";
     const { root, dispose } = await mount(api(reviewRun()));

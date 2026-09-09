@@ -321,7 +321,14 @@ function FindingCard({
       data-finding-code={finding.code}
       className={`finding-card${decision ? " is-settled" : ""}${focused ? " is-focused" : ""}${expanded ? " is-expanded" : " is-collapsed"}`}
     >
-      <header className="finding-heading">
+      <header
+        className="finding-heading"
+        onClick={(event) => {
+          // The whole heading toggles the card; the toggle button handles its own click.
+          if ((event.target as HTMLElement).closest("button, a, input, select, textarea")) return;
+          onToggle();
+        }}
+      >
         <div>
           <strong>{title}</strong>
           <span className="finding-kind">{findingKindLabel(finding)}</span>

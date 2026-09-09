@@ -53,6 +53,20 @@
   padding: .3rem .75rem;
   font-size: .8rem;
 }
+/* The whole heading is a click target for expand/collapse, not only the button. */
+.finding-heading {
+  cursor: pointer;
+  margin: -.35rem -.5rem;
+  padding: .35rem .5rem;
+  border-radius: 6px;
+  transition: background-color var(--mo-hover, .15s) ease;
+}
+.finding-heading:hover {
+  background: var(--krds-surface-2);
+}
+.finding-card.is-expanded .finding-heading:hover {
+  background: var(--krds-surface-2);
+}
 
 /* H2: group headers and the sticky progress strip. */
 .finding-group {
