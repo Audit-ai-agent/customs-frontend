@@ -4,6 +4,12 @@ export default defineConfig(({ command, mode }) => {
   // There are exactly two local browser modes: no-secret team development and
   // the explicit functional UAT topology.
   const runtimeMode = mode === "functional-uat" ? "functional-uat" : "local-development";
+  const publicTunnelHost = process.env.CUSTOMS_PUBLIC_TUNNEL_HOST ?? "";
+  const keycloakTunnelProxy = {
+    target: "http://127.0.0.1:18088",
+    changeOrigin: false,
+    headers: { "X-Forwarded-Proto": "https" },
+  };
   return {
     plugins: [
       {
@@ -43,11 +49,23 @@ export default defineConfig(({ command, mode }) => {
       target: "es2022",
     },
     server: {
+      // Optional public-tunnel exposure for a functional UAT, off unless
+      // CUSTOMS_PUBLIC_TUNNEL_HOST is set. The tunnel host is allowed through
+      // Vite's Host check and Keycloak is proxied onto the same origin so one
+      // tunnel carries both the app and the login round trip. It pairs with the
+      // Backend's CUSTOMS_BACKEND_PUBLIC_OIDC_ORIGIN.
+      ...(publicTunnelHost ? { allowedHosts: [publicTunnelHost] } : {}),
       proxy: {
         "/api/v1": {
           target: process.env.BACKEND_ORIGIN ?? "http://127.0.0.1:18081",
           changeOrigin: false,
         },
+        ...(publicTunnelHost
+          ? {
+              "/realms": keycloakTunnelProxy,
+              "/resources": keycloakTunnelProxy,
+            }
+          : {}),
       },
     },
     test: {

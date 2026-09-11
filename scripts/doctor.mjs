@@ -28,9 +28,8 @@ if (packageJson.packageManager !== `npm@${expectedNpm}`) problems.push("package.
 if (packageLock.lockfileVersion !== 3) problems.push("package-lock.json must use lockfileVersion 3");
 if (packageLock.packages?.[""]?.engines?.node !== supportedNodeRange) problems.push("package-lock.json does not preserve the supported Node range");
 
+// react and react-dom are the view layer as of ADR-0007; the rest stay retired.
 for (const retired of [
-  "react",
-  "react-dom",
   "react-router",
   "react-router-dom",
   "@vitejs/plugin-react",
@@ -39,16 +38,14 @@ for (const retired of [
   "@vitest/coverage-v8",
   "axe-core",
   "@noble/hashes",
+  "@playwright/test",
 ]) {
   if (packageJson.dependencies?.[retired] || packageJson.devDependencies?.[retired]) {
     problems.push(`retired dependency remains: ${retired}`);
   }
 }
-if (packageJson.devDependencies?.["@playwright/test"] !== "1.62.1") {
-  problems.push("@playwright/test 1.62.1 is required for the local Functional-UAT Browser runner");
-}
-if (packageLock.packages?.["node_modules/@playwright/test"]?.version !== "1.62.1") {
-  problems.push("package-lock.json must preserve @playwright/test 1.62.1 exactly");
+for (const required of ["react", "react-dom"]) {
+  if (!packageJson.dependencies?.[required]) problems.push(`view-layer dependency is missing: ${required}`);
 }
 
 if (problems.length > 0) {
