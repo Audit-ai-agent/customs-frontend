@@ -13,7 +13,6 @@ import type {
 } from "../api/v1/types";
 import {
   DECISION_REASON_OPTIONS,
-  actionLabel,
   citationLabel,
   comparisonStatusLabel,
   decisionReasonLabel,
@@ -46,6 +45,8 @@ import {
   SectionHeading,
   Submit,
 } from "./primitives";
+import { comparisonFor, nextStepRows } from "./nextSteps";
+import { ReportPrintButton } from "./ReportPrint";
 import { GoToDocumentsButton, ReportFacts } from "./stages";
 import { useStore, useWorkbenchState } from "./useStore";
 
@@ -71,6 +72,10 @@ export function ReviewStage() {
           <h2>근거 기반 심사 보고서</h2>
           <p className="summary-copy">{run.report.summary}</p>
           <p className="disclaimer">{run.report.disclaimer}</p>
+          <div className="verdict-panel__actions">
+            <ReportPrintButton />
+            <span className="verdict-panel__actions-hint">인쇄 창에서 대상을 'PDF로 저장'으로 고르면 PDF 파일이 됩니다.</span>
+          </div>
         </div>
       </header>
 
@@ -217,10 +222,6 @@ function VerdictStamp({ run, openCount }: { run: ReviewRun; openCount: number })
 }
 
 /* ── findings ────────────────────────────────────────────────── */
-
-function comparisonFor(finding: ReviewFinding, run: ReviewRun): ReviewComparison | undefined {
-  return finding.comparison_id ? run.comparisons.find((item) => item.comparison_id === finding.comparison_id) : undefined;
-}
 
 /** Findings grouped by their display title, in first-appearance order. */
 function groupFindings(findings: ReviewFinding[], run: ReviewRun): { title: string; items: ReviewFinding[] }[] {
@@ -763,39 +764,7 @@ function EvidenceList({ run }: { run: ReviewRun }) {
 function NextSteps({ run }: { run: ReviewRun }) {
   const store = useStore();
   const state = useWorkbenchState();
-  const actions = run.required_actions.length
-    ? run.required_actions
-    : [
-      {
-        action_code: "human_review_required",
-        message: "자동 완료하지 않습니다. 담당자가 문서와 법령정보를 확인하십시오.",
-        finding_ids: [],
-      },
-    ];
-  // The Agent emits one action per finding whose message is the finding
-  // message verbatim. Those are already on the cards above; here they collapse
-  // into a pointer to the finding instead of repeating the sentence.
-  const findingByMessage = new Map(run.findings.map((finding) => [finding.message.trim(), finding]));
-  // Identical "record a judgement" pointers collapse into one line per rule title with a count.
-  type Row = { key: string; label: string; title?: string; findingIds: string[]; message?: string };
-  const rows: Row[] = [];
-  for (const [index, action] of actions.entries()) {
-    const restated = findingByMessage.get(action.message.trim());
-    if (restated) {
-      const title = findingDisplayTitle(restated, comparisonFor(restated, run));
-      const key = `judge:${title}`;
-      const existing = rows.find((row) => row.key === key);
-      if (existing) existing.findingIds.push(restated.finding_id);
-      else rows.push({ key, label: "확인 사항 판단", title, findingIds: [restated.finding_id] });
-    } else {
-      rows.push({
-        key: `${action.action_code}-${index}`,
-        label: actionLabel(action.action_code),
-        findingIds: [],
-        message: reviewerSentence(action.message),
-      });
-    }
-  }
+  const rows = nextStepRows(run);
   return (
     <div className="next-step-stack">
       <ol className="next-step-list">

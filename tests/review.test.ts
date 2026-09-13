@@ -301,3 +301,54 @@ describe("통관 심사 · 확인 사항 카드", () => {
     dispose();
   });
 });
+
+describe("통관 심사 · 보고서 PDF 저장", () => {
+  it("mounts a fully expanded print copy at the end of body, opens the print dialog, and unmounts after printing", async () => {
+    window.location.hash = "#/cases/case-1/review";
+    const print = vi.fn();
+    window.print = print;
+    const run = reviewRun();
+    run.reviewer_decisions = [{
+      finding_id: "finding-1", status: "confirmed", reason_code: "document_verified", reason: "원본 서류 대조 결과 이상 없음",
+      decided_by: "local-reviewer", decided_at: "2026-08-05T00:05:00Z",
+      history: [{ status: "confirmed", reason_code: "document_verified", reason: "원본 서류 대조 결과 이상 없음", decided_by: "local-reviewer", decided_at: "2026-08-05T00:05:00Z" }],
+    }];
+    const { root, dispose } = await mount(api(run));
+    expect(document.body.querySelector(".report-print")).toBeNull();
+
+    await click(root.querySelector(".report-print-button"));
+    // The dialog opens one animation frame after the print copy commits.
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 60));
+    });
+    const printed = document.body.querySelector<HTMLElement>("body > .report-print");
+    expect(printed).not.toBeNull();
+    expect(print).toHaveBeenCalledTimes(1);
+    // The interactive workbench is untouched; the print copy is a sibling of the app root.
+    expect(root.querySelector(".report-print")).toBeNull();
+    const text = printed?.textContent ?? "";
+    expect(printed?.querySelector("h1")?.textContent).toBe("입항 서류");
+    expect(text).toContain("2026. 8. 5.");
+    expect(text).toContain("수입");
+    expect(text).toContain("3건 중 2건 미판단");
+    // Findings table: all three rows, judged and unjudged alike, with corrected wording.
+    const rows = Array.from(printed?.querySelector(".report-print__table")?.querySelectorAll("tbody tr") ?? []);
+    expect(rows).toHaveLength(3);
+    expect(rows[0]?.textContent).toContain("확인함");
+    expect(rows[0]?.textContent).toContain("원본 서류 대조 결과 이상 없음");
+    expect(rows[2]?.textContent).toContain("미판단");
+    expect(text).toContain("포장명세서 번호를 확인할 수 없습니다");
+    // Every report section prints in order, expanded, with no buttons anywhere.
+    const headings = Array.from(printed?.querySelectorAll(".report-print__block h3") ?? []).map((node) => node.textContent);
+    expect(headings.slice(0, 8)).toEqual(["1. conclusion", "2. execution_process", "3. document_comparison", "4. issues_and_causes", "5. legal_evidence", "6. impact", "7. next_actions", "8. limitations"]);
+    expect(printed?.querySelector("button")).toBeNull();
+    expect(text).toContain("자동 승인하지 않습니다.");
+
+    await act(async () => {
+      window.dispatchEvent(new Event("afterprint"));
+    });
+    await flush();
+    expect(document.body.querySelector(".report-print")).toBeNull();
+    dispose();
+  });
+});

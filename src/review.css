@@ -166,3 +166,16 @@
     justify-self: start;
   }
 }
+
+/* 보고서 PDF 저장 버튼: 판정 패널 본문 아래 한 줄 */
+.verdict-panel__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: .4rem .8rem;
+  margin-top: .9rem;
+}
+.verdict-panel__actions-hint {
+  color: var(--krds-muted);
+  font-size: .78rem;
+}

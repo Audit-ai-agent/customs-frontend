@@ -1,0 +1,64 @@
+/* ── 보고서 PDF 출력 ───────────────────────────────────────────────
+   ReportPrint.tsx mounts a fully expanded copy of the review report at the
+   end of <body> only while the browser print dialog is open. On screen that
+   copy stays hidden; on paper it is the only thing that prints. The browser's
+   own "PDF로 저장" destination turns it into the PDF. */
+
+.report-print { display: none; }
+
+@media print {
+  @page { size: A4; margin: 16mm 14mm; }
+
+  body > :not(.report-print) { display: none !important; }
+  /* The KRDS sheets paint the canvas grey through html; on paper every page is white. */
+  html, body { height: auto; min-height: 0; background: #fff !important; }
+  body { font-size: 10.5pt; line-height: 1.55; color: #111; }
+
+  .report-print {
+    display: block;
+    max-width: none;
+    color: #111;
+    font-family: var(--ui, "Malgun Gothic", "Apple SD Gothic Neo", sans-serif);
+  }
+  .report-print h1, .report-print h2, .report-print h3 { margin: 0; color: #111; break-after: avoid; }
+  .report-print h1 { font-size: 17pt; line-height: 1.3; }
+  .report-print h2 { padding-bottom: 3pt; border-bottom: 1.5pt solid #111; font-size: 12.5pt; }
+  .report-print h3 { font-size: 10.5pt; }
+  .report-print p { margin: 0; }
+  .report-print small { font-size: 8.5pt; color: #444; }
+  .report-print em { color: #7a1f1f; font-style: normal; font-weight: 700; }
+
+  .report-print__head { padding-bottom: 10pt; margin-bottom: 12pt; border-bottom: 2pt solid #111; }
+  .report-print__eyebrow { margin-bottom: 4pt; font-size: 8.5pt; font-weight: 700; letter-spacing: .08em; color: #444; }
+  .report-print__meta {
+    display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 3pt 12pt;
+    margin: 9pt 0 0; padding: 7pt 9pt; border: .75pt solid #999;
+  }
+  .report-print__meta div { display: grid; grid-template-columns: 6.5em minmax(0, 1fr); gap: 6pt; font-size: 9pt; }
+  .report-print__meta dt { color: #444; font-weight: 700; }
+  .report-print__meta dd { margin: 0; }
+  .report-print__summary { margin-top: 9pt; font-size: 10.5pt; font-weight: 600; }
+  .report-print__disclaimer { margin-top: 3pt; font-size: 9pt; color: #444; }
+
+  .report-print__section { margin-top: 13pt; }
+  .report-print__section > h2 { margin-bottom: 6pt; }
+  .report-print__block { margin-top: 7pt; padding-left: 8pt; border-left: 1.5pt solid #bbb; break-inside: avoid; }
+  .report-print__block > p { margin-top: 2pt; }
+  .report-print__hint { font-size: 8.5pt; color: #444; }
+  .report-print__source { font-size: 8pt; color: #444; overflow-wrap: anywhere; }
+  .report-print__cite { color: #444; }
+  .report-print__empty { color: #444; }
+
+  .report-print__list { margin: 3pt 0 0; padding-left: 1.4em; }
+  .report-print__list li { margin-top: 2pt; break-inside: avoid; }
+
+  .report-print__table { width: 100%; margin-top: 4pt; border-collapse: collapse; font-size: 9pt; }
+  .report-print__table th, .report-print__table td {
+    padding: 4pt 5pt; border: .75pt solid #999; text-align: left; vertical-align: top;
+  }
+  .report-print__table th { background: #eee; font-weight: 700; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .report-print__table tr { break-inside: avoid; }
+  .report-print__num { width: 1.6em; text-align: right; }
+
+  .report-print__foot { margin-top: 16pt; padding-top: 6pt; border-top: .75pt solid #999; font-size: 8.5pt; color: #444; }
+}
