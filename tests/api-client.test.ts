@@ -141,6 +141,86 @@ describe("Backend API client", () => {
     });
   });
 
+  it("requests raster OCR + layout, decodes spans, fields, and tables, and confirms with the layout job id", async () => {
+    const asset = {
+      asset_id: "asset-ocr-2", case_id: "case-1", document_type: "PL" as const, filename: "packing.png",
+      media_type: "image/png" as const, byte_size: 4, page_count: 1, pixel_count: 1,
+      created_by: "reviewer", created_at: "2026-08-29T00:00:00Z",
+    };
+    const jobBase = {
+      raster_extraction_job_id: "raster-job-1", asset_id: asset.asset_id, case_id: asset.case_id,
+      profile_revision: "synthetic-raster-v1:9eb7f34b", attempt_count: 1,
+      created_by: "reviewer", created_at: "2026-08-29T00:00:00Z", updated_at: "2026-08-29T00:00:01Z",
+    };
+    const queued = {
+      asset, job: { ...jobBase, status: "queued" }, idempotency_reused: false,
+      current_profile_revision: jobBase.profile_revision, profile_superseded: false,
+    };
+    const ready = {
+      asset,
+      job: {
+        ...jobBase,
+        status: "needs_review",
+        result: {
+          status: "needs_review",
+          document_type: "packing_list",
+          classification_confidence: 0.91,
+          pages: [{
+            page_number: 1, width: 100, height: 100, coordinate_unit: "pixels",
+            spans: [
+              { span_id: "s2", ordinal: 2, text: "Quantity: 2 PCS", confidence: 0.8, reading_order: 2 },
+              { span_id: "s1", ordinal: 1, text: "PACKING LIST", confidence: 0.99, reading_order: 1 },
+            ],
+          }],
+          field_candidates: [{ field_id: "quantity", value: "2 PCS", confidence: 0.8, evidence_span_ids: ["s2"] }],
+          tables: [{ table_id: "t1", page_number: 1, rows: [{ row_index: 0, cells: [
+            { cell_id: "c1", row_index: 0, column_index: 0, text: "Quantity", confidence: 0.9, evidence_span_ids: ["s2"] },
+          ] }] }],
+          warnings: ["human_confirmation_required"],
+          needs_review_reasons: ["table_structure_uncertain"],
+        },
+      },
+      idempotency_reused: false,
+      current_profile_revision: jobBase.profile_revision,
+      profile_superseded: false,
+    };
+    const confirmed = {
+      record: {
+        document_id: "document-ocr-2", case_id: "case-1", document_type: "PL", filename: "packing.txt",
+        media_type: "text/plain", content_sha256: "a".repeat(64), byte_size: 19, character_count: 19,
+        extraction_source: "raster_ocr", layout_summary: { page_count: 1, table_count: 1, span_count: 2, field_candidate_count: 1, mean_confidence: 0.895 },
+        created_by: "reviewer", created_at: "2026-08-29T00:00:02Z",
+      },
+      content_text: "PACKING LIST\nQuantity: 2 PCS",
+    };
+    const calls: Array<{ url: string; init: RequestInit | undefined }> = [];
+    const fetcher: typeof fetch = async (input, init) => {
+      const url = String(input);
+      calls.push({ url, init });
+      if (url.endsWith("/raster-extractions")) return json(queued, 202);
+      if (url.endsWith("/raster-extractions/raster-job-1")) return json(ready);
+      if (url.endsWith("/confirmed-document")) return json(confirmed, 201);
+      throw new Error(`unexpected test URL: ${url}`);
+    };
+    const api = new ApiClient(fetcher, async () => "local-token");
+
+    await expect(api.requestRasterExtraction("case-1", asset.asset_id, "raster-key-1")).resolves.toMatchObject({ job: { status: "queued" } });
+    const envelope = await api.getRasterExtraction("case-1", asset.asset_id, "raster-job-1");
+    expect(envelope.job.result?.pages[0]?.spans.map((span) => span.span_id)).toEqual(["s2", "s1"]);
+    expect(envelope.job.result?.field_candidates[0]).toMatchObject({ field_id: "quantity", confidence: 0.8 });
+    expect(envelope.job.result?.tables[0]?.rows[0]?.cells[0]?.text).toBe("Quantity");
+    const record = await api.confirmExtractedText("case-1", asset.asset_id, {
+      raster_extraction_job_id: "raster-job-1", filename: "packing.txt", content_text: "PACKING LIST\nQuantity: 2 PCS",
+    });
+    expect(record.extraction_source).toBe("raster_ocr");
+    expect(JSON.parse(String(calls[2]?.init?.body))).toEqual({
+      raster_extraction_job_id: "raster-job-1", filename: "packing.txt", content_text: "PACKING LIST\nQuantity: 2 PCS",
+    });
+    expect(() => api.confirmExtractedText("case-1", asset.asset_id, {
+      raster_extraction_job_id: "raster-job-1", raster_text_extraction_job_id: "raster-text-job-1", filename: "x.txt", content_text: "x",
+    })).toThrow("exactly one extraction job ID is required");
+  });
+
   it("accepts only fail-closed raster text profile supersession states", () => {
     const asset = {
       asset_id: "asset-ocr-1", case_id: "case-1", document_type: "CI", filename: "scan.png",

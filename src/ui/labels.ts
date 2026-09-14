@@ -11,9 +11,12 @@ import type {
   CorrectionProposal,
   DocumentFact,
   DocumentType,
-  FindingDecisionReasonCode,
   ExtractionJob,
   ExtractionPreview,
+  FindingDecisionReasonCode,
+  RasterExtractionEnvelope,
+  RasterExtractionJob,
+  RasterExtractionPreview,
   RasterTextExtractionEnvelope,
   RasterTextExtractionJob,
   RasterTextExtractionPreview,
@@ -618,4 +621,64 @@ export function engineKindLabel(value: string): string {
 export function percentLabel(value: number): string {
   const rounded = Math.round(value * 1000) / 10;
   return `${Number.isInteger(rounded) ? rounded.toFixed(0) : rounded.toFixed(1)}%`;
+}
+
+/* ── raster OCR + layout ──────────────────────────────────────── */
+
+export function rasterExtractionStatusLabel(value: RasterExtractionJob["status"]): string {
+  const labels: Record<RasterExtractionJob["status"], string> = {
+    queued: "OCR+레이아웃 대기",
+    running: "OCR+레이아웃 처리 중",
+    preview_ready: "OCR+레이아웃 초안 준비됨",
+    needs_review: "OCR+레이아웃 추가 확인 필요",
+    unavailable: "OCR+레이아웃 초안 제공 불가",
+    failed: "OCR+레이아웃 처리 실패",
+  };
+  return labels[value];
+}
+
+export function rasterExtractionNoticeLabel(code: string): string {
+  const labels: Readonly<Record<string, string>> = {
+    raster_profile_unavailable: "현재 사용할 수 있는 OCR+레이아웃 프로필이 없습니다.",
+    raster_profile_superseded: "OCR+레이아웃 프로필이 바뀌어 이전 초안을 사용할 수 없습니다.",
+    layout_low_confidence: "표·필드 구조 추정 신뢰도가 낮을 수 있습니다.",
+    table_structure_uncertain: "표 구조는 엔진의 추정이므로 원본과 대조가 필요합니다.",
+  };
+  return labels[code] ?? rasterTextWarningLabel(code);
+}
+
+/** Reading-order text of every page; pages are separated by a form feed like the text-only OCR draft. */
+export function rasterExtractionDraftText(preview: RasterExtractionPreview | null | undefined): string {
+  return [...(preview?.pages ?? [])]
+    .sort((left, right) => left.page_number - right.page_number)
+    .map((page) => [...page.spans].sort((left, right) => left.reading_order - right.reading_order).map((span) => span.text).join("\n"))
+    .join("\n\f\n");
+}
+
+export function rasterLayoutSummaryLabel(preview: RasterExtractionPreview): string {
+  const spans = preview.pages.flatMap((page) => page.spans);
+  const mean = spans.length ? spans.reduce((total, span) => total + span.confidence, 0) / spans.length : null;
+  return `페이지 ${preview.pages.length} · 표 ${preview.tables.length} · 텍스트 조각 ${spans.length} · 필드 후보 ${preview.field_candidates.length}`
+    + (mean === null ? " · 평균 신뢰도 없음" : ` · 평균 신뢰도 ${percentLabel(mean)}`);
+}
+
+export function rasterExtractionNotice(envelope: RasterExtractionEnvelope): string {
+  if (envelope.profile_superseded) {
+    return "현재 OCR+레이아웃 프로필이 바뀌었습니다. 이전 초안은 등록할 수 없으므로 새 요청을 실행하십시오.";
+  }
+  const descriptions: Record<RasterExtractionJob["status"], string> = {
+    queued: "OCR+레이아웃 작업이 대기열에 등록되었습니다.",
+    running: "OCR과 레이아웃 분석을 처리하고 있습니다.",
+    preview_ready: "원본과 대조해 수정할 OCR+레이아웃 초안이 준비되었습니다.",
+    needs_review: "일부 인식 결과가 불확실할 수 있으므로 원본 대조가 필요합니다.",
+    unavailable: "현재 문서의 OCR+레이아웃 초안을 제공할 수 없습니다.",
+    failed: "OCR+레이아웃 처리를 완료하지 못했습니다.",
+  };
+  return `${rasterExtractionStatusLabel(envelope.job.status)}. ${descriptions[envelope.job.status]}`;
+}
+
+export function extractionSourceLabel(value: string | null | undefined): string {
+  const labels: Record<string, string> = { text_layer: "텍스트 레이어", vlm_ocr: "VLM OCR", raster_ocr: "OCR+레이아웃" };
+  if (!value) return "직접 입력 텍스트";
+  return labels[value] ?? value;
 }

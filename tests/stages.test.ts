@@ -220,6 +220,22 @@ describe("관세 진단 단계", () => {
 });
 
 describe("서류 등록 단계", () => {
+  it("offers both OCR paths for an unconfirmed scan and labels the layout panel honestly", async () => {
+    window.location.hash = "#/cases/case-1/documents";
+    const asset = {
+      asset_id: "asset-2", case_id: "case-1", document_type: "PL" as const, filename: "packing-scan.png",
+      media_type: "image/png" as const, byte_size: 2048, page_count: 1, pixel_count: 1,
+      created_by: "local-reviewer", created_at: "2026-08-05T00:00:00Z",
+    };
+    const { root, dispose } = await mount(api({ listDocumentAssets: vi.fn(async () => [asset]) }, []));
+    const row = root.querySelector<HTMLElement>('[data-asset-id="asset-2"]');
+    expect(row?.querySelector('[data-testid="raster-text-panel"]')).not.toBeNull();
+    const layout = row?.querySelector<HTMLElement>('[data-testid="raster-layout-panel"]');
+    expect(layout?.textContent).toContain("OCR + 레이아웃 분석 실행");
+    expect(layout?.textContent).toContain("엔진의 추정");
+    dispose();
+  });
+
   it("hides the OCR panel for a confirmed asset and offers the original instead", async () => {
     window.location.hash = "#/cases/case-1/documents";
     const asset = {
@@ -234,6 +250,7 @@ describe("서류 등록 단계", () => {
     expect(row?.textContent).toContain("문서로 확정됨");
     expect(row?.querySelector("[data-asset-confirmed]")?.textContent).toContain("원문 보기");
     expect(row?.querySelector('[data-testid="raster-text-panel"]')).toBeNull();
+    expect(row?.querySelector('[data-testid="raster-layout-panel"]')).toBeNull();
     dispose();
   });
 });

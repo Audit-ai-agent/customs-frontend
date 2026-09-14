@@ -29,6 +29,7 @@ import {
   decodeReviewRunSummary,
   decodeRasterTextExtractionEnvelope,
   decodeSession,
+  decodeRasterExtractionEnvelope,
 } from "./decoders";
 import type {
   AddDocumentRequest,
@@ -41,11 +42,11 @@ import type {
   CaseDocument,
   CaseSummary,
   ConfirmExtractedTextRequest,
-  CreateCaseRequest,
-  CreateAssistantConversationRequest,
-  CreateCorrectionProposalRequest,
   CorrectionDecisionRequest,
   CorrectionProposal,
+  CreateAssistantConversationRequest,
+  CreateCaseRequest,
+  CreateCorrectionProposalRequest,
   CreateRevisionRequest,
   DocumentAsset,
   DocumentAssetMediaType,
@@ -61,17 +62,18 @@ import type {
   HsSelectionRequest,
   JobRecord,
   LawCatalog,
+  LawSearch,
   LlmConnectionTest,
   LlmSettingsUpdate,
   LlmSettingsView,
-  LawSearch,
   OperationsMetrics,
   OriginVerification,
+  RasterExtractionEnvelope,
   RasterTextExtractionEnvelope,
   ReviewProgress,
-  ReviewerDecision,
   ReviewRun,
   ReviewRunSummary,
+  ReviewerDecision,
   SendAssistantMessageRequest,
   Session,
 } from "./types";
@@ -261,6 +263,43 @@ export class ApiClient {
     );
   }
 
+  /** Enqueues the approved raster OCR + layout profile (PP-StructureV3, CPU). */
+  requestRasterExtraction(
+    caseId: string,
+    assetId: string,
+    idempotencyKey: string,
+  ): Promise<RasterExtractionEnvelope> {
+    if (!isSafeIdempotencyKey(idempotencyKey)) throw new ContractError("raster extraction Idempotency-Key is invalid");
+    return this.request(
+      `/cases/${segment(caseId)}/document-assets/${segment(assetId)}/raster-extractions`,
+      { method: "POST", headers: { "Idempotency-Key": idempotencyKey } },
+      (value) => {
+        const envelope = decodeRasterExtractionEnvelope(value);
+        this.assertIdentity(envelope.asset.case_id, caseId, "Raster extraction Case");
+        this.assertIdentity(envelope.asset.asset_id, assetId, "Raster extraction asset");
+        return envelope;
+      },
+    );
+  }
+
+  getRasterExtraction(
+    caseId: string,
+    assetId: string,
+    rasterExtractionJobId: string,
+  ): Promise<RasterExtractionEnvelope> {
+    return this.request(
+      `/cases/${segment(caseId)}/document-assets/${segment(assetId)}/raster-extractions/${segment(rasterExtractionJobId)}`,
+      { method: "GET" },
+      (value) => {
+        const envelope = decodeRasterExtractionEnvelope(value);
+        this.assertIdentity(envelope.asset.case_id, caseId, "Raster extraction Case");
+        this.assertIdentity(envelope.asset.asset_id, assetId, "Raster extraction asset");
+        this.assertIdentity(envelope.job.raster_extraction_job_id, rasterExtractionJobId, "Raster extraction job");
+        return envelope;
+      },
+    );
+  }
+
   /** Enqueues the independently approved text-only OCR profile. */
   requestRasterTextExtraction(
     caseId: string,
@@ -324,7 +363,10 @@ export class ApiClient {
     const rasterTextExtractionJobId = payload.raster_text_extraction_job_id === undefined
       ? undefined
       : requestIdentifier(payload.raster_text_extraction_job_id, "raster text extraction job ID");
-    if ([extractionJobId, rasterTextExtractionJobId].filter((value) => value !== undefined).length !== 1) {
+    const rasterExtractionJobId = payload.raster_extraction_job_id === undefined
+      ? undefined
+      : requestIdentifier(payload.raster_extraction_job_id, "raster extraction job ID");
+    if ([extractionJobId, rasterExtractionJobId, rasterTextExtractionJobId].filter((value) => value !== undefined).length !== 1) {
       throw new ContractError("exactly one extraction job ID is required");
     }
     const filename = payload.filename.trim();
@@ -335,6 +377,7 @@ export class ApiClient {
       `/cases/${segment(caseId)}/document-assets/${segment(assetId)}/confirmed-document`,
       this.json("POST", {
         ...(extractionJobId === undefined ? {} : { extraction_job_id: extractionJobId }),
+        ...(rasterExtractionJobId === undefined ? {} : { raster_extraction_job_id: rasterExtractionJobId }),
         ...(rasterTextExtractionJobId === undefined ? {} : { raster_text_extraction_job_id: rasterTextExtractionJobId }),
         content_text: payload.content_text,
         filename,

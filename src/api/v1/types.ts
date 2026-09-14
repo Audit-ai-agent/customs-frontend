@@ -665,9 +665,96 @@ export interface RasterTextExtractionEnvelope {
   profile_superseded: boolean;
 }
 
+/* ── raster OCR + layout preview (PP-StructureV3 sidecar, CPU) ── */
+
+export type RasterExtractionJobStatus = "queued" | "running" | "preview_ready" | "needs_review" | "unavailable" | "failed";
+
+export interface RasterExtractionSpan {
+  span_id: string;
+  ordinal: number;
+  text: string;
+  bbox?: Record<string, number> | null;
+  polygon?: { points: Array<Record<string, number>> } | null;
+  confidence: number;
+  reading_order: number;
+}
+
+export interface RasterExtractionPage {
+  page_number: number;
+  width: number;
+  height: number;
+  coordinate_unit: "pixels";
+  spans: RasterExtractionSpan[];
+}
+
+export interface RasterFieldCandidate {
+  field_id: string;
+  value: string;
+  confidence: number;
+  evidence_span_ids: string[];
+  bbox?: Record<string, number> | null;
+}
+
+export interface RasterTableCell {
+  cell_id: string;
+  row_index: number;
+  column_index: number;
+  text: string;
+  confidence: number;
+  evidence_span_ids: string[];
+  bbox?: Record<string, number> | null;
+}
+
+export interface RasterTableRow {
+  row_index: number;
+  cells: RasterTableCell[];
+}
+
+export interface RasterTable {
+  table_id: string;
+  page_number: number;
+  rows: RasterTableRow[];
+  bbox?: Record<string, number> | null;
+}
+
+/** Reviewer projection of one OCR + layout pass; table structure is the engine's estimate. */
+export interface RasterExtractionPreview {
+  status: "preview_ready" | "needs_review" | "unavailable";
+  document_type: "bill_of_lading" | "commercial_invoice" | "packing_list" | null;
+  classification_confidence?: number | null;
+  pages: RasterExtractionPage[];
+  field_candidates: RasterFieldCandidate[];
+  tables: RasterTable[];
+  warnings: string[];
+  needs_review_reasons: string[];
+}
+
+export interface RasterExtractionJob {
+  raster_extraction_job_id: string;
+  asset_id: string;
+  case_id: string;
+  profile_revision: string;
+  status: RasterExtractionJobStatus;
+  attempt_count: number;
+  error_code?: string;
+  result?: RasterExtractionPreview;
+  created_by: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface RasterExtractionEnvelope {
+  asset: DocumentAsset;
+  job: RasterExtractionJob;
+  idempotency_reused: boolean;
+  current_profile_revision: string | null;
+  profile_superseded: boolean;
+}
+
 export interface ConfirmExtractedTextRequest {
-  /** Exactly one of the two job identifiers must be supplied. */
+  /** Exactly one of the three job identifiers must be supplied. */
   extraction_job_id?: string;
+  raster_extraction_job_id?: string;
   raster_text_extraction_job_id?: string;
   content_text: string;
   filename: string;

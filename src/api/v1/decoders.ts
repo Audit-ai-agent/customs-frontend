@@ -52,6 +52,10 @@ import type {
   OriginVerification,
   PlannerAction,
   PlannerTrace,
+  RasterExtractionEnvelope,
+  RasterExtractionJob,
+  RasterExtractionPage,
+  RasterExtractionPreview,
   RasterTextExtractionEnvelope,
   RasterTextExtractionJob,
   RasterTextExtractionPage,
@@ -1787,4 +1791,154 @@ function literal<T extends string | number>(value: unknown, expected: T, context
 function oneOf<T extends string>(value: unknown, expected: readonly T[], context: string): T {
   if (typeof value !== "string" || !expected.includes(value as T)) throw new ContractError(`${context}: unsupported value`);
   return value as T;
+}
+
+/* ── raster OCR + layout (PP-StructureV3) ─────────────────────── */
+
+const RASTER_JOB_STATUSES = ["queued", "running", "preview_ready", "needs_review", "unavailable", "failed"] as const;
+
+export function decodeRasterExtractionEnvelope(value: unknown): RasterExtractionEnvelope {
+  const raw = record(value, "raster extraction response");
+  const asset = decodeDocumentAsset(raw.asset);
+  const job = decodeRasterExtractionJob(record(raw.job, "raster extraction job"));
+  if (job.asset_id !== asset.asset_id) throw new ContractError("raster extraction job asset does not match its response asset");
+  if (job.case_id !== asset.case_id) throw new ContractError("raster extraction job Case does not match its response asset");
+  const currentProfileRevision = raw.current_profile_revision === null
+    ? null
+    : technicalIdentifier(raw.current_profile_revision, "raster extraction current profile");
+  const profileSuperseded = booleanValue(raw.profile_superseded, "raster extraction profile_superseded");
+  if (profileSuperseded && currentProfileRevision !== null && currentProfileRevision === job.profile_revision) {
+    throw new ContractError("raster extraction supersession does not name a newer profile");
+  }
+  return {
+    asset,
+    job,
+    idempotency_reused: booleanValue(raw.idempotency_reused, "raster extraction idempotency_reused"),
+    current_profile_revision: currentProfileRevision,
+    profile_superseded: profileSuperseded,
+  };
+}
+
+function decodeRasterExtractionJob(raw: Record<string, unknown>): RasterExtractionJob {
+  const status = oneOf(raw.status, RASTER_JOB_STATUSES, "raster extraction job.status");
+  const result = raw.result === undefined || raw.result === null ? undefined : decodeRasterExtractionPreview(raw.result);
+  if ((status === "queued" || status === "running" || status === "failed") && result !== undefined) {
+    throw new ContractError("pending or failed raster extraction must not include a preview");
+  }
+  if ((status === "preview_ready" || status === "needs_review" || status === "unavailable") && result === undefined) {
+    throw new ContractError("completed raster extraction preview is absent");
+  }
+  if (result !== undefined && result.status !== status) throw new ContractError("raster extraction status does not match its preview");
+  const attemptCount = nonNegativeInteger(raw.attempt_count, "raster extraction job.attempt_count");
+  if (attemptCount > 3) throw new ContractError("raster extraction attempt_count exceeds its retry limit");
+  const errorCode = optionalString(raw.error_code, "raster extraction job.error_code");
+  return {
+    raster_extraction_job_id: technicalIdentifier(raw.raster_extraction_job_id, "raster extraction job ID"),
+    asset_id: technicalIdentifier(raw.asset_id, "raster extraction asset ID"),
+    case_id: technicalIdentifier(raw.case_id, "raster extraction Case ID"),
+    profile_revision: technicalIdentifier(raw.profile_revision, "raster extraction profile revision"),
+    status,
+    attempt_count: attemptCount,
+    ...(errorCode === undefined ? {} : { error_code: errorCode }),
+    ...(result === undefined ? {} : { result }),
+    created_by: requiredString(raw.created_by, "raster extraction job.created_by"),
+    created_at: requiredString(raw.created_at, "raster extraction job.created_at"),
+    updated_at: requiredString(raw.updated_at, "raster extraction job.updated_at"),
+  };
+}
+
+function decodeRasterExtractionPreview(value: unknown): RasterExtractionPreview {
+  const raw = record(value, "raster extraction preview");
+  const pages = array(raw.pages, "raster extraction preview.pages");
+  const candidates = array(raw.field_candidates, "raster extraction preview.field_candidates");
+  const tables = array(raw.tables, "raster extraction preview.tables");
+  const warnings = array(raw.warnings, "raster extraction preview.warnings");
+  const reasons = array(raw.needs_review_reasons, "raster extraction preview.needs_review_reasons");
+  if (pages.length > 20 || candidates.length > 256 || tables.length > 100 || warnings.length > 32 || reasons.length > 32) {
+    throw new ContractError("raster extraction preview exceeds its safe limit");
+  }
+  const documentType = raw.document_type === null
+    ? null
+    : oneOf(raw.document_type, ["bill_of_lading", "commercial_invoice", "packing_list"], "raster extraction preview.document_type");
+  const decodedPages = pages.map((page, index) => decodeRasterExtractionPage(page, `raster extraction preview.pages[${index}]`));
+  if (decodedPages.some((page, index) => page.page_number !== index + 1)) {
+    throw new ContractError("raster extraction page numbers must be contiguous");
+  }
+  const spanIds = new Set(decodedPages.flatMap((page) => page.spans.map((span) => span.span_id)));
+  const requireSpans = (ids: string[], context: string) => {
+    if (!ids.length || ids.some((id) => !spanIds.has(id))) throw new ContractError(`${context} must cite extracted spans`);
+    return ids;
+  };
+  return {
+    status: oneOf(raw.status, ["preview_ready", "needs_review", "unavailable"], "raster extraction preview.status"),
+    document_type: documentType,
+    ...(raw.classification_confidence === undefined || raw.classification_confidence === null
+      ? {}
+      : { classification_confidence: unitInterval(raw.classification_confidence, "raster extraction preview.classification_confidence") }),
+    pages: decodedPages,
+    field_candidates: candidates.map((item, index) => {
+      const context = `raster extraction preview.field_candidates[${index}]`;
+      const candidate = record(item, context);
+      return {
+        field_id: requiredString(candidate.field_id, `${context}.field_id`),
+        value: requiredString(candidate.value, `${context}.value`),
+        confidence: unitInterval(candidate.confidence, `${context}.confidence`),
+        evidence_span_ids: requireSpans(decodeIdentifierList(candidate.evidence_span_ids, `${context}.evidence_span_ids`), context),
+      };
+    }),
+    tables: tables.map((item, index) => {
+      const context = `raster extraction preview.tables[${index}]`;
+      const table = record(item, context);
+      const pageNumber = positiveInteger(table.page_number, `${context}.page_number`);
+      if (pageNumber > decodedPages.length) throw new ContractError(`${context} refers to a missing page`);
+      return {
+        table_id: requiredString(table.table_id, `${context}.table_id`),
+        page_number: pageNumber,
+        rows: array(table.rows, `${context}.rows`).map((rowValue, rowIndex) => {
+          const rowContext = `${context}.rows[${rowIndex}]`;
+          const row = record(rowValue, rowContext);
+          return {
+            row_index: nonNegativeInteger(row.row_index, `${rowContext}.row_index`),
+            cells: array(row.cells, `${rowContext}.cells`).map((cellValue, cellIndex) => {
+              const cellContext = `${rowContext}.cells[${cellIndex}]`;
+              const cell = record(cellValue, cellContext);
+              return {
+                cell_id: requiredString(cell.cell_id, `${cellContext}.cell_id`),
+                row_index: nonNegativeInteger(cell.row_index, `${cellContext}.row_index`),
+                column_index: nonNegativeInteger(cell.column_index, `${cellContext}.column_index`),
+                text: requiredString(cell.text, `${cellContext}.text`),
+                confidence: unitInterval(cell.confidence, `${cellContext}.confidence`),
+                evidence_span_ids: requireSpans(decodeIdentifierList(cell.evidence_span_ids, `${cellContext}.evidence_span_ids`), cellContext),
+              };
+            }),
+          };
+        }),
+      };
+    }),
+    warnings: warnings.map((warning, index) => warningCode(warning, `raster extraction preview.warnings[${index}]`)),
+    needs_review_reasons: reasons.map((reason, index) => warningCode(reason, `raster extraction preview.needs_review_reasons[${index}]`)),
+  };
+}
+
+function decodeRasterExtractionPage(value: unknown, context: string): RasterExtractionPage {
+  const raw = record(value, context);
+  const spans = array(raw.spans, `${context}.spans`);
+  if (spans.length > 20_000) throw new ContractError(`${context} exceeds its span limit`);
+  return {
+    page_number: positiveInteger(raw.page_number, `${context}.page_number`),
+    width: positiveInteger(raw.width, `${context}.width`),
+    height: positiveInteger(raw.height, `${context}.height`),
+    coordinate_unit: literal(raw.coordinate_unit, "pixels", `${context}.coordinate_unit`),
+    spans: spans.map((item, index) => {
+      const spanContext = `${context}.spans[${index}]`;
+      const span = record(item, spanContext);
+      return {
+        span_id: requiredString(span.span_id, `${spanContext}.span_id`),
+        ordinal: positiveInteger(span.ordinal, `${spanContext}.ordinal`),
+        text: requiredString(span.text, `${spanContext}.text`),
+        confidence: unitInterval(span.confidence, `${spanContext}.confidence`),
+        reading_order: positiveInteger(span.reading_order, `${spanContext}.reading_order`),
+      };
+    }),
+  };
 }

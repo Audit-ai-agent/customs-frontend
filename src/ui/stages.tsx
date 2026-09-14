@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import type { DocumentAsset, RasterTextExtractionJob, ReviewComparison, ReviewRun } from "../api/v1/types";
+import type { DocumentAsset, RasterExtractionJob, RasterTextExtractionJob, ReviewComparison, ReviewRun } from "../api/v1/types";
 import { isDocumentSource } from "../api/v1/types";
 import type { AssetWorkbenchEntry } from "./store";
 import { DOCUMENT_TYPES } from "./constants";
@@ -16,6 +16,13 @@ import {
   rasterTextPreviewText,
   rasterTextWarningLabel,
   ruleTitle,
+  displayComparisonValue,
+  extractionSourceLabel,
+  percentLabel,
+  rasterExtractionDraftText,
+  rasterExtractionNoticeLabel,
+  rasterExtractionStatusLabel,
+  rasterLayoutSummaryLabel,
 } from "./labels";
 import { EmptyCopy, EmptyState, Field, Metric, RoleBoundaryNote, SectionHeading, Submit } from "./primitives";
 import { DutyDiagnosisStage, HsClassificationCard, OriginVerificationCard } from "./trade";
@@ -202,7 +209,7 @@ function AssetRow({ entry }: { entry: AssetWorkbenchEntry }) {
       ) : null}
       {confirmed ? (
         <p className="asset-confirmed-note" data-asset-confirmed>
-          확정됨 · 검수한 텍스트가 활성 문서로 등록되어 있습니다.
+          {`확정됨 · 검수한 텍스트가 활성 문서로 등록되어 있습니다.${confirmedDocument?.extraction_source ? ` (${extractionSourceLabel(confirmedDocument.extraction_source)})` : ""}`}
           {confirmedDocument ? (
             <button
               className="text-link"
@@ -214,7 +221,10 @@ function AssetRow({ entry }: { entry: AssetWorkbenchEntry }) {
           ) : null}
         </p>
       ) : (
-        <RasterTextExtractionPanel entry={entry} confirmed={confirmed} />
+        <>
+          <RasterTextExtractionPanel entry={entry} confirmed={confirmed} />
+          <RasterExtractionPanel entry={entry} confirmed={confirmed} />
+        </>
       )}
       {confirmable && preview && store.hasRole("reviewer") ? (
         <ConfirmExtractionPanel
@@ -336,6 +346,208 @@ function RasterTextExtractionPanel({ entry, confirmed }: { entry: AssetWorkbench
         </>
       ) : null}
     </section>
+  );
+}
+
+function RasterExtractionPanel({ entry, confirmed }: { entry: AssetWorkbenchEntry; confirmed: boolean }) {
+  const store = useStore();
+  const state = useWorkbenchState();
+  const envelope = entry.rasterExtraction;
+  const job = envelope?.job ?? null;
+  const preview = job?.result ?? null;
+  const draft = rasterExtractionDraftText(preview);
+  const pending = job?.status === "queued" || job?.status === "running";
+  const confirmable = !confirmed
+    && envelope !== null
+    && !envelope.profile_superseded
+    && (job?.status === "preview_ready" || job?.status === "needs_review")
+    && Boolean(draft.trim());
+  const notices = [...new Set([...(preview?.warnings ?? []), ...(preview?.needs_review_reasons ?? [])])];
+
+  return (
+    <section className="raster-text-panel raster-layout-panel" data-testid="raster-layout-panel">
+      <div className="raster-text-panel__head">
+        <div>
+          <strong>스캔·이미지 OCR + 레이아웃 분석</strong>
+          <p>글자와 함께 표·필드 후보의 위치를 읽습니다. 표 구조는 OCR 레이아웃 엔진의 추정이며 담당자가 원본과 대조해 확인합니다.</p>
+        </div>
+        {job ? (
+          <span className={`asset-status asset-status--${job.status}`}>{rasterExtractionStatusLabel(job.status)}</span>
+        ) : null}
+      </div>
+
+      {!job && store.hasRole("reviewer") ? (
+        <div className="raster-text-panel__actions">
+          <button
+            className="btn btn--secondary"
+            type="button"
+            disabled={entry.rasterExtracting || state.busy || confirmed}
+            onClick={() => void store.runRasterExtraction(entry.asset.asset_id)}
+          >
+            {entry.rasterExtracting ? "OCR+레이아웃 요청 중…" : "OCR + 레이아웃 분석 실행"}
+          </button>
+          <span className="form-hint">표가 많은 스캔 서류(포장명세서·송장)에서 셀 단위 값까지 확인하고 싶을 때 사용합니다.</span>
+        </div>
+      ) : null}
+
+      {job ? (
+        <div className="raster-text-panel__actions">
+          <button
+            className="btn"
+            type="button"
+            disabled={entry.rasterExtracting || state.busy}
+            onClick={() => void store.refreshRasterExtraction(entry.asset.asset_id)}
+          >
+            {entry.rasterExtracting ? "상태 확인 중…" : "OCR+레이아웃 상태 새로고침"}
+          </button>
+          {envelope?.profile_superseded ? (
+            <button
+              className="btn primary"
+              type="button"
+              disabled={entry.rasterExtracting || state.busy}
+              onClick={() => void store.runRasterExtraction(entry.asset.asset_id)}
+            >
+              현재 프로필로 새 분석 요청
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+
+      {pending ? (
+        <p className="form-hint">3초 간격으로 최대 60초 동안 상태를 자동 확인합니다. 분석 요청 자체는 백그라운드에서 계속 처리됩니다.</p>
+      ) : null}
+      {envelope?.profile_superseded ? (
+        <p className="asset-row__note">OCR+레이아웃 프로필이 바뀌어 이전 초안은 등록할 수 없습니다. 현재 프로필로 새로 요청하십시오.</p>
+      ) : null}
+      {job?.status === "unavailable" || job?.status === "failed" ? (
+        <p className="asset-row__note">{job.status === "unavailable" ? "이 문서의 OCR+레이아웃 초안을 제공할 수 없습니다." : "OCR+레이아웃 처리에 실패했습니다. 기존 문서는 변경되지 않았습니다."}</p>
+      ) : null}
+      {notices.length ? (
+        <ul className="raster-text-notices">
+          {notices.map((code) => <li key={code}>{rasterExtractionNoticeLabel(code)}</li>)}
+        </ul>
+      ) : null}
+      {preview ? (
+        <p className="raster-layout-summary" data-raster-layout-summary>{rasterLayoutSummaryLabel(preview)}</p>
+      ) : null}
+      {preview?.field_candidates.length ? (
+        <details className="raster-layout-fields" open={preview.field_candidates.length <= 8}>
+          <summary>{`필드 후보 ${preview.field_candidates.length}건`}</summary>
+          <ul className="raster-field-list">
+            {preview.field_candidates.map((candidate) => (
+              <li key={candidate.field_id}>
+                <strong>{displayComparisonValue(candidate.field_id)}</strong>
+                <span>{candidate.value}</span>
+                <small>{`신뢰도 ${percentLabel(candidate.confidence)}`}</small>
+              </li>
+            ))}
+          </ul>
+        </details>
+      ) : null}
+      {preview?.tables.length ? (
+        <details className="raster-layout-tables" open={preview.tables.length === 1}>
+          <summary>{`표 ${preview.tables.length}개 (엔진 추정)`}</summary>
+          {preview.tables.map((table) => (
+            <div key={table.table_id} className="raster-table-wrap">
+              <small>{`${table.page_number}쪽 · 행 ${table.rows.length}`}</small>
+              <table className="raster-table">
+                <tbody>
+                  {[...table.rows].sort((left, right) => left.row_index - right.row_index).map((row) => (
+                    <tr key={`${table.table_id}-${row.row_index}`}>
+                      {[...row.cells].sort((left, right) => left.column_index - right.column_index).map((cell) => (
+                        <td key={cell.cell_id} title={`신뢰도 ${percentLabel(cell.confidence)}`}>{cell.text}</td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ))}
+        </details>
+      ) : null}
+      {preview?.pages.length ? (
+        <div className="raster-text-pages">
+          {[...preview.pages].sort((left, right) => left.page_number - right.page_number).map((page) => (
+            <details key={page.page_number} open={preview.pages.length === 1}>
+              <summary>{`${page.page_number}쪽 · 텍스트 조각 ${page.spans.length}`}</summary>
+              <pre>{[...page.spans].sort((left, right) => left.reading_order - right.reading_order).map((span) => span.text).join("\n")}</pre>
+            </details>
+          ))}
+        </div>
+      ) : null}
+      {confirmable && job ? (
+        <>
+          <RasterTextSourceViewer asset={entry.asset} />
+          <RasterExtractionConfirmationPanel
+            key={job.raster_extraction_job_id}
+            asset={entry.asset}
+            job={job}
+            initialText={draft}
+            notices={notices}
+          />
+        </>
+      ) : null}
+    </section>
+  );
+}
+
+function RasterExtractionConfirmationPanel({
+  asset,
+  job,
+  initialText,
+  notices,
+}: {
+  asset: DocumentAsset;
+  job: RasterExtractionJob;
+  initialText: string;
+  notices: string[];
+}) {
+  const store = useStore();
+  const state = useWorkbenchState();
+  const [text, setText] = useState(initialText);
+  const [filename, setFilename] = useState(asset.filename.replace(/\.(pdf|jpe?g|png)$/iu, "") + ".txt");
+  return (
+    <details className="asset-confirm-panel raster-text-confirm-panel" open>
+      <summary>{job.status === "needs_review" ? "OCR+레이아웃 텍스트 원본 대조·확정" : "OCR+레이아웃 텍스트 검수·확정"}</summary>
+      <p className="form-hint">
+        읽기 순서로 이어 붙인 텍스트를 직접 대조·수정한 값만 문서로 등록합니다. 표와 필드 후보는 미리보기이며 심사 입력이 아닙니다.
+        {notices.length ? ` (${notices.map(rasterExtractionNoticeLabel).join(" ")})` : ""}
+      </p>
+      <form
+        className="asset-confirm-form"
+        onSubmit={(event) => {
+          event.preventDefault();
+          void store.confirmRasterExtraction({
+            assetId: asset.asset_id,
+            rasterExtractionJobId: job.raster_extraction_job_id,
+            contentText: text,
+            filename: filename.trim(),
+          });
+        }}
+      >
+        <Field label="원본과 대조해 확인한 전체 텍스트">
+          <textarea
+            name="raster_layout_confirmed_text"
+            rows={12}
+            required
+            maxLength={200_000}
+            value={text}
+            onChange={(event) => setText(event.target.value)}
+          />
+        </Field>
+        <Field label="등록 파일명 (.txt)">
+          <input
+            name="raster_layout_confirmed_filename"
+            type="text"
+            required
+            maxLength={255}
+            value={filename}
+            onChange={(event) => setFilename(event.target.value)}
+          />
+        </Field>
+        <Submit label="확인한 OCR+레이아웃 텍스트를 문서로 등록" disabled={state.busy || !text.trim()} />
+      </form>
+    </details>
   );
 }
 

@@ -1320,3 +1320,12 @@ textarea { min-height: 7rem; resize: vertical; line-height: 1.6; }
   .home-todo__row { grid-template-columns: minmax(0, 1fr) auto; }
   .home-todo__ref, .home-todo__date { display: none; }
 }
+
+/* ── OCR + 레이아웃 미리보기 ─────────────────────────────────── */
+.raster-layout-summary { margin: .35rem 0 0; color: var(--krds-muted); font-size: .82rem; }
+.raster-field-list { display: grid; gap: .3rem; padding: 0; margin: .4rem 0 0; list-style: none; }
+.raster-field-list li { display: grid; grid-template-columns: minmax(8rem, auto) 1fr auto; gap: .5rem; align-items: baseline; font-size: .84rem; }
+.raster-field-list small { color: var(--krds-muted); }
+.raster-table-wrap { margin: .4rem 0; overflow-x: auto; }
+.raster-table { border-collapse: collapse; font-size: .8rem; }
+.raster-table td { padding: .2rem .45rem; border: 1px solid var(--krds-line); white-space: pre-wrap; }
