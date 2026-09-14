@@ -76,6 +76,8 @@ export interface CaseDocument {
   replaces_document_id?: string | null;
   superseded_by_document_id?: string | null;
   superseded_at?: string | null;
+  extraction_source?: ExtractionSource | null;
+  layout_summary?: Record<string, unknown> | null;
   created_by: string;
   created_at: string;
 }
@@ -120,6 +122,21 @@ export interface ReportSection {
   claims: ReportClaim[];
 }
 
+export type FindingErrorCategory =
+  | "value_mismatch"
+  | "missing_field"
+  | "unit_or_format"
+  | "document_type_uncertain"
+  | "regulatory_requirement"
+  | "other";
+
+/** Error-type label from the cross-validation agent; it never changes the rule verdict. */
+export interface FindingClassification {
+  error_category: FindingErrorCategory;
+  explanation: string;
+  source: "rule" | "llm";
+}
+
 export interface ReviewFinding {
   finding_id: string;
   code: string;
@@ -130,6 +147,9 @@ export interface ReviewFinding {
   document_ids: string[];
   fact_ids: string[];
   evidence_ids: string[];
+  /** Deterministic confidence in [0, 1] that the finding reflects the documents. */
+  confidence?: number | null;
+  classification?: FindingClassification | null;
 }
 
 export interface EvidenceItem {
@@ -174,11 +194,36 @@ export interface ReextractionRecord {
   status: "completed" | "unavailable";
 }
 
+export type GraphNodeName =
+  | "extraction_agent"
+  | "cross_validation_agent"
+  | "evidence_retrieval"
+  | "expert_review_agent"
+  | "report_generation";
+
+export type GraphLoopReason = "missing_fields" | "ungrounded_fields" | "mismatch_reread" | "llm_reread_request";
+
+export interface GraphNodeRun {
+  node: GraphNodeName;
+  iteration: 1 | 2;
+  status: "completed" | "needs_review" | "skipped" | "failed";
+  summary: string;
+}
+
+/** The LangGraph node trace; the audit loop re-enters extraction at most once. */
+export interface GraphTrace {
+  framework: "langgraph";
+  iteration_count: 1 | 2;
+  loop_reason: GraphLoopReason | null;
+  node_runs: GraphNodeRun[];
+}
+
 export interface AgentWorkflow {
   status: "completed" | "partial" | "failed";
   stages: WorkflowStage[];
   reextractions: ReextractionRecord[];
   planner: PlannerTrace;
+  graph_trace?: GraphTrace | null;
 }
 
 export type PlannerActionName =
@@ -260,6 +305,8 @@ export interface DocumentAnalysis {
   facts: DocumentFact[];
   line_items: DocumentLineItem[];
   warnings: Array<{ code: string; message: string }>;
+  /** How the Backend obtained the confirmed text; absent for plain text uploads. */
+  extraction_source?: ExtractionSource | null;
 }
 
 export interface ComparisonOperand {
@@ -322,6 +369,45 @@ export interface ReviewRunSummary {
   parent_review_run_id?: string | null;
   /** The approved proposal IDs applied to produce this child run. */
   applied_correction_proposal_ids?: string[];
+  /** Agent 3.3 advisory signals; display only. */
+  review_track?: ReviewTrack | null;
+  eligibility_verdict?: EligibilityVerdictValue | null;
+  agent_engine_kind?: string | null;
+}
+
+export type ExtractionSource = "text_layer" | "vlm_ocr" | "raster_ocr";
+export type ReviewTrack = "detailed_review" | "expedited_check";
+export type EligibilityVerdictValue = "eligible" | "ineligible" | "indeterminate";
+
+export interface AgentEngine {
+  /** The actual extraction engine; "claude" only appears on results stored before 3.3. */
+  kind: "deterministic" | "anthropic" | "openai" | "claude";
+  model_id: string;
+  orchestrator?: { framework: "langgraph"; version: string } | null;
+}
+
+/** Deterministic confidence and the review track it selects. Both tracks are human-reviewed. */
+export interface ReviewConfidence {
+  overall: number;
+  threshold: number;
+  review_track: ReviewTrack;
+  method: "deterministic_signals";
+  components: { extraction: number; comparison: number; evidence: number };
+}
+
+export interface EligibilityReason {
+  code: string;
+  message: string;
+  finding_ids: string[];
+  evidence_ids: string[];
+}
+
+/** Advisory clearance verdict from the expert-review node; it never closes a Case. */
+export interface EligibilityVerdict {
+  verdict: EligibilityVerdictValue;
+  advisory: true;
+  source: "rule" | "rule+llm";
+  reasons: EligibilityReason[];
 }
 
 export interface ReviewRun {
@@ -339,9 +425,11 @@ export interface ReviewRun {
     eligible: false;
     unmet_reason_codes: string[];
   };
-  agent_schema_version: "3.2";
+  agent_schema_version: "3.3";
   agent_status: "needs_review" | "blocked";
-  agent_engine?: { kind: "deterministic" | "claude"; model_id: string } | null;
+  agent_engine?: AgentEngine | null;
+  agent_confidence?: ReviewConfidence | null;
+  agent_eligibility_verdict?: EligibilityVerdict | null;
   report: ReviewReport;
   workflow: AgentWorkflow;
   document_analyses: DocumentAnalysis[];

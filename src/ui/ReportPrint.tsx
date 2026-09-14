@@ -2,24 +2,7 @@ import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import type { CaseDetail, ReviewFinding, ReviewRun, ReviewerDecision } from "../api/v1/types";
 import { sessionDisplayName } from "./Chrome";
-import {
-  citationLabel,
-  decisionReasonLabel,
-  decisionStatusLabel,
-  display,
-  displayComparisonValue,
-  documentAnalysisLabel,
-  evidenceSourceTypeLabel,
-  findingDisplayTitle,
-  findingKindLabel,
-  formatDate,
-  formatDay,
-  groundedCitations,
-  reportSectionDescription,
-  reviewerSentence,
-  severityLabel,
-  severityWeight,
-} from "./labels";
+import { citationLabel, decisionReasonLabel, decisionStatusLabel, display, displayComparisonValue, documentAnalysisLabel, evidenceSourceTypeLabel, findingDisplayTitle, findingKindLabel, formatDate, formatDay, groundedCitations, reportSectionDescription, reviewerSentence, severityLabel, severityWeight, engineKindLabel } from "./labels";
 import { nextStepRows } from "./nextSteps";
 import { useWorkbenchState } from "./useStore";
 
@@ -258,7 +241,13 @@ export function ReportPrintView({ run, current, printedBy }: { run: ReviewRun; c
 
       <footer className="report-print__foot">
         <p>
-          {`분석 엔진 ${run.agent_engine ? `${run.agent_engine.kind} · ${run.agent_engine.model_id}` : "미기록"} · 결과 규격 V${run.agent_schema_version}`}
+          {`분석 엔진 ${
+            run.agent_engine
+              ? `${engineKindLabel(run.agent_engine.kind)} · ${run.agent_engine.model_id}${
+                  run.agent_engine.orchestrator ? ` · ${run.agent_engine.orchestrator.framework} ${run.agent_engine.orchestrator.version}` : ""
+                }`
+              : "미기록"
+          } · 결과 규격 V${run.agent_schema_version}`}
         </p>
         <p>이 문서는 AI 사전심사 결과이며 자동 승인되지 않습니다. 담당자 판단과 함께 읽어야 합니다.</p>
       </footer>

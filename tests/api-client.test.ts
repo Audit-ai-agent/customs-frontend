@@ -12,7 +12,7 @@ function reviewRunPayload() {
     review_run_id: "run-1", case_id: "case-1", org_id: "org-a", job_id: "job-1", case_revision: 1,
     review_as_of: "2026-08-05", trade_type: "import", execution_status: "succeeded", assessment: "issues_detected",
     review_disposition: "human_review_required", completion_eligibility: { eligible: false, unmet_reason_codes: ["human_review_required"] },
-    agent_schema_version: "3.2", agent_status: "needs_review", agent_engine: { kind: "deterministic", model_id: "fixture" },
+    agent_schema_version: "3.3", agent_status: "needs_review", agent_engine: { kind: "deterministic", model_id: "fixture" },
     report: {
       overall_status: "needs_review", summary: "검토 결과입니다.", disclaimer: "담당자 검토가 필요합니다.",
       sections: [
@@ -226,7 +226,7 @@ describe("Backend API client", () => {
   it("decodes the structured V3.2 human-review projection including human-provided facts", async () => {
     const api = new ApiClient(async () => json(reviewRunPayload()), async () => "local-token");
     const result = await api.getReviewRun("run-1");
-    expect(result.agent_schema_version).toBe("3.2");
+    expect(result.agent_schema_version).toBe("3.3");
     expect(result.workflow.stages).toEqual(expect.arrayContaining([expect.objectContaining({ stage: "classify_documents" })]));
     expect(result.workflow.planner).toMatchObject({ cycle_count: 2, actions: expect.arrayContaining([expect.objectContaining({ action: "apply_human_corrections" })]) });
     expect(result.report.sections).toEqual(expect.arrayContaining([expect.objectContaining({ section: "conclusion" })]));

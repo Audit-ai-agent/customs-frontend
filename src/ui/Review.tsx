@@ -11,28 +11,7 @@ import type {
   ReviewerDecision,
   SourceReference,
 } from "../api/v1/types";
-import {
-  DECISION_REASON_OPTIONS,
-  citationLabel,
-  comparisonStatusLabel,
-  decisionReasonLabel,
-  decisionStatusLabel,
-  display,
-  displayComparisonValue,
-  displayValue,
-  documentAnalysisLabel,
-  documentTypeLabel,
-  evidenceSourceTypeLabel,
-  findingDisplayTitle,
-  findingKindLabel,
-  focusDataTarget,
-  formatDate,
-  groundedCitations,
-  reportSectionDescription,
-  reviewerSentence,
-  ruleTitle,
-  severityWeight,
-} from "./labels";
+import { DECISION_REASON_OPTIONS, citationLabel, comparisonStatusLabel, decisionReasonLabel, decisionStatusLabel, display, displayComparisonValue, displayValue, documentAnalysisLabel, documentTypeLabel, evidenceSourceTypeLabel, findingDisplayTitle, findingKindLabel, focusDataTarget, formatDate, groundedCitations, reportSectionDescription, reviewerSentence, ruleTitle, severityWeight, errorCategoryLabel, percentLabel, reviewTrackLabel, verdictLabel } from "./labels";
 import {
   CollapsibleSection,
   EmptyCopy,
@@ -78,6 +57,8 @@ export function ReviewStage() {
           </div>
         </div>
       </header>
+
+      <AdvisoryPanel run={run} />
 
       <section className="surface">
         <SectionHeading
@@ -221,6 +202,50 @@ function VerdictStamp({ run, openCount }: { run: ReviewRun; openCount: number })
   );
 }
 
+/**
+ * The Agent's advisory signals: the deterministic confidence with its review
+ * track, and the expert-review verdict. Neither closes a Case; the copy says so.
+ */
+function AdvisoryPanel({ run }: { run: ReviewRun }) {
+  const confidence = run.agent_confidence ?? null;
+  const verdict = run.agent_eligibility_verdict ?? null;
+  if (!confidence && !verdict) return null;
+  return (
+    <section className="surface advisory-panel" data-advisory-panel>
+      <SectionHeading
+        title="AI 권고 · 담당자 판단 보조"
+        description="신뢰도와 권고 판정은 참고 정보입니다. 어느 값도 Case를 자동으로 종료하거나 승인하지 않습니다."
+      />
+      <div className="advisory-panel__grid">
+        {confidence ? (
+          <div className="advisory-card" data-review-track={confidence.review_track}>
+            <span className={`review-track review-track--${confidence.review_track}`}>{reviewTrackLabel(confidence.review_track)}</span>
+            <strong>{`신뢰도 ${percentLabel(confidence.overall)}`}</strong>
+            <small>{`임계값 ${percentLabel(confidence.threshold)} · 추출 ${percentLabel(confidence.components.extraction)} · 비교 ${percentLabel(confidence.components.comparison)} · 근거 ${percentLabel(confidence.components.evidence)}`}</small>
+          </div>
+        ) : null}
+        {verdict ? (
+          <div className="advisory-card" data-eligibility-verdict={verdict.verdict}>
+            <span className={`verdict-chip verdict-chip--${verdict.verdict}`}>{verdictLabel(verdict.verdict)}</span>
+            <strong>{verdict.source === "rule+llm" ? "규칙 + 전문심사 에이전트 의견" : "규칙 기반 권고"}</strong>
+            {verdict.reasons.length ? (
+              <ul className="advisory-reasons">
+                {verdict.reasons.map((reason, index) => (
+                  <li key={`${reason.code}-${index}`}>
+                    <span>{reviewerSentence(reason.message)}</span>
+                    {reason.finding_ids.length ? <small>{` · 확인 사항 ${reason.finding_ids.length}건`}</small> : null}
+                    {reason.evidence_ids.length ? <small>{` · 법령 근거 ${reason.evidence_ids.length}건`}</small> : null}
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+          </div>
+        ) : null}
+      </div>
+    </section>
+  );
+}
+
 /* ── findings ────────────────────────────────────────────────── */
 
 /** Findings grouped by their display title, in first-appearance order. */
@@ -335,6 +360,12 @@ function FindingCard({
           <strong>{title}</strong>
           <span className="finding-kind">{findingKindLabel(finding)}</span>
           <p>{message}</p>
+          {finding.classification || typeof finding.confidence === "number" ? (
+            <p className="finding-signal" data-finding-signal>
+              {finding.classification ? `${errorCategoryLabel(finding.classification.error_category)} · ${reviewerSentence(finding.classification.explanation)}` : null}
+              {typeof finding.confidence === "number" ? <small>{` 신뢰도 ${percentLabel(finding.confidence)}`}</small> : null}
+            </p>
+          ) : null}
           {comparison || decision ? (
             <Collapsible open={!expanded}>
               {comparison ? (

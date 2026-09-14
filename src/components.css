@@ -909,6 +909,29 @@ textarea { min-height: 7rem; resize: vertical; line-height: 1.6; }
 .planner-action { display: grid; grid-template-columns: auto minmax(8rem, auto) 1fr; gap: .25rem .5rem; align-items: start; font-size: .82rem; line-height: 1.55; }
 .planner-action > span:first-child { padding: .1rem .45rem; color: var(--krds-primary-strong); background: var(--krds-primary-bg); border-radius: 999px; font-size: .71rem; font-weight: 700; }
 .planner-action small { grid-column: 2 / -1; color: var(--krds-muted); }
+.workflow-graph {
+  display: grid; gap: .55rem; padding: .85rem .95rem; color: var(--krds-text);
+  background: var(--krds-surface-2); border: 1px solid var(--krds-line); border-radius: .625rem;
+}
+.graph-node-list { display: grid; gap: .4rem; padding: 0; margin: 0; list-style: none; }
+.graph-node { display: grid; grid-template-columns: auto minmax(8rem, auto) 1fr; gap: .25rem .5rem; align-items: start; font-size: .82rem; line-height: 1.55; }
+.graph-node > span:first-child { padding: .1rem .45rem; color: var(--krds-primary-strong); background: var(--krds-primary-bg); border-radius: 999px; font-size: .71rem; font-weight: 700; }
+.graph-node--needs_review > strong { color: var(--krds-warning-strong); }
+.graph-node--failed > strong { color: var(--krds-danger); }
+.graph-node--skipped { color: var(--krds-muted); }
+.advisory-panel__grid { display: grid; gap: .75rem; grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr)); }
+.advisory-card {
+  display: grid; gap: .35rem; padding: .85rem .95rem; background: var(--krds-surface-2);
+  border: 1px solid var(--krds-line); border-radius: .625rem; font-size: .86rem; line-height: 1.55;
+}
+.advisory-card small { color: var(--krds-muted); }
+.review-track, .verdict-chip { justify-self: start; padding: .15rem .6rem; border-radius: 999px; font-size: .74rem; font-weight: 700; }
+.review-track--expedited_check, .verdict-chip--eligible { color: var(--krds-success); background: var(--krds-success-bg, #e8f5ec); }
+.review-track--detailed_review, .verdict-chip--indeterminate { color: var(--krds-warning-strong); background: var(--krds-warning-bg); }
+.verdict-chip--ineligible { color: var(--krds-danger); background: var(--krds-danger-bg, #fdecec); }
+.advisory-reasons { display: grid; gap: .3rem; padding: 0 0 0 1rem; margin: 0; }
+.advisory-reasons small { color: var(--krds-muted); }
+.finding-signal { margin: .15rem 0 0; color: var(--krds-muted); font-size: .8rem; line-height: 1.5; }
 .role-boundary-note {
   margin: .7rem 0 0; padding: .7rem .8rem; color: var(--krds-text); background: var(--krds-surface-2);
   border: 1px solid var(--krds-line); border-radius: .5rem; font-size: .83rem; line-height: 1.6;

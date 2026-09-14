@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import type { ReviewRun } from "../api/v1/types";
-import { display, documentTypeLabel, plannerActionLabel, workflowLabel } from "./labels";
+import { display, documentTypeLabel, plannerActionLabel, workflowLabel, graphNodeLabel, loopReasonLabel } from "./labels";
 import { EmptyCopy, RoleBoundaryNote, TraceCount } from "./primitives";
 import { useStore, useWorkbenchState } from "./useStore";
 
@@ -217,6 +217,22 @@ function Workflow({ run }: { run: ReviewRun }) {
           ))}
         </ol>
       </li>
+      {run.workflow.graph_trace ? (
+        <li className="workflow-graph" data-graph-trace="true">
+          <strong>
+            {`에이전트 그래프 · ${run.workflow.graph_trace.iteration_count}회 반복 · ${loopReasonLabel(run.workflow.graph_trace.loop_reason)}`}
+          </strong>
+          <ol className="graph-node-list">
+            {run.workflow.graph_trace.node_runs.map((node, index) => (
+              <li key={`${node.node}-${node.iteration}-${index}`} className={`graph-node graph-node--${node.status}`}>
+                <span>{node.iteration}차</span>
+                <strong>{graphNodeLabel(node.node)}</strong>
+                <span>{node.summary}</span>
+              </li>
+            ))}
+          </ol>
+        </li>
+      ) : null}
       {run.workflow.reextractions.length ? (
         <li className="workflow-retry">
           <strong>제한 재추출</strong>

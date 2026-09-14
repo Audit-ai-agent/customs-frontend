@@ -65,7 +65,7 @@ function reviewRun() {
     review_as_of: "2026-08-05", trade_type: "import" as const, execution_status: "succeeded" as const,
     assessment: "issues_detected" as const, review_disposition: "human_review_required" as const,
     completion_eligibility: { eligible: false as const, unmet_reason_codes: ["human_review_required"] },
-    agent_schema_version: "3.2" as const, agent_status: "needs_review" as const, agent_engine: { kind: "deterministic" as const, model_id: "fixture" },
+    agent_schema_version: "3.3" as const, agent_status: "needs_review" as const, agent_engine: { kind: "deterministic" as const, model_id: "fixture" },
     report: {
       overall_status: "needs_review" as const,
       summary: "수량을 확인해야 합니다.",

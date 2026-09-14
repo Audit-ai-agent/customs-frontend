@@ -77,7 +77,7 @@ function reviewRun() {
     review_as_of: "2026-08-05", trade_type: "import" as const, execution_status: "succeeded" as const,
     assessment: "issues_detected" as const, review_disposition: "human_review_required" as const,
     completion_eligibility: { eligible: false as const, unmet_reason_codes: ["human_review_required"] },
-    agent_schema_version: "3.2" as const, agent_status: "needs_review" as const, agent_engine: { kind: "deterministic" as const, model_id: "fixture" },
+    agent_schema_version: "3.3" as const, agent_status: "needs_review" as const, agent_engine: { kind: "deterministic" as const, model_id: "fixture" },
     report: {
       overall_status: "needs_review" as const, summary: "확인이 필요합니다.", disclaimer: "담당자 검토가 필요합니다.",
       sections: sections.map((section, index) => ({
@@ -90,6 +90,21 @@ function reviewRun() {
       stages: [{ stage: "classify_documents" as const, status: "completed" as const, attempt_count: 1, summary: "문서를 판별했습니다." }],
       reextractions: [],
       planner: { cycle_count: 1 as const, actions: [{ cycle: 1 as const, action: "analyze_documents" as const, status: "completed" as const, summary: "문서를 분석했습니다.", correction_proposal_ids: [] }] },
+      graph_trace: {
+        framework: "langgraph" as const, iteration_count: 1 as const, loop_reason: null,
+        node_runs: [
+          { node: "extraction_agent" as const, iteration: 1 as const, status: "completed" as const, summary: "문서 1건을 분류·추출했습니다." },
+          { node: "cross_validation_agent" as const, iteration: 1 as const, status: "needs_review" as const, summary: "코드 규칙 비교 3건: 불일치 2건." },
+        ],
+      },
+    },
+    agent_confidence: {
+      overall: 0.62, threshold: 0.8, review_track: "detailed_review" as const, method: "deterministic_signals" as const,
+      components: { extraction: 1, comparison: 0.5, evidence: 0.7 },
+    },
+    agent_eligibility_verdict: {
+      verdict: "ineligible" as const, advisory: true as const, source: "rule" as const,
+      reasons: [{ code: "document_mismatch", message: "상업송장과 포장명세서의 수량이 일치하지 않습니다.", finding_ids: ["finding-1"], evidence_ids: [] }],
     },
     document_analyses: [{
       document_id: "document-1", filename: "invoice.txt", declared_type: "invoice", document_type: "invoice" as const,
@@ -104,7 +119,7 @@ function reviewRun() {
     ],
     evidence: [],
     findings: [
-      { finding_id: "finding-1", code: "document_consistency", message: "상업송장과 포장명세서의 수량이 일치하지 않습니다.", kind: "validation_issue" as const, severity: "high" as const, comparison_id: "comparison-1", document_ids: ["document-1"], fact_ids: ["fact-1"], evidence_ids: [] },
+      { finding_id: "finding-1", code: "document_consistency", message: "상업송장과 포장명세서의 수량이 일치하지 않습니다.", kind: "validation_issue" as const, severity: "high" as const, comparison_id: "comparison-1", document_ids: ["document-1"], fact_ids: ["fact-1"], evidence_ids: [], confidence: 0.9, classification: { error_category: "value_mismatch" as const, explanation: "정규화한 두 값이 서로 다릅니다.", source: "rule" as const } },
       { finding_id: "finding-2", code: "document_consistency", message: "상업송장과 포장명세서의 단위가 일치하지 않습니다.", kind: "validation_issue" as const, severity: "high" as const, comparison_id: "comparison-2", document_ids: ["document-1"], fact_ids: ["fact-1"], evidence_ids: [] },
       { finding_id: "finding-3", code: "document_consistency", message: "포장명세서에서 필수 포장명세서 번호을 확인할 수 없습니다.", kind: "validation_issue" as const, severity: "medium" as const, comparison_id: "comparison-3", document_ids: ["document-1"], fact_ids: [], evidence_ids: [] },
     ],
@@ -170,6 +185,25 @@ describe("labels · reviewer sentences", () => {
     expect(findingDisplayTitle({ code: "invoice_total_amount", kind: "validation_issue", message: "x." })).toBe("Invoice 합계 금액 확인");
     expect(findingDisplayTitle({ code: "document_consistency", kind: "validation_issue", message: "x." }, { rule_code: "bill_packing_container" })).toBe("B/L·포장명세서 컨테이너 번호 비교");
     expect(findingDisplayTitle({ code: "document_consistency", kind: "validation_issue", message: "컨테이너 번호을 두 문서에서 모두 확인할 수 없습니다. 추가 설명." }, null)).toBe("컨테이너 번호를 두 문서에서 모두 확인할 수 없습니다");
+  });
+});
+
+describe("통관 심사 · AI 권고 패널", () => {
+  it("shows the review track, confidence, advisory verdict, and per-finding signals without closing anything", async () => {
+    window.location.hash = "#/cases/case-1/review";
+    const { root, dispose } = await mount(api(reviewRun()));
+    const panel = root.querySelector("[data-advisory-panel]");
+    expect(panel?.textContent).toContain("정밀 검토");
+    expect(panel?.textContent).toContain("신뢰도 62%");
+    expect(panel?.textContent).toContain("부적격 권고");
+    expect(panel?.textContent).toContain("자동으로 종료하거나 승인하지 않습니다");
+    expect(root.querySelector("[data-eligibility-verdict]")?.getAttribute("data-eligibility-verdict")).toBe("ineligible");
+    const signal = root.querySelector('[data-finding-id="finding-1"] [data-finding-signal]');
+    expect(signal?.textContent).toContain("값 불일치");
+    expect(signal?.textContent).toContain("신뢰도 90%");
+    expect(root.querySelector("[data-graph-trace]")?.textContent).toContain("교차검증 에이전트");
+    expect(root.querySelector("[data-case-closure] .decision-form")).toBeNull();
+    dispose();
   });
 });
 

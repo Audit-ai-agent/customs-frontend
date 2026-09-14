@@ -1,16 +1,15 @@
 import type {
   AgentWorkflow,
+  Assessment,
   AssistantAnswerScope,
   AssistantCitation,
   AssistantConversation,
   AssistantCorrectionDraft,
   AssistantMessage,
   AssistantMessageExchange,
-  Assessment,
   AuthConfig,
   CaseClosure,
   CaseDocument,
-  ReviewProgress,
   CaseSummary,
   ComparisonOperand,
   CorrectionDecision,
@@ -21,47 +20,55 @@ import type {
   DocumentFact,
   DocumentLineItem,
   DocumentView,
+  DutyAssessment,
+  DutyEstimate,
+  DutyRate,
+  EligibilityVerdict,
+  EligibilityVerdictValue,
+  EvidenceItem,
   ExtractionJob,
   ExtractionJobEnvelope,
   ExtractionPage,
   ExtractionPreview,
+  ExtractionSource,
   ExtractionSpan,
-  RasterTextExtractionEnvelope,
-  RasterTextExtractionJob,
-  RasterTextExtractionPage,
-  RasterTextExtractionPreview,
-  EvidenceItem,
   FactSourceReference,
-  HumanProvidedSourceReference,
-  DutyAssessment,
-  DutyEstimate,
-  DutyRate,
+  FindingClassification,
+  GraphTrace,
   HsAncestor,
   HsCandidate,
   HsClassification,
   HsReferenceEntry,
   HsReferenceSearch,
   HsSelection,
+  HumanProvidedSourceReference,
   JobRecord,
   LawCatalog,
+  LawSearch,
   LlmConnectionTest,
   LlmSettingsView,
-  LawSearch,
   OperationsMetrics,
   OriginCheck,
   OriginVerification,
   PlannerAction,
   PlannerTrace,
+  RasterTextExtractionEnvelope,
+  RasterTextExtractionJob,
+  RasterTextExtractionPage,
+  RasterTextExtractionPreview,
   ReportClaim,
   ReportSection,
   RequiredAction,
-  ReviewerDecision,
-  ReviewerDecisionHistoryItem,
   ReviewComparison,
+  ReviewConfidence,
   ReviewFinding,
+  ReviewProgress,
   ReviewReport,
   ReviewRun,
   ReviewRunSummary,
+  ReviewTrack,
+  ReviewerDecision,
+  ReviewerDecisionHistoryItem,
   Session,
   SourceReference,
   WorkflowStage,
@@ -196,6 +203,12 @@ export function decodeDocument(value: unknown): CaseDocument {
     ...(raw.superseded_at === undefined || raw.superseded_at === null
       ? {}
       : { superseded_at: requiredString(raw.superseded_at, "document.superseded_at") }),
+    ...(raw.extraction_source === undefined || raw.extraction_source === null
+      ? {}
+      : { extraction_source: oneOf(raw.extraction_source, ["text_layer", "vlm_ocr", "raster_ocr"], "document.extraction_source") as ExtractionSource }),
+    ...(raw.layout_summary === undefined || raw.layout_summary === null
+      ? {}
+      : { layout_summary: record(raw.layout_summary, "document.layout_summary") }),
     created_by: requiredString(raw.created_by, "document.created_by"),
     created_at: requiredString(raw.created_at, "document.created_at"),
   };
@@ -228,6 +241,15 @@ export function decodeReviewRunSummary(value: unknown): ReviewRunSummary {
     finding_count: nonNegativeInteger(raw.finding_count, "run.finding_count"),
     reviewer_decision_count: nonNegativeInteger(raw.reviewer_decision_count, "run.reviewer_decision_count"),
     created_at: requiredString(raw.created_at, "run.created_at"),
+    ...(raw.review_track === undefined || raw.review_track === null
+      ? {}
+      : { review_track: oneOf(raw.review_track, ["detailed_review", "expedited_check"], "run.review_track") as ReviewTrack }),
+    ...(raw.eligibility_verdict === undefined || raw.eligibility_verdict === null
+      ? {}
+      : { eligibility_verdict: oneOf(raw.eligibility_verdict, ["eligible", "ineligible", "indeterminate"], "run.eligibility_verdict") as EligibilityVerdictValue }),
+    ...(raw.agent_engine_kind === undefined || raw.agent_engine_kind === null
+      ? {}
+      : { agent_engine_kind: requiredString(raw.agent_engine_kind, "run.agent_engine_kind") }),
     ...(raw.parent_review_run_id === undefined || raw.parent_review_run_id === null
       ? {}
       : { parent_review_run_id: requiredString(raw.parent_review_run_id, "run.parent_review_run_id") }),
@@ -251,11 +273,17 @@ export function decodeReviewRun(value: unknown): ReviewRun {
     assessment: oneOf(raw.assessment, ["no_issue_detected", "issues_detected", "indeterminate"], "run.assessment") as Assessment,
     review_disposition: oneOf(raw.review_disposition, ["human_review_required", "blocked"], "run.review_disposition"),
     completion_eligibility: decodeCompletionEligibility(raw.completion_eligibility),
-    agent_schema_version: literal(raw.agent_schema_version, "3.2", "run.agent_schema_version"),
+    agent_schema_version: literal(raw.agent_schema_version, "3.3", "run.agent_schema_version"),
     agent_status: oneOf(raw.agent_status, ["needs_review", "blocked"], "run.agent_status"),
     ...(raw.agent_engine === undefined || raw.agent_engine === null
       ? { agent_engine: null }
       : { agent_engine: decodeEngine(raw.agent_engine) }),
+    ...(raw.agent_confidence === undefined || raw.agent_confidence === null
+      ? { agent_confidence: null }
+      : { agent_confidence: decodeConfidence(raw.agent_confidence) }),
+    ...(raw.agent_eligibility_verdict === undefined || raw.agent_eligibility_verdict === null
+      ? { agent_eligibility_verdict: null }
+      : { agent_eligibility_verdict: decodeEligibilityVerdict(raw.agent_eligibility_verdict) }),
     report: decodeReport(raw.report),
     workflow: decodeWorkflow(raw.workflow),
     document_analyses: array(raw.document_analyses, "run.document_analyses").map(decodeDocumentAnalysis),
@@ -446,9 +474,95 @@ function decodeCompletionEligibility(value: unknown): ReviewRun["completion_elig
 
 function decodeEngine(value: unknown): NonNullable<ReviewRun["agent_engine"]> {
   const raw = record(value, "run.agent_engine");
+  const orchestrator = raw.orchestrator === undefined || raw.orchestrator === null ? null : record(raw.orchestrator, "run.agent_engine.orchestrator");
   return {
-    kind: oneOf(raw.kind, ["deterministic", "claude"], "run.agent_engine.kind"),
+    kind: oneOf(raw.kind, ["deterministic", "anthropic", "openai", "claude"], "run.agent_engine.kind"),
     model_id: requiredString(raw.model_id, "run.agent_engine.model_id"),
+    ...(orchestrator === null
+      ? {}
+      : {
+          orchestrator: {
+            framework: literal(orchestrator.framework, "langgraph", "run.agent_engine.orchestrator.framework"),
+            version: requiredString(orchestrator.version, "run.agent_engine.orchestrator.version"),
+          },
+        }),
+  };
+}
+
+function unitInterval(value: unknown, context: string): number {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0 || value > 1) {
+    throw new ContractError(`${context} must be a number between 0 and 1`);
+  }
+  return value;
+}
+
+function decodeConfidence(value: unknown): ReviewConfidence {
+  const raw = record(value, "run.agent_confidence");
+  const components = record(raw.components, "run.agent_confidence.components");
+  const overall = unitInterval(raw.overall, "run.agent_confidence.overall");
+  const threshold = unitInterval(raw.threshold, "run.agent_confidence.threshold");
+  const track = oneOf(raw.review_track, ["detailed_review", "expedited_check"], "run.agent_confidence.review_track");
+  if ((overall >= threshold) !== (track === "expedited_check")) {
+    throw new ContractError("run.agent_confidence.review_track does not follow the threshold");
+  }
+  return {
+    overall,
+    threshold,
+    review_track: track,
+    method: literal(raw.method, "deterministic_signals", "run.agent_confidence.method"),
+    components: {
+      extraction: unitInterval(components.extraction, "run.agent_confidence.components.extraction"),
+      comparison: unitInterval(components.comparison, "run.agent_confidence.components.comparison"),
+      evidence: unitInterval(components.evidence, "run.agent_confidence.components.evidence"),
+    },
+  };
+}
+
+function decodeEligibilityVerdict(value: unknown): EligibilityVerdict {
+  const raw = record(value, "run.agent_eligibility_verdict");
+  if (raw.advisory !== true) throw new ContractError("run.agent_eligibility_verdict must be advisory");
+  return {
+    verdict: oneOf(raw.verdict, ["eligible", "ineligible", "indeterminate"], "run.agent_eligibility_verdict.verdict"),
+    advisory: true,
+    source: oneOf(raw.source, ["rule", "rule+llm"], "run.agent_eligibility_verdict.source"),
+    reasons: array(raw.reasons, "run.agent_eligibility_verdict.reasons").map((item, index) => {
+      const reason = record(item, `run.agent_eligibility_verdict.reasons[${index}]`);
+      return {
+        code: requiredString(reason.code, "eligibility reason.code"),
+        message: displayText(reason.message, "eligibility reason.message"),
+        finding_ids: reason.finding_ids === undefined ? [] : decodeIdentifierList(reason.finding_ids, "eligibility reason.finding_ids"),
+        evidence_ids: reason.evidence_ids === undefined ? [] : decodeIdentifierList(reason.evidence_ids, "eligibility reason.evidence_ids"),
+      };
+    }),
+  };
+}
+
+function decodeGraphTrace(value: unknown): GraphTrace {
+  const raw = record(value, "run.workflow.graph_trace");
+  const iterationCount = plannerCycle(raw.iteration_count, "run.workflow.graph_trace.iteration_count");
+  const nodeRuns = array(raw.node_runs, "run.workflow.graph_trace.node_runs").map((item, index) => {
+    const run = record(item, `run.workflow.graph_trace.node_runs[${index}]`);
+    return {
+      node: oneOf(run.node, [
+        "extraction_agent", "cross_validation_agent", "evidence_retrieval", "expert_review_agent", "report_generation",
+      ], "graph node.node"),
+      iteration: plannerCycle(run.iteration, "graph node.iteration"),
+      status: oneOf(run.status, ["completed", "needs_review", "skipped", "failed"], "graph node.status"),
+      summary: displayText(run.summary, "graph node.summary"),
+    };
+  });
+  if (!nodeRuns.length || nodeRuns.length > 8 || nodeRuns.some((run) => run.iteration > iterationCount)) {
+    throw new ContractError("run.workflow.graph_trace exceeds the bounded graph limit");
+  }
+  const loopReason = raw.loop_reason === undefined || raw.loop_reason === null
+    ? null
+    : oneOf(raw.loop_reason, ["missing_fields", "ungrounded_fields", "mismatch_reread", "llm_reread_request"], "run.workflow.graph_trace.loop_reason");
+  if (iterationCount === 2 && loopReason === null) throw new ContractError("a second graph iteration must record its loop reason");
+  return {
+    framework: literal(raw.framework, "langgraph", "run.workflow.graph_trace.framework"),
+    iteration_count: iterationCount,
+    loop_reason: loopReason,
+    node_runs: nodeRuns,
   };
 }
 
@@ -538,6 +652,7 @@ function decodeWorkflow(value: unknown): AgentWorkflow {
       };
     }),
     planner,
+    ...(raw.graph_trace === undefined || raw.graph_trace === null ? {} : { graph_trace: decodeGraphTrace(raw.graph_trace) }),
   };
 }
 
@@ -608,6 +723,9 @@ function decodeDocumentAnalysis(value: unknown): DocumentAnalysis {
       const warning = record(item, `document analysis.warnings[${index}]`);
       return { code: requiredString(warning.code, "warning.code"), message: displayText(warning.message, "warning.message") };
     }),
+    ...(raw.extraction_source === undefined || raw.extraction_source === null
+      ? {}
+      : { extraction_source: oneOf(raw.extraction_source, ["text_layer", "vlm_ocr", "raster_ocr"], "document analysis.extraction_source") as ExtractionSource }),
   };
 }
 
@@ -719,6 +837,23 @@ function decodeFinding(value: unknown): ReviewFinding {
     document_ids: array(raw.document_ids, "run.finding.document_ids").map((item, index) => requiredString(item, `run.finding.document_ids[${index}]`)),
     fact_ids: array(raw.fact_ids, "run.finding.fact_ids").map((item, index) => requiredString(item, `run.finding.fact_ids[${index}]`)),
     evidence_ids: array(raw.evidence_ids, "run.finding.evidence_ids").map((item, index) => requiredString(item, `run.finding.evidence_ids[${index}]`)),
+    ...(raw.confidence === undefined || raw.confidence === null
+      ? {}
+      : { confidence: unitInterval(raw.confidence, "run.finding.confidence") }),
+    ...(raw.classification === undefined || raw.classification === null
+      ? {}
+      : { classification: decodeFindingClassification(raw.classification) }),
+  };
+}
+
+function decodeFindingClassification(value: unknown): FindingClassification {
+  const raw = record(value, "run.finding.classification");
+  return {
+    error_category: oneOf(raw.error_category, [
+      "value_mismatch", "missing_field", "unit_or_format", "document_type_uncertain", "regulatory_requirement", "other",
+    ], "run.finding.classification.error_category"),
+    explanation: displayText(raw.explanation, "run.finding.classification.explanation"),
+    source: oneOf(raw.source, ["rule", "llm"], "run.finding.classification.source"),
   };
 }
 

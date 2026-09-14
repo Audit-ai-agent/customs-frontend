@@ -555,3 +555,67 @@ export function safeExternalHref(value: string): string | null {
     return null;
   }
 }
+
+/* ── Agent 3.3 · 그래프 트레이스 · 신뢰도 · 권고 판정 ───────────── */
+
+export function graphNodeLabel(value: string): string {
+  const labels: Record<string, string> = {
+    extraction_agent: "추출 에이전트",
+    cross_validation_agent: "교차검증 에이전트",
+    evidence_retrieval: "법령 근거 조회",
+    expert_review_agent: "전문심사 에이전트",
+    report_generation: "보고서 생성",
+  };
+  return labels[value] ?? value;
+}
+
+export function loopReasonLabel(value: string | null | undefined): string {
+  const labels: Record<string, string> = {
+    missing_fields: "필수 필드 누락으로 재판독",
+    ungrounded_fields: "원문 인용 미확인 필드 재판독",
+    mismatch_reread: "불일치 감지로 재판독",
+    llm_reread_request: "교차검증 에이전트의 재판독 요청",
+  };
+  if (!value) return "재판독 없음";
+  return labels[value] ?? value;
+}
+
+export function reviewTrackLabel(value: string | null | undefined): string {
+  const labels: Record<string, string> = { detailed_review: "정밀 검토", expedited_check: "빠른 확인" };
+  if (!value) return "검토 트랙 미기록";
+  return labels[value] ?? value;
+}
+
+export function verdictLabel(value: string | null | undefined): string {
+  const labels: Record<string, string> = { eligible: "적격 권고", ineligible: "부적격 권고", indeterminate: "판단 보류 권고" };
+  if (!value) return "권고 없음";
+  return labels[value] ?? value;
+}
+
+export function errorCategoryLabel(value: string): string {
+  const labels: Record<string, string> = {
+    value_mismatch: "값 불일치",
+    missing_field: "필드 누락",
+    unit_or_format: "단위·표기 차이",
+    document_type_uncertain: "문서 유형 미확정",
+    regulatory_requirement: "법령 요건",
+    other: "기타",
+  };
+  return labels[value] ?? value;
+}
+
+export function engineKindLabel(value: string): string {
+  const labels: Record<string, string> = {
+    deterministic: "결정론 엔진",
+    anthropic: "Anthropic",
+    openai: "OpenAI",
+    claude: "Anthropic(구 표기)",
+  };
+  return labels[value] ?? value;
+}
+
+/** 0.9 → "90%"; keeps one decimal only when it changes the reading. */
+export function percentLabel(value: number): string {
+  const rounded = Math.round(value * 1000) / 10;
+  return `${Number.isInteger(rounded) ? rounded.toFixed(0) : rounded.toFixed(1)}%`;
+}
