@@ -830,7 +830,7 @@ export interface HsCandidateBasis {
   raw_value: string;
 }
 
-export type HsCandidateOrigin = "document_code" | "description_match";
+export type HsCandidateOrigin = "document_code" | "description_match" | "llm_match";
 
 export interface HsCandidate {
   code: string;
@@ -841,6 +841,8 @@ export interface HsCandidate {
   in_reference: boolean;
   recommended: boolean;
   origin: HsCandidateOrigin;
+  /** llm_match only: the Agent's one-sentence reason for ranking this code. */
+  explanation?: string | null;
   basis: HsCandidateBasis[];
 }
 
@@ -897,7 +899,7 @@ export interface HsClassification {
 
 export interface CaseHsClassification {
   case_id: string;
-  basis_kind: "document_text";
+  basis_kind: "document_text" | "agent_ranked";
   reference: { as_of: string; source: string };
   candidates: HsCandidate[];
   selection?: HsSelection | null;

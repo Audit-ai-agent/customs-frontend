@@ -326,6 +326,7 @@ a{color:inherit}
 .cand.pick .code{color:var(--krds-success-strong)}
 .cand .desc{flex:1;font-size:13px;color:var(--krds-text);min-width:0}
 .cand .desc .cand-name{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.cand .desc .cand-reason{display:block;margin-top:3px;font-size:12px;color:var(--krds-primary-strong)}
 .cand .desc small{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;color:var(--krds-muted);font-size:11.5px;margin-top:1px}
 .conf-bar{width:120px;flex:none}
 .conf-bar .track{height:6px;border-radius:999px;background:var(--krds-line);overflow:hidden}
@@ -339,19 +340,22 @@ a{color:inherit}
 .hsk-note{margin-top:10px;background:var(--krds-warning-bg);border:0;border-left:4px solid var(--krds-warning);
   border-radius:var(--r-sm);padding:11px 14px;font-size:12.5px;color:var(--krds-warning-strong);display:none;line-height:1.6}
 .hsk-note.on{display:block}
+.hsk-note--info{background:var(--krds-primary-bg-soft);border-left-color:var(--krds-primary)}
 .hsk-actions{margin:8px 0 12px;display:flex;gap:8px;flex-wrap:wrap}
 
 /* HSK reference typeahead (code prefix + item-name reverse search) */
 .hsk-search{position:relative;margin-top:14px}
-.hsk-search-list{position:absolute;z-index:40;left:0;right:0;top:100%;margin:4px 0 0;padding:4px;list-style:none;
+/* In normal flow (not absolute): the list used to hang below the fold inside an overflow-hidden
+   workspace, so results past the first few could never be reached. */
+.hsk-search-list{position:relative;z-index:1;margin:4px 0 0;padding:4px;list-style:none;
   background:var(--krds-surface);border:1px solid var(--krds-line-2);border-radius:var(--r);
   box-shadow:var(--shadow-lg,0 8px 24px rgba(0,0,0,.14));max-height:320px;overflow-y:auto}
 .hsk-search-option{display:flex;align-items:baseline;gap:12px;padding:9px 10px;border-radius:var(--r-sm);cursor:pointer}
 .hsk-search-option.active{background:var(--krds-primary-bg-soft)}
 .hsk-search-option .code{font-family:var(--num);font-variant-numeric:tabular-nums;font-size:13.5px;font-weight:800;
   flex:none;padding:0;background:none;color:var(--krds-ink);overflow:visible;line-height:1.4}
-.hsk-search-option .nm{font-size:13px;color:var(--krds-text);min-width:0}
-.hsk-search-option .nm small{display:block;color:var(--krds-muted);font-size:11.5px;margin-top:1px}
+.hsk-search-option .nm{font-size:13px;color:var(--krds-text);min-width:0;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.hsk-search-option .nm small{display:block;color:var(--krds-muted);font-size:11.5px;margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .hsk-search-cap{padding:6px 10px;font-size:11.5px;color:var(--krds-muted)}
 .hsk-search-empty{padding:10px;font-size:12.5px;color:var(--krds-muted)}
 

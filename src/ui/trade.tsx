@@ -46,7 +46,11 @@ export function HsClassificationCard() {
         loading={state.caseHsLoading}
         error={state.caseHsError}
         resetKey={state.caseHsLoadedKey}
-        basisCopy="확정된 서류 텍스트에서 세번(HS) 표기 줄의 코드를 읽어 후보를 제시합니다. AI 심사 전에 확정하면 첫 심사부터 법령 근거를 조회합니다."
+        basisCopy={
+          state.caseHsClassification?.basis_kind === "agent_ranked"
+            ? "AI가 확정된 서류 텍스트에서 품목을 읽고 관세청 참조표 후보 중에서 순위를 매겼습니다. 코드는 참조표에 있는 것만 제시되며, 확정은 담당자가 합니다."
+            : "확정된 서류 텍스트에서 세번(HS) 표기 줄의 코드를 읽어 후보를 제시합니다. AI 심사 전에 확정하면 첫 심사부터 법령 근거를 조회합니다."
+        }
         emptyCopy="서류 텍스트에서 HS 코드와 품명을 찾지 못했습니다. 서류를 등록·확정한 뒤 '서류에서 HSK 후보 추출'을 누르거나, 아래 검색창에서 코드나 품명으로 찾아 확정할 수 있습니다."
         onRefresh={() => void store.refreshCaseHsClassification()}
         onConfirm={(code, reason) => store.recordCaseHsSelection(code, reason)}
@@ -140,6 +144,7 @@ function HsPickerCard({
   const descriptionOnly =
     view.candidates.length > 0 &&
     view.candidates.every((item) => item.origin === "description_match");
+  const agentRanked = view.candidates.some((item) => item.origin === "llm_match");
 
   return (
     <section className="surface" data-hsk-card>
@@ -148,6 +153,12 @@ function HsPickerCard({
         description={`${basisCopy} 품목명 출처: ${view.reference.source} (${view.reference.as_of} 기준)`}
       />
       {refreshButton}
+      {agentRanked ? (
+        <div className="hsk-note on hsk-note--info" data-hsk-agent-note>
+          <b>AI 추천</b> 표시가 있는 후보는 AI가 서류 품목과 참조표 품목명을 대조해 고른 순서입니다. 사유를 확인하고 담당자가
+          확정하십시오.
+        </div>
+      ) : null}
       {descriptionOnly ? (
         <div className="hsk-note on" data-hsk-description-note>
           문서에서 HS 코드를 찾지 못해 <b>품명 매칭 후보</b>를 제시합니다. 참조표의 품목명과 품명 텍스트를
@@ -419,6 +430,11 @@ function HsCandidateRow({
         <span className="cand-name" title={candidate.name_ko ?? undefined}>
           {candidate.name_ko ?? "품목명 정보 없음 (참조표 밖의 코드)"}
         </span>
+        {candidate.explanation ? (
+          <span className="cand-reason" data-hsk-explanation>
+            {candidate.explanation}
+          </span>
+        ) : null}
         <small title={breadcrumbs || undefined}>
           {breadcrumbs || "분류 경로 없음"}
           {manual
@@ -439,11 +455,15 @@ function HsCandidateRow({
           ? "확정"
           : manual
             ? "직접 선택"
-            : candidate.recommended
-              ? "추천"
-              : candidate.origin === "description_match"
-                ? "품명 기반"
-                : "후보"}
+            : candidate.origin === "llm_match"
+              ? candidate.recommended
+                ? "AI 추천 1순위"
+                : "AI 추천"
+              : candidate.recommended
+                ? "추천"
+                : candidate.origin === "description_match"
+                  ? "품명 기반"
+                  : "후보"}
       </span>
     </div>
   );

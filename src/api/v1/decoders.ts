@@ -1195,7 +1195,10 @@ function decodeHsCandidate(value: unknown, context: string): HsCandidate {
     origin:
       raw.origin === undefined
         ? "document_code"
-        : oneOf(raw.origin, ["document_code", "description_match"] as const, `${context}.origin`),
+        : oneOf(raw.origin, ["document_code", "description_match", "llm_match"] as const, `${context}.origin`),
+    ...(raw.explanation === undefined || raw.explanation === null
+      ? {}
+      : { explanation: displayText(raw.explanation, `${context}.explanation`) }),
     basis: array(raw.basis ?? [], `${context}.basis`).map((item, index) => {
       const entry = record(item, `${context}.basis[${index}]`);
       return {
@@ -1476,10 +1479,12 @@ export function decodeCaseHsClassification(value: unknown): CaseHsClassification
   const context = "case HS classification";
   const raw = record(value, context);
   const reference = record(raw.reference, `${context}.reference`);
-  if (raw.basis_kind !== "document_text") throw new ContractError(`${context}.basis_kind is unsupported`);
+  if (raw.basis_kind !== "document_text" && raw.basis_kind !== "agent_ranked") {
+    throw new ContractError(`${context}.basis_kind is unsupported`);
+  }
   return {
     case_id: requiredString(raw.case_id, `${context}.case_id`),
-    basis_kind: "document_text",
+    basis_kind: raw.basis_kind,
     reference: {
       as_of: requiredString(reference.as_of, `${context}.reference.as_of`),
       source: displayText(reference.source, `${context}.reference.source`),
