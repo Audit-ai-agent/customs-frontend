@@ -9,7 +9,7 @@ import type {
   OriginCheckStatus,
 } from "../api/v1/types";
 import type { OriginFtaHint } from "../api/v1/types";
-import { safeExternalHref } from "./labels";
+import { safeExternalHref, formatDate } from "./labels";
 import { CopyValueButton, EmptyCopy, EmptyState, Field, Num, RoleBoundaryNote, SectionHeading, Submit } from "./primitives";
 import { GoToDocumentsButton } from "./stages";
 import { useStore, useWorkbenchState } from "./useStore";
@@ -20,7 +20,7 @@ function formatMoney(amount: number, currency: string): string {
 
 /* ── 단계 1 · HSK 분류 카드 ──────────────────────────────────── */
 
-type HsPickerView = Pick<HsClassification, "reference" | "candidates" | "selection">;
+type HsPickerView = Pick<HsClassification, "reference" | "candidates" | "selection"> & { agent_ranked_at?: string | null };
 
 /** The recorded reason says how the code was picked; the reviewer does not type it. */
 function hsSelectionReason(code: string, candidates: HsCandidate[], searchPick: HsReferenceSearchResult | null): string {
@@ -48,7 +48,7 @@ export function HsClassificationCard() {
         resetKey={state.caseHsLoadedKey}
         basisCopy={
           state.caseHsClassification?.basis_kind === "agent_ranked"
-            ? "AI가 확정된 서류 텍스트에서 품목을 읽고 관세청 참조표 후보 중에서 순위를 매겼습니다. 코드는 참조표에 있는 것만 제시되며, 확정은 담당자가 합니다."
+            ? "AI가 확정된 서류 텍스트에서 품목을 읽고 관세청 참조표 후보 중에서 순위를 매겼습니다. 이 결과는 서류가 바뀌기 전까지 Case에 보관되며, 코드는 참조표에 있는 것만 제시되고 확정은 담당자가 합니다."
             : "확정된 서류 텍스트에서 세번(HS) 표기 줄의 코드를 읽어 후보를 제시합니다. 서류를 모두 등록·확정한 뒤 'AI로 HSK 후보 추출'을 누르면 AI가 서류 전체에서 품목을 읽고 참조표 후보에 순위를 매깁니다. AI 심사 전에 확정하면 첫 심사부터 법령 근거를 조회합니다."
         }
         emptyCopy="서류 텍스트에서 HS 코드와 품명을 찾지 못했습니다. 서류를 모두 등록·확정한 뒤 'AI로 HSK 후보 추출'을 누르거나, 아래 검색창에서 코드나 품명으로 찾아 확정할 수 있습니다."
@@ -92,6 +92,7 @@ function HsPickerCard({
   onRefresh?: () => void;
   onConfirm: (code: string, reason: string) => Promise<void>;
 }) {
+  const agentRankedAt = view && "agent_ranked_at" in view ? (view.agent_ranked_at ?? null) : null;
   const store = useStore();
   const state = useWorkbenchState();
   const [chosen, setChosen] = useState<string | null>(null);
@@ -157,6 +158,7 @@ function HsPickerCard({
         <div className="hsk-note on hsk-note--info" data-hsk-agent-note>
           <b>AI 추천</b> 표시가 있는 후보는 AI가 서류 품목과 참조표 품목명을 대조해 고른 순서입니다. 사유를 확인하고 담당자가
           확정하십시오.
+          {agentRankedAt ? <span className="hsk-note__when"> AI 추출 {formatDate(agentRankedAt)}.</span> : null}
         </div>
       ) : null}
       {descriptionOnly ? (

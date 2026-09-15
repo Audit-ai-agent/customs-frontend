@@ -903,6 +903,8 @@ export interface CaseHsClassification {
   reference: { as_of: string; source: string };
   candidates: HsCandidate[];
   selection?: HsSelection | null;
+  /** When the Agent ranked these candidates; the Backend keeps that ranking per case until the documents change. */
+  agent_ranked_at?: string | null;
 }
 
 export interface HsSelectionRequest {

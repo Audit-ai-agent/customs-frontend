@@ -729,6 +729,7 @@ describe("stage-1 HSK candidates before any review", () => {
     const rankedView = {
       ...textView,
       basis_kind: "agent_ranked" as const,
+      agent_ranked_at: "2026-09-16T13:05:00Z",
       candidates: [{
         code: "6109101000", name_ko: "티셔츠", name_en: "T-shirts",
         ancestors: [{ level: 2, code: "61", name_ko: "의류" }],
@@ -760,6 +761,8 @@ describe("stage-1 HSK candidates before any review", () => {
     const row = root.querySelector('[data-hsk-candidate-code="6109101000"]');
     expect(row?.textContent).toContain("티셔츠");
     expect(root.textContent).toContain("면 소재 남성용 티셔츠");
+    // The Backend keeps the ranking per case; the card says when it was made.
+    expect(root.querySelector("[data-hsk-agent-note]")?.textContent).toContain("AI 추출");
     dispose();
   });
 });

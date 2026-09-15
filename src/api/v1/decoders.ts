@@ -1492,6 +1492,9 @@ export function decodeCaseHsClassification(value: unknown): CaseHsClassification
     candidates: array(raw.candidates, `${context}.candidates`).map((item, index) =>
       decodeHsCandidate(item, `${context}.candidates[${index}]`),
     ),
+    ...(raw.agent_ranked_at === undefined || raw.agent_ranked_at === null
+      ? {}
+      : { agent_ranked_at: requiredString(raw.agent_ranked_at, `${context}.agent_ranked_at`) }),
     ...(raw.selection === undefined || raw.selection === null
       ? {}
       : { selection: decodeHsSelection(raw.selection, `${context}.selection`) }),
