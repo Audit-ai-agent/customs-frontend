@@ -310,10 +310,6 @@ const RUN_ATTACHMENT_RESET = {
   hsLoadedRunId: null,
   hsLoading: false,
   hsError: null,
-  caseHsClassification: null,
-  caseHsLoadedKey: null,
-  caseHsLoading: false,
-  caseHsError: null,
   originVerification: null,
   originLoadedRunId: null,
   originLoading: false,
@@ -841,9 +837,11 @@ export class WorkbenchStore {
     // The Backend does not return extraction state on the asset list, so a
     // same-case reload keeps what this session already knows — otherwise a
     // confirmed upload would fall back to "추출 전" with a rerun button.
-    const knownEntries = this.state.selectedCase?.case_id === caseId ? this.state.documentAssets : [];
+    const sameCase = this.state.selectedCase?.case_id === caseId;
+    const knownEntries = sameCase ? this.state.documentAssets : [];
     this.patch({
       selectedCase: caseDetail,
+      ...(sameCase ? {} : { caseHsClassification: null, caseHsLoadedKey: null, caseHsError: null }),
       documents,
       documentAssets: assets.map((asset) => {
         const known = knownEntries.find((entry) => entry.asset.asset_id === asset.asset_id);
@@ -869,6 +867,9 @@ export class WorkbenchStore {
       selectedCorrectionProposalIds: new Set<string>(),
     });
     if (runSummaries[0]) await this.openRun(runSummaries[0].review_run_id);
+    // Document registration and extraction confirmation reload the case; the
+    // document-text HSK candidates follow the new document set.
+    if (this.state.activeView === "documents") await this.ensureCaseHsClassificationLoaded();
   }
 
   async openRun(runId: string): Promise<void> {
@@ -1761,6 +1762,11 @@ export class WorkbenchStore {
         notice: "HSK 분류를 확정했습니다. 관세 진단에 확정 코드가 반영됩니다.",
       });
     });
+  }
+
+  async refreshCaseHsClassification(): Promise<void> {
+    this.patch({ caseHsLoadedKey: null });
+    await this.ensureCaseHsClassificationLoaded();
   }
 
   async recordCaseHsSelection(code: string, reason: string): Promise<void> {

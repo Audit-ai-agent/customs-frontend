@@ -338,6 +338,7 @@ a{color:inherit}
 .hsk-note{margin-top:10px;background:var(--krds-warning-bg);border:0;border-left:4px solid var(--krds-warning);
   border-radius:var(--r-sm);padding:11px 14px;font-size:12.5px;color:var(--krds-warning-strong);display:none;line-height:1.6}
 .hsk-note.on{display:block}
+.hsk-actions{margin:8px 0 12px;display:flex;gap:8px;flex-wrap:wrap}
 
 /* HSK reference typeahead (code prefix + item-name reverse search) */
 .hsk-search{position:relative;margin-top:14px}

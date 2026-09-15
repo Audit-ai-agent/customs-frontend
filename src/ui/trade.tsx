@@ -35,7 +35,8 @@ export function HsClassificationCard() {
         error={state.caseHsError}
         resetKey={state.caseHsLoadedKey}
         basisCopy="확정된 서류 텍스트에서 세번(HS) 표기 줄의 코드를 읽어 후보를 제시합니다. AI 심사 전에 확정하면 첫 심사부터 법령 근거를 조회합니다."
-        emptyCopy="서류 텍스트에서 HS 코드와 품명을 찾지 못했습니다. 아래 검색창에서 코드나 품명으로 찾아 확정할 수 있습니다."
+        emptyCopy="서류 텍스트에서 HS 코드와 품명을 찾지 못했습니다. 서류를 등록·확정한 뒤 '서류에서 HSK 후보 추출'을 누르거나, 아래 검색창에서 코드나 품명으로 찾아 확정할 수 있습니다."
+        onRefresh={() => void store.refreshCaseHsClassification()}
         onConfirm={(code, reason) => store.recordCaseHsSelection(code, reason)}
       />
     );
@@ -62,6 +63,7 @@ function HsPickerCard({
   basisCopy,
   emptyCopy,
   priorSelection = null,
+  onRefresh,
   onConfirm,
 }: {
   view: HsPickerView | null;
@@ -71,6 +73,7 @@ function HsPickerCard({
   basisCopy: string;
   emptyCopy: string;
   priorSelection?: HsSelection | null;
+  onRefresh?: () => void;
   onConfirm: (code: string, reason: string) => Promise<void>;
 }) {
   const store = useStore();
@@ -86,18 +89,35 @@ function HsPickerCard({
     setSearchPick(null);
   }, [resetKey]);
 
+  const refreshButton =
+    onRefresh && store.hasRole("reviewer") ? (
+      <div className="hsk-actions">
+        <button
+          type="button"
+          className="btn"
+          data-hsk-extract
+          disabled={loading || state.busy || !store.activeDocuments().length}
+          onClick={onRefresh}
+        >
+          {loading ? "추출 중…" : "서류에서 HSK 후보 추출"}
+        </button>
+      </div>
+    ) : null;
+
   if (error) {
     return (
-      <section className="surface">
+      <section className="surface" data-hsk-card>
         <SectionHeading title="HSK 분류" description={basisCopy} />
+        {refreshButton}
         <p className="unsupported-inline">{error}</p>
       </section>
     );
   }
   if (!view) {
     return (
-      <section className="surface">
+      <section className="surface" data-hsk-card>
         <SectionHeading title="HSK 분류" description={basisCopy} />
+        {refreshButton}
         <EmptyCopy>{loading ? "HSK 후보를 불러오는 중…" : "HSK 후보가 아직 없습니다."}</EmptyCopy>
       </section>
     );
@@ -117,6 +137,7 @@ function HsPickerCard({
         title="HSK 분류"
         description={`${basisCopy} 품목명 출처: ${view.reference.source} (${view.reference.as_of} 기준)`}
       />
+      {refreshButton}
       {descriptionOnly ? (
         <div className="hsk-note on" data-hsk-description-note>
           문서에서 HS 코드를 찾지 못해 <b>품명 매칭 후보</b>를 제시합니다. 참조표의 품목명과 품명 텍스트를
