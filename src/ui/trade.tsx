@@ -22,6 +22,18 @@ function formatMoney(amount: number, currency: string): string {
 
 type HsPickerView = Pick<HsClassification, "reference" | "candidates" | "selection">;
 
+/** The recorded reason says how the code was picked; the reviewer does not type it. */
+function hsSelectionReason(code: string, candidates: HsCandidate[], searchPick: HsReferenceSearchResult | null): string {
+  const candidate = candidates.find((item) => item.code === code) ?? null;
+  if (candidate?.origin === "document_code") {
+    const documents = new Set(candidate.basis.map((item) => item.document_id)).size;
+    return documents ? `서류 기재 코드 확정 (문서 ${documents}건 근거)` : "서류 기재 코드 확정";
+  }
+  if (candidate?.origin === "description_match") return "품명 매칭 후보에서 확정";
+  if (searchPick?.code === code) return "HSK 참조 검색으로 확정";
+  return "담당자 확정";
+}
+
 export function HsClassificationCard() {
   const store = useStore();
   const state = useWorkbenchState();
@@ -79,13 +91,11 @@ function HsPickerCard({
   const store = useStore();
   const state = useWorkbenchState();
   const [chosen, setChosen] = useState<string | null>(null);
-  const [reason, setReason] = useState("");
   const [searchPick, setSearchPick] = useState<HsReferenceSearchResult | null>(null);
   // A different candidate set (another run, or another document set) must not
   // keep a pick made against the previous one.
   useEffect(() => {
     setChosen(null);
-    setReason("");
     setSearchPick(null);
   }, [resetKey]);
 
@@ -205,26 +215,18 @@ function HsPickerCard({
       {store.hasRole("reviewer") ? (
         activeCode !== null && activeCode !== selection?.code ? (
           <form
-            className="decision-form"
+            className="decision-form hsk-confirm"
             onSubmit={(event) => {
               event.preventDefault();
-              void onConfirm(activeCode, reason).then(() => {
+              // The Backend keeps a reason with every selection; it is derived
+              // from how the code was picked so the reviewer confirms in one click.
+              void onConfirm(activeCode, hsSelectionReason(activeCode, view.candidates, searchPick)).then(() => {
                 setChosen(null);
-                setReason("");
+                setSearchPick(null);
               });
             }}
           >
-            <Field label={`선택한 코드 ${activeCode} 확정 사유`}>
-              <input
-                name="hs_reason"
-                type="text"
-                required
-                maxLength={4_000}
-                placeholder="예: 문서 3건의 HS 코드가 일치"
-                value={reason}
-                onChange={(event) => setReason(event.target.value)}
-              />
-            </Field>
+            <span className="form-hint">{`선택한 코드 ${activeCode}`}</span>
             <Submit label="HSK 분류 확정" disabled={state.busy} />
           </form>
         ) : null

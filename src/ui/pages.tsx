@@ -492,7 +492,7 @@ export function HskReferencePage() {
             </div>
           </div>
           <p className="form-hint">
-            이 화면은 참조 조회 전용입니다. 심사 건의 HSK 분류 확정은 해당 Case 워크스페이스의 서류 등록 단계에서 사유와 함께 기록합니다.
+            이 화면은 참조 조회 전용입니다. 심사 건의 HSK 분류 확정은 해당 Case 워크스페이스의 서류 등록 단계에서 후보를 골라 한 번에 기록합니다.
           </p>
         </section>
       ) : null}
