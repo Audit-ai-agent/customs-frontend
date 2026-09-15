@@ -193,10 +193,15 @@ describe("통관 심사 · AI 권고 패널", () => {
     window.location.hash = "#/cases/case-1/review";
     const { root, dispose } = await mount(api(reviewRun()));
     const panel = root.querySelector("[data-advisory-panel]");
-    expect(panel?.textContent).toContain("정밀 검토");
-    expect(panel?.textContent).toContain("신뢰도 62%");
+    expect(panel?.textContent).toContain("상세 검토 트랙");
+    expect(panel?.textContent).toContain("분석 신뢰도 62%");
     expect(panel?.textContent).toContain("부적격 권고");
     expect(panel?.textContent).toContain("자동으로 종료하거나 승인하지 않습니다");
+    // The track and verdict each carry a plain-language hint and the reason links to its finding.
+    expect(root.querySelector("[data-track-hint]")?.textContent).toContain("적격 여부와는 다른 값");
+    expect(root.querySelector("[data-verdict-next]")?.textContent).toContain("정정 제안");
+    expect(root.querySelector("[data-advisory-finding]")?.textContent).toContain("확인 사항 1건 보기");
+    expect(root.querySelector("[data-advisory-engine]")?.textContent).toContain("분석 엔진");
     expect(root.querySelector("[data-eligibility-verdict]")?.getAttribute("data-eligibility-verdict")).toBe("ineligible");
     const signal = root.querySelector('[data-finding-id="finding-1"] [data-finding-signal]');
     expect(signal?.textContent).toContain("값 불일치");

@@ -11,7 +11,7 @@ import type {
   ReviewerDecision,
   SourceReference,
 } from "../api/v1/types";
-import { DECISION_REASON_OPTIONS, citationLabel, comparisonStatusLabel, decisionReasonLabel, decisionStatusLabel, display, displayComparisonValue, displayValue, documentAnalysisLabel, documentTypeLabel, evidenceSourceTypeLabel, findingDisplayTitle, findingKindLabel, focusDataTarget, formatDate, groundedCitations, reportSectionDescription, reviewerSentence, ruleTitle, severityWeight, errorCategoryLabel, percentLabel, reviewTrackLabel, verdictLabel } from "./labels";
+import { DECISION_REASON_OPTIONS, citationLabel, comparisonStatusLabel, decisionReasonLabel, decisionStatusLabel, display, displayComparisonValue, displayValue, documentAnalysisLabel, documentTypeLabel, evidenceSourceTypeLabel, findingDisplayTitle, findingKindLabel, focusDataTarget, formatDate, groundedCitations, reportSectionDescription, reviewerSentence, ruleTitle, severityWeight, errorCategoryLabel, engineKindLabel, percentLabel, reviewTrackLabel, verdictLabel } from "./labels";
 import {
   CollapsibleSection,
   EmptyCopy,
@@ -205,23 +205,42 @@ function VerdictStamp({ run, openCount }: { run: ReviewRun; openCount: number })
 /**
  * The Agent's advisory signals: the deterministic confidence with its review
  * track, and the expert-review verdict. Neither closes a Case; the copy says so.
+ * The confidence is a signal-quality score (extraction, comparison, evidence)
+ * and deliberately not read as an eligibility probability.
  */
+const TRACK_HINT: Record<string, string> = {
+  expedited_check: "임계값 이상 · 추출·비교·근거 신호가 일관되어 확인 사항 위주로 약식 확인합니다.",
+  detailed_review: "임계값 미만 · 추출값이나 비교 결과에 흔들림이 있어 문서 원문과 대조하며 상세 검토합니다.",
+};
+const VERDICT_NEXT: Record<string, string> = {
+  eligible: "규칙상 막히는 항목이 없다는 권고입니다. 확인 사항 판단과 종료 사유 기록은 담당자가 합니다.",
+  ineligible: "문서 간 불일치가 있다는 권고입니다. 해당 확인 사항을 판단하고 필요하면 정정 제안 → 재심사를 진행하십시오.",
+  indeterminate: "규칙만으로 판단할 수 없다는 권고입니다. 필수 확인 항목이나 법령 근거를 확인해 판단을 기록하십시오.",
+};
+
 function AdvisoryPanel({ run }: { run: ReviewRun }) {
+  const store = useStore();
   const confidence = run.agent_confidence ?? null;
   const verdict = run.agent_eligibility_verdict ?? null;
+  const engine = run.agent_engine ?? null;
   if (!confidence && !verdict) return null;
   return (
     <section className="surface advisory-panel" data-advisory-panel>
       <SectionHeading
         title="AI 권고 · 담당자 판단 보조"
-        description="신뢰도와 권고 판정은 참고 정보입니다. 어느 값도 Case를 자동으로 종료하거나 승인하지 않습니다."
+        description="분석 신뢰도와 권고 판정은 참고 정보입니다. 어느 값도 Case를 자동으로 종료하거나 승인하지 않습니다."
       />
       <div className="advisory-panel__grid">
         {confidence ? (
           <div className="advisory-card" data-review-track={confidence.review_track}>
             <span className={`review-track review-track--${confidence.review_track}`}>{reviewTrackLabel(confidence.review_track)}</span>
-            <strong>{`신뢰도 ${percentLabel(confidence.overall)}`}</strong>
+            <strong>{`분석 신뢰도 ${percentLabel(confidence.overall)}`}</strong>
             <small>{`임계값 ${percentLabel(confidence.threshold)} · 추출 ${percentLabel(confidence.components.extraction)} · 비교 ${percentLabel(confidence.components.comparison)} · 근거 ${percentLabel(confidence.components.evidence)}`}</small>
+            <p className="advisory-card__hint" data-track-hint>
+              {TRACK_HINT[confidence.review_track] ?? "검토 트랙 기준이 기록되지 않았습니다."}
+              {" "}
+              신뢰도는 분석 신호의 일관성이며 적격 여부와는 다른 값입니다.
+            </p>
           </div>
         ) : null}
         {verdict ? (
@@ -230,18 +249,45 @@ function AdvisoryPanel({ run }: { run: ReviewRun }) {
             <strong>{verdict.source === "rule+llm" ? "규칙 + 전문심사 에이전트 의견" : "규칙 기반 권고"}</strong>
             {verdict.reasons.length ? (
               <ul className="advisory-reasons">
-                {verdict.reasons.map((reason, index) => (
-                  <li key={`${reason.code}-${index}`}>
-                    <span>{reviewerSentence(reason.message)}</span>
-                    {reason.finding_ids.length ? <small>{` · 확인 사항 ${reason.finding_ids.length}건`}</small> : null}
-                    {reason.evidence_ids.length ? <small>{` · 법령 근거 ${reason.evidence_ids.length}건`}</small> : null}
-                  </li>
-                ))}
+                {verdict.reasons.map((reason, index) => {
+                  const findingId = reason.finding_ids[0] ?? null;
+                  const evidenceId = reason.evidence_ids[0] ?? null;
+                  return (
+                    <li key={`${reason.code}-${index}`}>
+                      <span>{reviewerSentence(reason.message)}</span>
+                      {findingId || evidenceId ? (
+                        <span className="advisory-links">
+                          {findingId ? (
+                            <button type="button" className="link-button" data-advisory-finding onClick={() => store.focusFinding(findingId)}>
+                              {`확인 사항 ${reason.finding_ids.length}건 보기`}
+                            </button>
+                          ) : null}
+                          {evidenceId ? (
+                            <button type="button" className="link-button" data-advisory-evidence onClick={() => store.focusEvidence(evidenceId)}>
+                              {`법령 근거 ${reason.evidence_ids.length}건 보기`}
+                            </button>
+                          ) : null}
+                        </span>
+                      ) : null}
+                    </li>
+                  );
+                })}
               </ul>
-            ) : null}
+            ) : (
+              <small>권고 사유가 기록되지 않았습니다.</small>
+            )}
+            <p className="advisory-card__hint" data-verdict-next>
+              {VERDICT_NEXT[verdict.verdict] ?? "권고 판정의 의미가 기록되지 않았습니다."}
+            </p>
           </div>
         ) : null}
       </div>
+      {engine ? (
+        <p className="advisory-engine" data-advisory-engine>
+          {`분석 엔진 · ${engineKindLabel(engine.kind)} ${engine.model_id}`}
+          {engine.orchestrator ? ` · 오케스트레이터 LangGraph ${engine.orchestrator.version}` : ""}
+        </p>
+      ) : null}
     </section>
   );
 }

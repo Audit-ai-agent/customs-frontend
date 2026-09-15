@@ -930,6 +930,12 @@ textarea { min-height: 7rem; resize: vertical; line-height: 1.6; }
 .review-track--detailed_review, .verdict-chip--indeterminate { color: var(--krds-warning-strong); background: var(--krds-warning-bg); }
 .verdict-chip--ineligible { color: var(--krds-danger); background: var(--krds-danger-bg, #fdecec); }
 .advisory-reasons { display: grid; gap: .3rem; padding: 0 0 0 1rem; margin: 0; }
+.advisory-reasons li { display: grid; gap: .15rem; }
+.advisory-links { display: flex; gap: .75rem; flex-wrap: wrap; }
+.link-button { background: none; border: 0; padding: 0; color: var(--krds-primary); font: inherit; font-size: .82rem; text-decoration: underline; text-underline-offset: .15em; cursor: pointer; }
+.link-button:hover, .link-button:focus-visible { color: var(--krds-primary-strong, var(--krds-primary)); }
+.advisory-card__hint { margin: .2rem 0 0; color: var(--krds-muted); font-size: .8rem; line-height: 1.5; }
+.advisory-engine { margin: .6rem 0 0; color: var(--krds-muted); font-size: .78rem; }
 .advisory-reasons small { color: var(--krds-muted); }
 .finding-signal { margin: .15rem 0 0; color: var(--krds-muted); font-size: .8rem; line-height: 1.5; }
 .role-boundary-note {

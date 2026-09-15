@@ -869,7 +869,8 @@ export class WorkbenchStore {
     if (runSummaries[0]) await this.openRun(runSummaries[0].review_run_id);
     // Document registration and extraction confirmation reload the case; the
     // document-text HSK candidates follow the new document set.
-    if (this.state.activeView === "documents") await this.ensureCaseHsClassificationLoaded();
+    // The header warning ("HSK 미확정") reads this on every view, so load it here.
+    await this.ensureCaseHsClassificationLoaded();
   }
 
   async openRun(runId: string): Promise<void> {

@@ -584,7 +584,7 @@ export function loopReasonLabel(value: string | null | undefined): string {
 }
 
 export function reviewTrackLabel(value: string | null | undefined): string {
-  const labels: Record<string, string> = { detailed_review: "정밀 검토", expedited_check: "빠른 확인" };
+  const labels: Record<string, string> = { detailed_review: "상세 검토 트랙", expedited_check: "약식 확인 트랙" };
   if (!value) return "검토 트랙 미기록";
   return labels[value] ?? value;
 }
