@@ -895,6 +895,14 @@ export interface HsClassification {
   selection?: HsSelection | null;
 }
 
+export interface CaseHsClassification {
+  case_id: string;
+  basis_kind: "document_text";
+  reference: { as_of: string; source: string };
+  candidates: HsCandidate[];
+  selection?: HsSelection | null;
+}
+
 export interface HsSelectionRequest {
   code: string;
   reason: string;

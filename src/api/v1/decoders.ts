@@ -37,6 +37,7 @@ import type {
   GraphTrace,
   HsAncestor,
   HsCandidate,
+  CaseHsClassification,
   HsClassification,
   HsReferenceEntry,
   HsReferenceSearch,
@@ -1458,6 +1459,27 @@ export function decodeHsClassification(value: unknown): HsClassification {
   return {
     review_run_id: requiredString(raw.review_run_id, `${context}.review_run_id`),
     case_id: requiredString(raw.case_id, `${context}.case_id`),
+    reference: {
+      as_of: requiredString(reference.as_of, `${context}.reference.as_of`),
+      source: displayText(reference.source, `${context}.reference.source`),
+    },
+    candidates: array(raw.candidates, `${context}.candidates`).map((item, index) =>
+      decodeHsCandidate(item, `${context}.candidates[${index}]`),
+    ),
+    ...(raw.selection === undefined || raw.selection === null
+      ? {}
+      : { selection: decodeHsSelection(raw.selection, `${context}.selection`) }),
+  };
+}
+
+export function decodeCaseHsClassification(value: unknown): CaseHsClassification {
+  const context = "case HS classification";
+  const raw = record(value, context);
+  const reference = record(raw.reference, `${context}.reference`);
+  if (raw.basis_kind !== "document_text") throw new ContractError(`${context}.basis_kind is unsupported`);
+  return {
+    case_id: requiredString(raw.case_id, `${context}.case_id`),
+    basis_kind: "document_text",
     reference: {
       as_of: requiredString(reference.as_of, `${context}.reference.as_of`),
       source: displayText(reference.source, `${context}.reference.source`),

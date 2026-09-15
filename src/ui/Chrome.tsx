@@ -275,16 +275,27 @@ export function StartReviewButton() {
   const canReview = store.hasRole("reviewer");
   // A case that already has a run gets a new run, not the first one; say so.
   const startLabel = state.runs.length ? "AI 심사 다시 실행" : "AI 심사 시작";
+  // Law evidence is retrieved per confirmed HSK code; without one the first
+  // run can only cross-check documents. Warn, never block.
+  const hsConfirmed = Boolean(state.caseHsClassification?.selection ?? state.hsClassification?.selection);
+  const warnUnconfirmedHs = canReview && !running && store.activeDocuments().length > 0 && !hsConfirmed;
   return (
-    <button
-      className="btn primary"
-      type="button"
-      disabled={state.busy || !store.activeDocuments().length || running || !canReview}
-      {...(canReview ? {} : { title: "AI 심사 실행은 심사자 역할에서만 가능합니다." })}
-      onClick={() => void store.startReview()}
-    >
-      {running ? "심사 진행 중" : canReview ? startLabel : "심사자 역할에서 실행"}
-    </button>
+    <>
+      <button
+        className="btn primary"
+        type="button"
+        disabled={state.busy || !store.activeDocuments().length || running || !canReview}
+        {...(canReview ? {} : { title: "AI 심사 실행은 심사자 역할에서만 가능합니다." })}
+        onClick={() => void store.startReview()}
+      >
+        {running ? "심사 진행 중" : canReview ? startLabel : "심사자 역할에서 실행"}
+      </button>
+      {warnUnconfirmedHs ? (
+        <span className="form-hint" data-hsk-unconfirmed>
+          HSK 코드가 아직 확정되지 않았습니다. 서류 등록 화면의 HSK 분류에서 확정하면 첫 심사부터 법령 근거를 조회합니다.
+        </span>
+      ) : null}
+    </>
   );
 }
 

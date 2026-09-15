@@ -6,6 +6,7 @@ import type {
   AssistantMessage,
   CaseDetail,
   CaseDocument,
+  CaseHsClassification,
   CaseSummary,
   CorrectionProposal,
   CreateCorrectionProposalRequest,
@@ -166,6 +167,10 @@ export interface WorkbenchState {
   hsLoadedRunId: string | null;
   hsLoading: boolean;
   hsError: string | null;
+  caseHsClassification: CaseHsClassification | null;
+  caseHsLoadedKey: string | null;
+  caseHsLoading: boolean;
+  caseHsError: string | null;
   originVerification: OriginVerification | null;
   originLoadedRunId: string | null;
   originLoading: boolean;
@@ -254,6 +259,10 @@ const INITIAL_STATE: WorkbenchState = {
   hsLoadedRunId: null,
   hsLoading: false,
   hsError: null,
+  caseHsClassification: null,
+  caseHsLoadedKey: null,
+  caseHsLoading: false,
+  caseHsError: null,
   originVerification: null,
   originLoadedRunId: null,
   originLoading: false,
@@ -301,6 +310,10 @@ const RUN_ATTACHMENT_RESET = {
   hsLoadedRunId: null,
   hsLoading: false,
   hsError: null,
+  caseHsClassification: null,
+  caseHsLoadedKey: null,
+  caseHsLoading: false,
+  caseHsError: null,
   originVerification: null,
   originLoadedRunId: null,
   originLoading: false,
@@ -555,6 +568,7 @@ export class WorkbenchStore {
     if (route.view === "assistant") await this.ensureAssistantLoaded();
     if (route.view === "history") await this.ensureCorrectionProposalsLoaded();
     if (route.view === "documents") await this.ensureHsClassificationLoaded();
+    if (route.view === "documents") await this.ensureCaseHsClassificationLoaded();
     if (route.view === "crosscheck") await this.ensureOriginVerificationLoaded();
     if (route.view === "duty") await this.ensureDutyAssessmentLoaded();
   }
@@ -1435,6 +1449,7 @@ export class WorkbenchStore {
       // loadCase drops the per-run attachments; the screen the user is on
       // reloads its own so it does not sit empty (same rule as a role switch).
       if (this.state.activeView === "documents") await this.ensureHsClassificationLoaded();
+      if (this.state.activeView === "documents") await this.ensureCaseHsClassificationLoaded();
       if (this.state.activeView === "crosscheck") await this.ensureOriginVerificationLoaded();
       if (this.state.activeView === "duty") await this.ensureDutyAssessmentLoaded();
       if (this.state.activeView === "assistant") await this.ensureAssistantLoaded();
@@ -1632,6 +1647,26 @@ export class WorkbenchStore {
     }
   }
 
+  private async ensureCaseHsClassificationLoaded(): Promise<void> {
+    const caseId = this.state.selectedCase?.case_id ?? null;
+    if (!caseId || this.state.caseHsLoading) return;
+    // Candidates are read from the confirmed document text, so the cache key
+    // follows the active document set rather than a review run.
+    const key = `${caseId}:${this.activeDocuments()
+      .map((item) => item.document_id)
+      .join(",")}`;
+    if (this.state.caseHsLoadedKey === key) return;
+    this.patch({ caseHsLoading: true, caseHsError: null });
+    try {
+      const view = await this.api.getCaseHsClassification(caseId);
+      this.patch({ caseHsClassification: view, caseHsLoadedKey: key });
+    } catch (error) {
+      this.patch({ caseHsError: userMessage(error, "서류 기반 HSK 후보를 불러오지 못했습니다.") });
+    } finally {
+      this.patch({ caseHsLoading: false });
+    }
+  }
+
   private async ensureOriginVerificationLoaded(): Promise<void> {
     const run = this.state.selectedRun;
     if (!run || this.state.originLoadedRunId === run.review_run_id || this.state.originLoading) return;
@@ -1724,6 +1759,24 @@ export class WorkbenchStore {
         dutyAssessment: null,
         dutyLoadedRunId: null,
         notice: "HSK 분류를 확정했습니다. 관세 진단에 확정 코드가 반영됩니다.",
+      });
+    });
+  }
+
+  async recordCaseHsSelection(code: string, reason: string): Promise<void> {
+    if (!this.hasRole("reviewer")) {
+      this.showError(new Error("HSK 분류 확정은 심사자 역할에서만 할 수 있습니다."));
+      return;
+    }
+    const caseId = this.state.selectedCase?.case_id ?? null;
+    if (!caseId) return;
+    await this.withBusy(async () => {
+      const selection = await this.api.recordCaseHsSelection(caseId, { code, reason });
+      this.patch({
+        ...(this.state.caseHsClassification === null
+          ? {}
+          : { caseHsClassification: { ...this.state.caseHsClassification, selection } }),
+        notice: "HSK 코드를 확정했습니다. 다음 AI 심사부터 법령 근거 조회에 사용됩니다.",
       });
     });
   }

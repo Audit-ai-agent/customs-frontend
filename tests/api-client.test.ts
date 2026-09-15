@@ -581,3 +581,56 @@ describe("admin LLM settings contract", () => {
     expect(stableApiErrorMessage(409, "llm_settings_unavailable")).toContain("로컬 개발 모드");
   });
 });
+
+describe("case-level HSK classification", () => {
+  it("reads document-text candidates and records a case selection before any review", async () => {
+    const calls: { url: string; init: RequestInit | undefined }[] = [];
+    const classification = {
+      case_id: "case-1",
+      basis_kind: "document_text",
+      reference: { as_of: "2026-01-01", source: "관세청 HS부호" },
+      candidates: [
+        {
+          code: "0303540000",
+          name_ko: "고등어",
+          name_en: "Mackerel",
+          ancestors: [],
+          confidence: 1,
+          in_reference: true,
+          recommended: true,
+          origin: "document_code",
+          basis: [{ document_id: "document-1", fact_id: "text-line-3", fact_name: "document_text", raw_value: "HS CODE: 0303540000" }],
+        },
+      ],
+    };
+    const selection = {
+      code: "0303540000",
+      reason: "서류 기재 코드 확인",
+      selected_by: "reviewer",
+      selected_at: "2026-09-15T00:00:00Z",
+      history: [{ code: "0303540000", reason: "서류 기재 코드 확인", selected_by: "reviewer", selected_at: "2026-09-15T00:00:00Z" }],
+    };
+    const fetcher: typeof fetch = async (input, init) => {
+      const url = String(input);
+      calls.push({ url, init });
+      if (url.endsWith("/cases/case-1/hs-classification") && init?.method === "GET") {
+        return new Response(JSON.stringify(classification), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (url.endsWith("/cases/case-1/hs-classification") && init?.method === "POST") {
+        return new Response(JSON.stringify(selection), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      return new Response(JSON.stringify({ detail: "unexpected request" }), { status: 500, headers: { "content-type": "application/json" } });
+    };
+    const api = new ApiClient(fetcher, async () => "local-token");
+    const view = await api.getCaseHsClassification("case-1");
+    expect(view.basis_kind).toBe("document_text");
+    expect(view.candidates[0]?.code).toBe("0303540000");
+    expect(view.selection).toBeUndefined();
+    const recorded = await api.recordCaseHsSelection("case-1", { code: "0303540000", reason: "서류 기재 코드 확인" });
+    expect(recorded.history).toHaveLength(1);
+    expect(calls.map((call) => call.url)).toEqual([
+      "/api/v1/cases/case-1/hs-classification",
+      "/api/v1/cases/case-1/hs-classification",
+    ]);
+  });
+});

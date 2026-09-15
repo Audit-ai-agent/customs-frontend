@@ -97,11 +97,12 @@ export function CaseStateFlow({ activeStatus, compact }: { activeStatus?: string
  */
 export const REVIEWER_WORKFLOW: readonly { step: number; title: string; action: string; outcome: string }[] = [
   { step: 1, title: "Case 등록", action: "제목·참조번호를 입력하고 Case를 만듭니다.", outcome: "상태 진행 전" },
-  { step: 2, title: "서류 등록", action: "Invoice·Packing List·B/L·원산지증명서 등을 올리고 추출 텍스트를 확인합니다.", outcome: "HSK 분류 후보 확인" },
-  { step: 3, title: "AI 사전심사 실행", action: "심사 시작을 누르면 문서 사실 추출 → 교차 검증 → 법령 근거 검색 → 보고서 생성이 이어집니다.", outcome: "상태 검토 중" },
-  { step: 4, title: "확인 사항 판단", action: "각 확인 사항의 근거를 보고 판단 상태와 사유(사전 정의 사유 또는 기타)를 기록합니다.", outcome: "미판단 0건이 되면 종료 가능" },
-  { step: 5, title: "정정·재심사 (필요 시)", action: "문서 값이 틀렸으면 정정 제안 → 다른 승인자 승인 → 자식 재심사를 실행합니다.", outcome: "원래 결과는 보존" },
-  { step: 6, title: "심사 종료", action: "최종 처리 방향(검토 종결 / 반려·보완 요청)과 종료 사유를 기록합니다.", outcome: "상태 종료 · 읽기 전용" },
+  { step: 2, title: "서류 등록", action: "Invoice·Packing List·B/L·원산지증명서 등을 올리고 추출 텍스트를 확인·확정합니다.", outcome: "서류 텍스트 확정" },
+  { step: 3, title: "HSK 코드 확정", action: "서류 텍스트에서 읽은 HS 코드 후보를 확인하거나 검색으로 찾아 10자리 HSK 코드를 확정합니다.", outcome: "첫 심사부터 법령 근거 조회 가능" },
+  { step: 4, title: "AI 사전심사 실행", action: "심사 시작을 누르면 문서 사실 추출 → 교차 검증 → 법령 근거 검색 → 보고서 생성이 이어집니다.", outcome: "상태 검토 중" },
+  { step: 5, title: "확인 사항 판단", action: "각 확인 사항의 근거를 보고 판단 상태와 사유(사전 정의 사유 또는 기타)를 기록합니다.", outcome: "미판단 0건이 되면 종료 가능" },
+  { step: 6, title: "정정·재심사 (필요 시)", action: "문서 값이 틀렸으면 정정 제안 → 다른 승인자 승인 → 자식 재심사를 실행합니다. 심사 뒤 HSK를 바꿔 확정해도 재심사에 반영됩니다.", outcome: "원래 결과는 보존" },
+  { step: 7, title: "심사 종료", action: "최종 처리 방향(검토 종결 / 반려·보완 요청)과 종료 사유를 기록합니다.", outcome: "상태 종료 · 읽기 전용" },
 ];
 
 export function ReviewerWorkflowList() {

@@ -14,6 +14,7 @@ import {
   decodeHsClassification,
   decodeHsReferenceEntry,
   decodeHsReferenceSearch,
+  decodeCaseHsClassification,
   decodeHsSelection,
   decodeJob,
   decodeLawCatalog,
@@ -55,6 +56,7 @@ import type {
   EnqueueReviewRequest,
   ExtractionJobEnvelope,
   FindingDecisionRequest,
+  CaseHsClassification,
   HsClassification,
   HsReferenceEntry,
   HsReferenceSearch,
@@ -459,6 +461,29 @@ export class ApiClient {
     const job = await this.request(`/jobs/${segment(jobId)}`, { method: "GET" }, decodeJobEnvelope);
     this.assertIdentity(job.job_id, jobId, "Job");
     return job;
+  }
+
+  getCaseHsClassification(caseId: string): Promise<CaseHsClassification> {
+    return this.request(
+      `/cases/${segment(caseId)}/hs-classification`,
+      { method: "GET" },
+      (value) => {
+        const view = decodeCaseHsClassification(value);
+        this.assertIdentity(view.case_id, caseId, "HS classification case");
+        return view;
+      },
+    );
+  }
+
+  recordCaseHsSelection(caseId: string, payload: HsSelectionRequest): Promise<HsSelection> {
+    const reason = payload.reason.trim();
+    if (!reason || reason.length > 4_000) throw new ContractError("HS selection reason is invalid");
+    if (!/^[0-9]{10}$/u.test(payload.code)) throw new ContractError("HS selection code is invalid");
+    return this.request(
+      `/cases/${segment(caseId)}/hs-classification`,
+      this.json("POST", { code: payload.code, reason }),
+      (value) => decodeHsSelection(value),
+    );
   }
 
   getHsClassification(reviewRunId: string): Promise<HsClassification> {

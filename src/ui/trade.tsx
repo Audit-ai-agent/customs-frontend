@@ -2,8 +2,10 @@ import { useEffect, useRef, useState } from "react";
 import type {
   DutyRate,
   HsCandidate,
+  HsClassification,
   HsReferenceSearch,
   HsReferenceSearchResult,
+  HsSelection,
   OriginCheckStatus,
 } from "../api/v1/types";
 import type { OriginFtaHint } from "../api/v1/types";
@@ -18,43 +20,85 @@ function formatMoney(amount: number, currency: string): string {
 
 /* ── 단계 1 · HSK 분류 카드 ──────────────────────────────────── */
 
+type HsPickerView = Pick<HsClassification, "reference" | "candidates" | "selection">;
+
 export function HsClassificationCard() {
   const store = useStore();
   const state = useWorkbenchState();
-  const view = state.hsClassification;
+  if (!state.selectedRun) {
+    // Before the first review the candidates come from the confirmed document
+    // text; confirming here lets that first review retrieve law evidence.
+    return (
+      <HsPickerCard
+        view={state.caseHsClassification}
+        loading={state.caseHsLoading}
+        error={state.caseHsError}
+        resetKey={state.caseHsLoadedKey}
+        basisCopy="확정된 서류 텍스트에서 세번(HS) 표기 줄의 코드를 읽어 후보를 제시합니다. AI 심사 전에 확정하면 첫 심사부터 법령 근거를 조회합니다."
+        emptyCopy="서류 텍스트에서 HS 코드와 품명을 찾지 못했습니다. 아래 검색창에서 코드나 품명으로 찾아 확정할 수 있습니다."
+        onConfirm={(code, reason) => store.recordCaseHsSelection(code, reason)}
+      />
+    );
+  }
+  return (
+    <HsPickerCard
+      view={state.hsClassification}
+      loading={state.hsLoading}
+      error={state.hsError}
+      resetKey={state.selectedRun.review_run_id}
+      basisCopy="이번 심사 실행에서 추출된 HS 코드 사실을 근거로 후보를 제시합니다."
+      emptyCopy="이번 실행의 문서 사실에서 HS 코드와 품명을 찾지 못했습니다. 문서 원문을 보완하거나 아래 검색창에서 코드나 품명으로 찾아 확정할 수 있습니다."
+      priorSelection={state.hsClassification?.selection ? null : (state.caseHsClassification?.selection ?? null)}
+      onConfirm={(code, reason) => store.recordHsSelection(code, reason)}
+    />
+  );
+}
+
+function HsPickerCard({
+  view,
+  loading,
+  error,
+  resetKey,
+  basisCopy,
+  emptyCopy,
+  priorSelection = null,
+  onConfirm,
+}: {
+  view: HsPickerView | null;
+  loading: boolean;
+  error: string | null;
+  resetKey: string | null;
+  basisCopy: string;
+  emptyCopy: string;
+  priorSelection?: HsSelection | null;
+  onConfirm: (code: string, reason: string) => Promise<void>;
+}) {
+  const store = useStore();
+  const state = useWorkbenchState();
   const [chosen, setChosen] = useState<string | null>(null);
   const [reason, setReason] = useState("");
   const [searchPick, setSearchPick] = useState<HsReferenceSearchResult | null>(null);
-  // A different run means a different candidate set; a pick made against the
-  // previous run must not survive into it.
-  const runId = state.selectedRun?.review_run_id ?? null;
+  // A different candidate set (another run, or another document set) must not
+  // keep a pick made against the previous one.
   useEffect(() => {
     setChosen(null);
     setReason("");
     setSearchPick(null);
-  }, [runId]);
+  }, [resetKey]);
 
-  if (!state.selectedRun) {
+  if (error) {
     return (
       <section className="surface">
-        <SectionHeading title="HSK 분류" description="문서에서 추출된 HS 코드 근거로 후보를 제시합니다." />
-        <EmptyCopy>AI 심사를 실행하면 문서 사실을 근거로 HSK 후보가 표시됩니다.</EmptyCopy>
-      </section>
-    );
-  }
-  if (state.hsError) {
-    return (
-      <section className="surface">
-        <SectionHeading title="HSK 분류" description="문서에서 추출된 HS 코드 근거로 후보를 제시합니다." />
-        <p className="unsupported-inline">{state.hsError}</p>
+        <SectionHeading title="HSK 분류" description={basisCopy} />
+        <p className="unsupported-inline">{error}</p>
       </section>
     );
   }
   if (!view) {
     return (
       <section className="surface">
-        <SectionHeading title="HSK 분류" description="문서에서 추출된 HS 코드 근거로 후보를 제시합니다." />
-        <EmptyCopy>{state.hsLoading ? "HSK 후보를 불러오는 중…" : "HSK 후보가 아직 없습니다."}</EmptyCopy>
+        <SectionHeading title="HSK 분류" description={basisCopy} />
+        <EmptyCopy>{loading ? "HSK 후보를 불러오는 중…" : "HSK 후보가 아직 없습니다."}</EmptyCopy>
       </section>
     );
   }
@@ -71,7 +115,7 @@ export function HsClassificationCard() {
     <section className="surface" data-hsk-card>
       <SectionHeading
         title="HSK 분류"
-        description={`문서에서 추출된 HS 코드 근거로 후보를 제시합니다. 품목명 출처: ${view.reference.source} (${view.reference.as_of} 기준)`}
+        description={`${basisCopy} 품목명 출처: ${view.reference.source} (${view.reference.as_of} 기준)`}
       />
       {descriptionOnly ? (
         <div className="hsk-note on" data-hsk-description-note>
@@ -80,10 +124,7 @@ export function HsClassificationCard() {
         </div>
       ) : null}
       {view.candidates.length === 0 ? (
-        <EmptyCopy>
-          이번 실행의 문서 사실에서 HS 코드와 품명을 찾지 못했습니다. 문서 원문을 보완하거나 아래 검색창에서
-          코드나 품명으로 찾아 확정할 수 있습니다.
-        </EmptyCopy>
+        <EmptyCopy>{emptyCopy}</EmptyCopy>
       ) : (
         <div className="hsk">
           {view.candidates.map((candidate) => (
@@ -129,6 +170,11 @@ export function HsClassificationCard() {
           {`확정 코드 ${selection.code} · ${selection.selected_by} · ${selection.reason}`}
         </p>
       ) : null}
+      {priorSelection ? (
+        <p className="form-hint" data-hsk-prior-selection>
+          {`서류 단계에서 확정한 코드 ${priorSelection.code} · 다음 심사부터 법령 근거 조회에 사용됩니다.`}
+        </p>
+      ) : null}
       {manualOverride ? (
         <div className="hsk-note on">
           ⚠ 추천 후보({recommended.code})와 다른 코드로 <b>수동 확정</b>되어 있습니다. 관세 진단의 세율·요건이 확정
@@ -141,7 +187,7 @@ export function HsClassificationCard() {
             className="decision-form"
             onSubmit={(event) => {
               event.preventDefault();
-              void store.recordHsSelection(activeCode, reason).then(() => {
+              void onConfirm(activeCode, reason).then(() => {
                 setChosen(null);
                 setReason("");
               });
