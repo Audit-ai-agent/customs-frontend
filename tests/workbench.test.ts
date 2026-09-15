@@ -715,3 +715,51 @@ describe("commercial review workspace", () => {
     vi.useRealTimers();
   });
 });
+
+describe("stage-1 HSK candidates before any review", () => {
+  it("loads the cheap text view on entry and asks the Agent only from the extract button", async () => {
+    window.location.hash = "#/cases/case-1/documents";
+    const caseDetail = { case_id: "case-1", org_id: "local-org", title: "입항 서류", status: "in_review" as const, revision: 1, updated_at: "2026-08-05T00:00:00Z" };
+    const textView = {
+      case_id: "case-1",
+      basis_kind: "document_text" as const,
+      reference: { as_of: "2026-01-01", source: "관세청 HS부호 단위별 품목명" },
+      candidates: [],
+    };
+    const rankedView = {
+      ...textView,
+      basis_kind: "agent_ranked" as const,
+      candidates: [{
+        code: "6109101000", name_ko: "티셔츠", name_en: "T-shirts",
+        ancestors: [{ level: 2, code: "61", name_ko: "의류" }],
+        confidence: 0.93, in_reference: true, recommended: true, origin: "llm_match" as const,
+        explanation: "면 소재 남성용 티셔츠",
+        basis: [{ document_id: "document-1", fact_id: "agent-item-1", fact_name: "description", raw_value: "MEN'S COTTON T-SHIRTS" }],
+      }],
+    };
+    const api = {
+      getSession: vi.fn(async () => ({ subject: "local-reviewer", org_id: "local-org", roles: ["reviewer"] })),
+      listCases: vi.fn(async () => ({ items: [caseDetail] })),
+      getCase: vi.fn(async () => caseDetail),
+      listDocuments: vi.fn(async () => [DOCUMENT]),
+      listDocumentAssets: vi.fn(async () => []),
+      listReviewRuns: vi.fn(async () => []),
+      getCaseHsClassification: vi.fn(async (_caseId: string, options?: { agent?: boolean }) => (options?.agent ? rankedView : textView)),
+    };
+    const { root, dispose } = await mount(api, AUTH, "functional-uat");
+
+    // Opening the case reads the text-only view (no model call) for the selection state.
+    expect(api.getCaseHsClassification).toHaveBeenCalledTimes(1);
+    expect(api.getCaseHsClassification).toHaveBeenLastCalledWith("case-1", { agent: false });
+    expect(root.querySelector('[data-hsk-candidate-code="6109101000"]')).toBeNull();
+
+    await click(root.querySelector("[data-hsk-extract]"));
+
+    expect(api.getCaseHsClassification).toHaveBeenCalledTimes(2);
+    expect(api.getCaseHsClassification).toHaveBeenLastCalledWith("case-1", { agent: true });
+    const row = root.querySelector('[data-hsk-candidate-code="6109101000"]');
+    expect(row?.textContent).toContain("티셔츠");
+    expect(root.textContent).toContain("면 소재 남성용 티셔츠");
+    dispose();
+  });
+});

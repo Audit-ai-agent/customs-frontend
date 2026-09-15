@@ -463,9 +463,15 @@ export class ApiClient {
     return job;
   }
 
-  getCaseHsClassification(caseId: string): Promise<CaseHsClassification> {
+  /**
+   * Confirmed-text HSK candidates and the recorded selection. With `agent`
+   * the Backend also has the Agent read the documents and rank reference
+   * codes (two model rounds), so callers ask for it only on the reviewer's
+   * explicit request.
+   */
+  getCaseHsClassification(caseId: string, options: { agent?: boolean } = {}): Promise<CaseHsClassification> {
     return this.request(
-      `/cases/${segment(caseId)}/hs-classification`,
+      `/cases/${segment(caseId)}/hs-classification${options.agent ? "?agent=true" : ""}`,
       { method: "GET" },
       (value) => {
         const view = decodeCaseHsClassification(value);

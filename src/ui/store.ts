@@ -1649,18 +1649,33 @@ export class WorkbenchStore {
     }
   }
 
+  private caseHsKey(caseId: string): string {
+    // Candidates are read from the confirmed document text, so the cache key
+    // follows the active document set rather than a review run.
+    return `${caseId}:${this.activeDocuments()
+      .map((item) => item.document_id)
+      .join(",")}`;
+  }
+
+  /**
+   * The cheap read: document-text candidates and the recorded selection (the
+   * header's "HSK 미확정" warning needs the latter on every view). The Agent
+   * is never involved here, so registering or confirming one document after
+   * another costs nothing; the reviewer asks for the AI ranking once, after
+   * every document is in, through refreshCaseHsClassification.
+   */
   private async ensureCaseHsClassificationLoaded(): Promise<void> {
     const caseId = this.state.selectedCase?.case_id ?? null;
     if (!caseId || this.state.caseHsLoading) return;
-    // Candidates are read from the confirmed document text, so the cache key
-    // follows the active document set rather than a review run.
-    const key = `${caseId}:${this.activeDocuments()
-      .map((item) => item.document_id)
-      .join(",")}`;
+    const key = this.caseHsKey(caseId);
     if (this.state.caseHsLoadedKey === key) return;
+    await this.loadCaseHsClassification(caseId, key, { agent: false });
+  }
+
+  private async loadCaseHsClassification(caseId: string, key: string, options: { agent: boolean }): Promise<void> {
     this.patch({ caseHsLoading: true, caseHsError: null });
     try {
-      const view = await this.api.getCaseHsClassification(caseId);
+      const view = await this.api.getCaseHsClassification(caseId, options);
       this.patch({ caseHsClassification: view, caseHsLoadedKey: key });
     } catch (error) {
       this.patch({ caseHsError: userMessage(error, "서류 기반 HSK 후보를 불러오지 못했습니다.") });
@@ -1765,9 +1780,11 @@ export class WorkbenchStore {
     });
   }
 
+  /** "서류에서 HSK 후보 추출": the one call that has the Agent read and rank. */
   async refreshCaseHsClassification(): Promise<void> {
-    this.patch({ caseHsLoadedKey: null });
-    await this.ensureCaseHsClassificationLoaded();
+    const caseId = this.state.selectedCase?.case_id ?? null;
+    if (!caseId || this.state.caseHsLoading) return;
+    await this.loadCaseHsClassification(caseId, this.caseHsKey(caseId), { agent: true });
   }
 
   async recordCaseHsSelection(code: string, reason: string): Promise<void> {

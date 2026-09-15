@@ -49,9 +49,9 @@ export function HsClassificationCard() {
         basisCopy={
           state.caseHsClassification?.basis_kind === "agent_ranked"
             ? "AI가 확정된 서류 텍스트에서 품목을 읽고 관세청 참조표 후보 중에서 순위를 매겼습니다. 코드는 참조표에 있는 것만 제시되며, 확정은 담당자가 합니다."
-            : "확정된 서류 텍스트에서 세번(HS) 표기 줄의 코드를 읽어 후보를 제시합니다. AI 심사 전에 확정하면 첫 심사부터 법령 근거를 조회합니다."
+            : "확정된 서류 텍스트에서 세번(HS) 표기 줄의 코드를 읽어 후보를 제시합니다. 서류를 모두 등록·확정한 뒤 'AI로 HSK 후보 추출'을 누르면 AI가 서류 전체에서 품목을 읽고 참조표 후보에 순위를 매깁니다. AI 심사 전에 확정하면 첫 심사부터 법령 근거를 조회합니다."
         }
-        emptyCopy="서류 텍스트에서 HS 코드와 품명을 찾지 못했습니다. 서류를 등록·확정한 뒤 '서류에서 HSK 후보 추출'을 누르거나, 아래 검색창에서 코드나 품명으로 찾아 확정할 수 있습니다."
+        emptyCopy="서류 텍스트에서 HS 코드와 품명을 찾지 못했습니다. 서류를 모두 등록·확정한 뒤 'AI로 HSK 후보 추출'을 누르거나, 아래 검색창에서 코드나 품명으로 찾아 확정할 수 있습니다."
         onRefresh={() => void store.refreshCaseHsClassification()}
         onConfirm={(code, reason) => store.recordCaseHsSelection(code, reason)}
       />
@@ -113,7 +113,7 @@ function HsPickerCard({
           disabled={loading || state.busy || !store.activeDocuments().length}
           onClick={onRefresh}
         >
-          {loading ? "추출 중…" : "서류에서 HSK 후보 추출"}
+          {loading ? "AI가 서류를 읽는 중…" : "AI로 HSK 후보 추출"}
         </button>
       </div>
     ) : null;
