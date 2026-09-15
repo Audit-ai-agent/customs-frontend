@@ -278,7 +278,9 @@ export function StartReviewButton() {
   // Law evidence is retrieved per confirmed HSK code; without one the first
   // run can only cross-check documents. Warn, never block.
   const hsConfirmed = Boolean(state.caseHsClassification?.selection ?? state.hsClassification?.selection);
-  const warnUnconfirmedHs = canReview && !running && store.activeDocuments().length > 0 && !hsConfirmed;
+  // Only after the case-level HSK state has loaded, so the hint does not flash on every case open.
+  const hsStateLoaded = state.caseHsLoadedKey !== null;
+  const warnUnconfirmedHs = canReview && !running && hsStateLoaded && store.activeDocuments().length > 0 && !hsConfirmed;
   return (
     <>
       <button

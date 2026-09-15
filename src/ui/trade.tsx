@@ -416,8 +416,10 @@ function HsCandidateRow({
     >
       <div className="code">{candidate.code}</div>
       <div className="desc">
-        {candidate.name_ko ?? "품목명 정보 없음 (참조표 밖의 코드)"}
-        <small>
+        <span className="cand-name" title={candidate.name_ko ?? undefined}>
+          {candidate.name_ko ?? "품목명 정보 없음 (참조표 밖의 코드)"}
+        </span>
+        <small title={breadcrumbs || undefined}>
           {breadcrumbs || "분류 경로 없음"}
           {manual
             ? " · 담당자가 검색으로 선택한 코드"

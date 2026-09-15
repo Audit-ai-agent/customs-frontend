@@ -325,7 +325,8 @@ a{color:inherit}
   letter-spacing:0;width:130px;flex:none;padding:0;background:none;color:var(--krds-ink);overflow:visible;line-height:1.4}
 .cand.pick .code{color:var(--krds-success-strong)}
 .cand .desc{flex:1;font-size:13px;color:var(--krds-text);min-width:0}
-.cand .desc small{display:block;color:var(--krds-muted);font-size:11.5px;margin-top:1px}
+.cand .desc .cand-name{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.cand .desc small{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;color:var(--krds-muted);font-size:11.5px;margin-top:1px}
 .conf-bar{width:120px;flex:none}
 .conf-bar .track{height:6px;border-radius:999px;background:var(--krds-line);overflow:hidden}
 .conf-bar .fill{height:100%;border-radius:999px;background:var(--krds-muted-2)}
