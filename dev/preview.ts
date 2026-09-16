@@ -38,6 +38,17 @@ const run = {
   agent_schema_version: "3.2",
   agent_status: "needs_review",
   agent_engine: { kind: "deterministic", model_id: "fixture" },
+  agent_confidence: {
+    overall: 0.893, threshold: 0.8, review_track: "expedited_check", method: "deterministic_signals",
+    components: { extraction: 1, comparison: 0.733, evidence: 1 },
+  },
+  agent_eligibility_verdict: {
+    verdict: "indeterminate", advisory: true, source: "rule",
+    reasons: [
+      { code: "document_mismatch", message: "Invoice와 Packing List의 수량이 일치하지 않습니다.", finding_ids: ["finding-1"], evidence_ids: [] },
+      { code: "requirement_check", message: "필수 확인 항목: 전기용품 및 생활용품 요건확인서", finding_ids: [], evidence_ids: ["evidence-3"] },
+    ],
+  },
   report: {
     overall_status: "needs_review",
     summary: "Invoice와 Packing List의 수량이 달라 담당자 확인이 필요합니다.",
@@ -97,6 +108,13 @@ const run = {
   evidence: [
     { evidence_id: "evidence-1", item_id: "item-1", title: "수입 요건 확인", text: "전기용품은 수입 전 안전확인 신고확인증이 필요하다.", source_uri: "https://law.example/1", source_type: "law", source_hash: hex("c"), law_id: "LAW-1", law_name: "전기용품 및 생활용품 안전관리법" },
     { evidence_id: "evidence-2", item_id: "item-2", title: "관세율 적용", text: "관세율은 수입신고 당시의 법령에 따라 적용한다.", source_uri: "https://law.example/2", source_type: "law", source_hash: hex("d"), law_id: "LAW-2", law_name: "관세법" },
+    {
+      evidence_id: "evidence-3", item_id: "item-1", source_type: "customs_requirement", source_hash: hex("e"),
+      title: "전기용품 및 생활용품 안전관리법 — 전기용품 및 생활용품 요건확인서",
+      text: "HSK 8504401000 import 요건: 전기용품 및 생활용품 안전관리법; 필요 확인서류 전기용품 및 생활용품 요건확인서; 요건승인기관 국가기술표준원.",
+      source_uri: "https://apis.data.go.kr/1220000/retrieveCcctLworCd/getRetrieveCcctLworCd?hsSgn=8504401000&imexTpcd=2",
+      law_id: "K01", law_name: "전기용품 및 생활용품 안전관리법",
+    },
   ],
   findings: [
     { finding_id: "finding-1", code: "invoice_packing_quantity_unit", message: "Invoice와 Packing List의 수량이 일치하지 않습니다.", kind: "validation_issue", severity: "high", comparison_id: "comparison-1", document_ids: ["doc-1", "doc-2"], fact_ids: ["fact-2"], evidence_ids: ["evidence-1"] },

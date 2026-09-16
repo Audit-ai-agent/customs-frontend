@@ -921,11 +921,13 @@ textarea { min-height: 7rem; resize: vertical; line-height: 1.6; }
 .graph-node--skipped { color: var(--krds-muted); }
 .advisory-panel__grid { display: grid; gap: .75rem; grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr)); }
 .advisory-card {
-  display: grid; gap: .35rem; padding: .85rem .95rem; background: var(--krds-surface-2);
+  display: grid; align-content: start; gap: .35rem; padding: .85rem .95rem; background: var(--krds-surface-2);
   border: 1px solid var(--krds-line); border-radius: .625rem; font-size: .86rem; line-height: 1.55;
 }
 .advisory-card small { color: var(--krds-muted); }
-.review-track, .verdict-chip { justify-self: start; padding: .15rem .6rem; border-radius: 999px; font-size: .74rem; font-weight: 700; }
+/* The two cards share a grid row, so the shorter one is taller than its content.
+   Rows and the pill chip must hug the top, or the chip stretches into a tall blob. */
+.review-track, .verdict-chip { justify-self: start; align-self: start; padding: .15rem .6rem; border-radius: 999px; font-size: .74rem; font-weight: 700; }
 .review-track--expedited_check, .verdict-chip--eligible { color: var(--krds-success); background: var(--krds-success-bg, #e8f5ec); }
 .review-track--detailed_review, .verdict-chip--indeterminate { color: var(--krds-warning-strong); background: var(--krds-warning-bg); }
 .verdict-chip--ineligible { color: var(--krds-danger); background: var(--krds-danger-bg, #fdecec); }
@@ -1016,6 +1018,17 @@ textarea { min-height: 7rem; resize: vertical; line-height: 1.6; }
 .evidence-type { padding: .25rem .5rem; color: var(--krds-primary-strong); background: var(--krds-primary-bg); border-radius: .3rem; font-size: .7rem; font-weight: 700; }
 .evidence-law { margin: .45rem 0; color: var(--krds-primary-strong); font-size: .84rem; font-weight: 700; }
 .evidence-card > p:not(.evidence-law) { margin-bottom: .75rem; color: var(--krds-text); line-height: 1.7; white-space: pre-wrap; }
+.evidence-requirement { display: grid; gap: .55rem; margin-bottom: .75rem; }
+.evidence-requirement > p { margin: 0; color: var(--krds-text); line-height: 1.7; }
+.evidence-requirement__fields {
+  display: grid; gap: .3rem .75rem; grid-template-columns: max-content 1fr; margin: 0; padding: .6rem .75rem;
+  background: var(--krds-surface-2); border: 1px solid var(--krds-line); border-radius: .5rem; font-size: .84rem; line-height: 1.55;
+}
+.evidence-requirement__fields dt { color: var(--krds-muted); font-weight: 600; }
+.evidence-requirement__fields dd { margin: 0; color: var(--krds-text); }
+.evidence-requirement__raw { color: var(--krds-muted); font-size: .78rem; }
+.evidence-requirement__raw summary { cursor: pointer; }
+.evidence-requirement__raw p { margin: .3rem 0 0; white-space: pre-wrap; }
 .evidence-footer {
   display: flex; align-items: center; justify-content: space-between; gap: .8rem; padding-top: .6rem;
   border-top: 1px solid var(--krds-line); color: var(--krds-muted); font-size: .78rem;

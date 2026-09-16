@@ -3,9 +3,14 @@ import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { LightweightWorkbench } from "../src/workbench";
 import {
   displayComparisonValue,
+  evidenceSourceHref,
+  evidenceSourceLabel,
   findingDisplayTitle,
   fixParticles,
   humanizeFieldKeys,
+  lawPortalHref,
+  parseRequirementEvidence,
+  requirementSentence,
   reviewerSentence,
 } from "../src/ui/labels";
 
@@ -117,7 +122,7 @@ function reviewRun() {
       { comparison_id: "comparison-2", rule_code: "invoice_packing_quantity_unit", status: "mismatch" as const, left: operand("BOX", ["fact-1"]), right: operand("CTN"), expected_value: "BOX", observed_value: "CTN", unit: null, message: "상업송장과 포장명세서의 단위가 일치하지 않습니다." },
       { comparison_id: "comparison-3", rule_code: "required_field_presence", status: "needs_review" as const, left: operand("packing_no"), right: operand(""), expected_value: "packing_no", observed_value: null, unit: null, message: "포장명세서에서 필수 포장명세서 번호을 확인할 수 없습니다." },
     ],
-    evidence: [],
+    evidence: [] as Array<Record<string, unknown>>,
     findings: [
       { finding_id: "finding-1", code: "document_consistency", message: "상업송장과 포장명세서의 수량이 일치하지 않습니다.", kind: "validation_issue" as const, severity: "high" as const, comparison_id: "comparison-1", document_ids: ["document-1"], fact_ids: ["fact-1"], evidence_ids: [], confidence: 0.9, classification: { error_category: "value_mismatch" as const, explanation: "정규화한 두 값이 서로 다릅니다.", source: "rule" as const } },
       { finding_id: "finding-2", code: "document_consistency", message: "상업송장과 포장명세서의 단위가 일치하지 않습니다.", kind: "validation_issue" as const, severity: "high" as const, comparison_id: "comparison-2", document_ids: ["document-1"], fact_ids: ["fact-1"], evidence_ids: [] },
@@ -185,6 +190,66 @@ describe("labels · reviewer sentences", () => {
     expect(findingDisplayTitle({ code: "invoice_total_amount", kind: "validation_issue", message: "x." })).toBe("Invoice 합계 금액 확인");
     expect(findingDisplayTitle({ code: "document_consistency", kind: "validation_issue", message: "x." }, { rule_code: "bill_packing_container" })).toBe("B/L·포장명세서 컨테이너 번호 비교");
     expect(findingDisplayTitle({ code: "document_consistency", kind: "validation_issue", message: "컨테이너 번호을 두 문서에서 모두 확인할 수 없습니다. 추가 설명." }, null)).toBe("컨테이너 번호를 두 문서에서 모두 확인할 수 없습니다");
+  });
+});
+
+const REQUIREMENT_EVIDENCE = {
+  evidence_id: "evidence-req", item_id: "item-1", source_type: "customs_requirement", source_hash: "c".repeat(64),
+  title: "전기용품 및 생활용품 안전관리법 — 전기용품 및 생활용품 요건확인서",
+  text: "HSK 8504401000 import 요건: 전기용품 및 생활용품 안전관리법; 필요 확인서류 전기용품 및 생활용품 요건확인서; 요건승인기관 국가기술표준원.",
+  source_uri: "https://apis.data.go.kr/1220000/retrieveCcctLworCd/getRetrieveCcctLworCd?hsSgn=8504401000&imexTpcd=2",
+  law_id: "K01", law_name: "전기용품 및 생활용품 안전관리법",
+};
+const ARTICLE_EVIDENCE = {
+  evidence_id: "evidence-law", item_id: "item-1", source_type: "law_article", source_hash: "d".repeat(64),
+  title: "관세법 제226조(허가·승인 등의 증명 및 확인)", text: "세관장은 … 요건을 갖춘 것임을 증명하여야 한다.",
+  source_uri: "https://www.law.go.kr/%EB%B2%95%EB%A0%B9/%EA%B4%80%EC%84%B8%EB%B2%95/%EC%A0%9C226%EC%A1%B0",
+  law_id: "L01", law_name: "관세법",
+};
+
+describe("labels · 통관 요건 근거", () => {
+  it("reads the Data platform's fixed requirement sentence back into reviewer fields", () => {
+    const summary = parseRequirementEvidence(REQUIREMENT_EVIDENCE.text);
+    expect(summary).toEqual({
+      hsCode: "8504.40-1000", direction: "수입", lawName: "전기용품 및 생활용품 안전관리법",
+      documentName: "전기용품 및 생활용품 요건확인서", agency: "국가기술표준원",
+    });
+    expect(requirementSentence(summary!)).toBe(
+      "HSK 8504.40-1000 품목을 수입하려면 「전기용품 및 생활용품 안전관리법」에 따라 국가기술표준원이 확인한 전기용품 및 생활용품 요건확인서를 세관에 제출해야 합니다.",
+    );
+    expect(parseRequirementEvidence("세관장은 … 증명하여야 한다.")).toBeNull();
+  });
+
+  it("sends requirement sources to 법제처 instead of the key-less public-data API, and leaves statute links alone", () => {
+    expect(lawPortalHref("관세법", "제226조")).toBe("https://www.law.go.kr/%EB%B2%95%EB%A0%B9/%EA%B4%80%EC%84%B8%EB%B2%95/%EC%A0%9C226%EC%A1%B0");
+    expect(evidenceSourceHref(REQUIREMENT_EVIDENCE)).toBe(lawPortalHref("전기용품 및 생활용품 안전관리법"));
+    expect(evidenceSourceLabel(REQUIREMENT_EVIDENCE)).toBe("법제처에서 법령 보기");
+    expect(evidenceSourceHref(ARTICLE_EVIDENCE)).toBe(ARTICLE_EVIDENCE.source_uri);
+    expect(evidenceSourceLabel(ARTICLE_EVIDENCE)).toBe("출처 열기");
+    // Without a law name there is nothing to look up on 법제처; the raw link stays.
+    expect(evidenceSourceHref({ ...REQUIREMENT_EVIDENCE, law_name: null })).toBe(REQUIREMENT_EVIDENCE.source_uri);
+  });
+});
+
+describe("통관 심사 · 법령정보", () => {
+  it("shows a requirement as a readable sentence with fields and links it to 법제처", async () => {
+    window.location.hash = "#/cases/case-1/review";
+    const run = reviewRun();
+    run.evidence = [REQUIREMENT_EVIDENCE, ARTICLE_EVIDENCE];
+    const { root, dispose } = await mount(api(run));
+    const requirement = root.querySelector('[data-evidence-id="evidence-req"]');
+    expect(requirement?.querySelector("[data-evidence-requirement]")?.textContent).toContain("HSK 8504.40-1000 품목을 수입하려면");
+    expect(requirement?.querySelector("[data-evidence-requirement]")?.textContent).toContain("필요 확인서류");
+    // The Data platform wording survives only inside the folded "원문 표기" details.
+    expect(requirement?.querySelector("[data-evidence-requirement] > p")?.textContent).not.toMatch(/import 요건/u);
+    expect(requirement?.querySelector("details")?.textContent).toContain("HSK 8504401000 import 요건");
+    const link = requirement?.querySelector<HTMLAnchorElement>("[data-evidence-source]");
+    expect(link?.textContent).toBe("법제처에서 법령 보기");
+    expect(link?.getAttribute("href")).toBe(lawPortalHref("전기용품 및 생활용품 안전관리법"));
+    const article = root.querySelector('[data-evidence-id="evidence-law"]');
+    expect(article?.querySelector("[data-evidence-requirement]")).toBeNull();
+    expect(article?.querySelector<HTMLAnchorElement>("[data-evidence-source]")?.getAttribute("href")).toBe(ARTICLE_EVIDENCE.source_uri);
+    dispose();
   });
 });
 

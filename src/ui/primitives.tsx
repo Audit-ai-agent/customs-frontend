@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
-import { useState } from "react";
-import { safeExternalHref } from "./labels";
+import { Fragment, useState } from "react";
+import { evidenceSourceHref, evidenceSourceLabel, requirementRows, requirementSentence, safeExternalHref } from "./labels";
+import type { RequirementSummary } from "./labels";
 import { useCountUp } from "./motion";
 
 /** Counts a number up on change. Formatting stays with the caller. */
@@ -218,12 +219,50 @@ export function CopyValueButton({ value, label }: { value: string; label: string
 }
 
 /** Only http(s) sources become links; anything else says so instead of rendering a dead link. */
-export function ExternalSourceLink({ uri }: { uri: string }) {
+export function ExternalSourceLink({ uri, label = "출처 열기" }: { uri: string; label?: string }) {
   const href = safeExternalHref(uri);
   if (!href) return <span className="muted">출처 URL을 표시할 수 없습니다.</span>;
   return (
     <a className="text-link" href={href} target="_blank" rel="noopener noreferrer">
-      출처 열기
+      {label}
     </a>
+  );
+}
+
+/**
+ * "출처 열기" for a review evidence item. Requirement rows point at 법제처 rather
+ * than the public-data API they were ingested from (see evidenceSourceHref).
+ */
+export function EvidenceSourceLink({ item }: { item: { source_uri: string; source_type?: string | null; law_name?: string | null } }) {
+  const href = evidenceSourceHref(item);
+  if (!href) return <span className="muted">출처 URL을 표시할 수 없습니다.</span>;
+  return (
+    <a className="text-link" href={href} target="_blank" rel="noopener noreferrer" data-evidence-source>
+      {evidenceSourceLabel(item)}
+    </a>
+  );
+}
+
+/**
+ * A customs requirement the way a reviewer reads it: one actionable sentence,
+ * the four fields, and the Data platform's original wording folded away.
+ */
+export function RequirementSummaryView({ summary, rawText }: { summary: RequirementSummary; rawText: string }) {
+  return (
+    <div className="evidence-requirement" data-evidence-requirement>
+      <p>{requirementSentence(summary)}</p>
+      <dl className="evidence-requirement__fields">
+        {requirementRows(summary).map((row) => (
+          <Fragment key={row.label}>
+            <dt>{row.label}</dt>
+            <dd>{row.value}</dd>
+          </Fragment>
+        ))}
+      </dl>
+      <details className="evidence-requirement__raw">
+        <summary>원문 표기 보기</summary>
+        <p>{rawText}</p>
+      </details>
+    </div>
   );
 }

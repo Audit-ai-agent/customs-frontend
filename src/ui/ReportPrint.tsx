@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import type { CaseDetail, ReviewFinding, ReviewRun, ReviewerDecision } from "../api/v1/types";
 import { sessionDisplayName } from "./Chrome";
-import { citationLabel, decisionReasonLabel, decisionStatusLabel, display, displayComparisonValue, documentAnalysisLabel, evidenceSourceTypeLabel, findingDisplayTitle, findingKindLabel, formatDate, formatDay, groundedCitations, reportSectionDescription, reviewerSentence, severityLabel, severityWeight, engineKindLabel } from "./labels";
+import { citationLabel, decisionReasonLabel, decisionStatusLabel, display, displayComparisonValue, documentAnalysisLabel, evidenceSourceHref, evidenceSourceTypeLabel, findingDisplayTitle, findingKindLabel, formatDate, formatDay, groundedCitations, parseRequirementEvidence, reportSectionDescription, requirementRows, requirementSentence, reviewerSentence, severityLabel, severityWeight, engineKindLabel } from "./labels";
 import { nextStepRows } from "./nextSteps";
 import { useWorkbenchState } from "./useStore";
 
@@ -193,6 +193,7 @@ export function ReportPrintView({ run, current, printedBy }: { run: ReviewRun; c
         {run.evidence.length ? (
           run.evidence.map((item) => {
             const linked = run.findings.filter((finding) => finding.evidence_ids.includes(item.evidence_id)).length;
+            const requirement = item.source_type === "customs_requirement" ? parseRequirementEvidence(item.text) : null;
             return (
               <div className="report-print__block" key={item.evidence_id}>
                 <h3>{item.title}</h3>
@@ -201,8 +202,17 @@ export function ReportPrintView({ run, current, printedBy }: { run: ReviewRun; c
                     .filter(Boolean)
                     .join(" · ")}
                 </p>
-                <p>{item.text}</p>
-                <p className="report-print__source">{`출처: ${item.source_uri}`}</p>
+                {requirement ? (
+                  <>
+                    <p>{requirementSentence(requirement)}</p>
+                    <p className="report-print__hint">
+                      {requirementRows(requirement).map((row) => `${row.label} ${row.value}`).join(" · ")}
+                    </p>
+                  </>
+                ) : (
+                  <p>{item.text}</p>
+                )}
+                <p className="report-print__source">{`출처: ${evidenceSourceHref(item) ?? item.source_uri}`}</p>
               </div>
             );
           })

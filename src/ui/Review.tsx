@@ -11,12 +11,13 @@ import type {
   ReviewerDecision,
   SourceReference,
 } from "../api/v1/types";
-import { DECISION_REASON_OPTIONS, citationLabel, comparisonStatusLabel, decisionReasonLabel, decisionStatusLabel, display, displayComparisonValue, displayValue, documentAnalysisLabel, documentTypeLabel, evidenceSourceTypeLabel, findingDisplayTitle, findingKindLabel, focusDataTarget, formatDate, groundedCitations, reportSectionDescription, reviewerSentence, ruleTitle, severityWeight, errorCategoryLabel, engineKindLabel, percentLabel, reviewTrackLabel, verdictLabel } from "./labels";
+import { DECISION_REASON_OPTIONS, citationLabel, comparisonStatusLabel, decisionReasonLabel, decisionStatusLabel, display, displayComparisonValue, displayValue, documentAnalysisLabel, documentTypeLabel, evidenceSourceTypeLabel, findingDisplayTitle, findingKindLabel, focusDataTarget, formatDate, groundedCitations, reportSectionDescription, reviewerSentence, ruleTitle, severityWeight, errorCategoryLabel, engineKindLabel, parseRequirementEvidence, percentLabel, reviewTrackLabel, verdictLabel } from "./labels";
 import {
   CollapsibleSection,
   EmptyCopy,
   EmptyState,
-  ExternalSourceLink,
+  EvidenceSourceLink,
+  RequirementSummaryView,
   Field,
   Metric,
   ReportSectionCard,
@@ -797,6 +798,7 @@ function EvidenceList({ run }: { run: ReviewRun }) {
 
   const card = (item: (typeof run.evidence)[number]) => {
     const linked = run.findings.filter((finding) => finding.evidence_ids.includes(item.evidence_id));
+    const requirement = item.source_type === "customs_requirement" ? parseRequirementEvidence(item.text) : null;
     return (
       <article
         key={item.evidence_id}
@@ -808,10 +810,10 @@ function EvidenceList({ run }: { run: ReviewRun }) {
           <h3>{item.title}</h3>
         </header>
         {item.law_name ? <p className="evidence-law">{item.law_name}</p> : null}
-        <p>{item.text}</p>
+        {requirement ? <RequirementSummaryView summary={requirement} rawText={item.text} /> : <p>{item.text}</p>}
         <div className="evidence-footer">
           <span>연결된 확인 사항 {linked.length}건</span>
-          <ExternalSourceLink uri={item.source_uri} />
+          <EvidenceSourceLink item={item} />
         </div>
       </article>
     );

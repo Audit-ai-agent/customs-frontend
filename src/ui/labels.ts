@@ -559,6 +559,95 @@ export function safeExternalHref(value: string): string | null {
   }
 }
 
+/* ── 법령 근거 출처·통관 요건 표시 ─────────────────────────── */
+
+/** 법제처 국가법령정보센터의 법령명 URL. 조문 라벨("제226조")이 있으면 그 조문으로 바로 간다. */
+export function lawPortalHref(lawName: string, articleLabel?: string | null): string {
+  const path = [lawName.trim(), articleLabel?.trim()].filter(Boolean).join("/");
+  return encodeURI(`https://www.law.go.kr/법령/${path}`);
+}
+
+function isDataPortalApi(href: string | null): boolean {
+  if (!href) return false;
+  const host = new URL(href).hostname;
+  return host === "data.go.kr" || host.endsWith(".data.go.kr");
+}
+
+/**
+ * Where "출처 열기" should take the reviewer. A customs-requirement row cites the
+ * public-data API it was ingested from; opening that in a browser shows only a
+ * SERVICE_KEY_IS_NULL error page, so the link goes to the law on 법제처 instead.
+ * Statute rows already carry a 법제처 URL and are used as-is.
+ */
+export function evidenceSourceHref(item: { source_uri: string; source_type?: string | null; law_name?: string | null }): string | null {
+  const direct = safeExternalHref(item.source_uri);
+  const lawName = item.law_name?.trim();
+  if (lawName && (item.source_type === "customs_requirement" || isDataPortalApi(direct))) return lawPortalHref(lawName);
+  return direct;
+}
+
+export function evidenceSourceLabel(item: { source_uri: string; source_type?: string | null; law_name?: string | null }): string {
+  const href = evidenceSourceHref(item);
+  return href !== null && href !== safeExternalHref(item.source_uri) ? "법제처에서 법령 보기" : "출처 열기";
+}
+
+export interface RequirementSummary {
+  /** 8504.40-1000 */
+  hsCode: string;
+  direction: "수입" | "수출";
+  lawName: string;
+  documentName: string;
+  agency: string;
+}
+
+/** 10자리 HSK를 8504.40-1000 꼴로 적는다. 자릿수가 다르면 그대로 돌려준다. */
+export function formatHsk(code: string): string {
+  const digits = code.replace(/\D/gu, "");
+  if (digits.length !== 10) return code;
+  return `${digits.slice(0, 4)}.${digits.slice(4, 6)}-${digits.slice(6)}`;
+}
+
+const REQUIREMENT_TEXT =
+  /^HSK\s+(\d{10})\s+(import|export)\s+요건:\s*(.+?);\s*필요 확인서류\s+(.+?);\s*요건승인기관\s+(.+?)\.?\s*$/u;
+
+/**
+ * The Data platform writes every customs-requirement evidence text in one fixed
+ * sentence ("HSK 8504401000 import 요건: 법령; 필요 확인서류 서류; 요건승인기관 기관.").
+ * This reads the fields back so the screen can show them the way a reviewer reads
+ * them. Any other text returns null and is shown unchanged.
+ */
+export function parseRequirementEvidence(text: string): RequirementSummary | null {
+  const match = REQUIREMENT_TEXT.exec(text.trim());
+  if (!match) return null;
+  const [, hsk, direction, lawName, documentName, agency] = match;
+  if (!hsk || !direction || !lawName || !documentName || !agency) return null;
+  return {
+    hsCode: formatHsk(hsk),
+    direction: direction === "import" ? "수입" : "수출",
+    lawName: lawName.trim(),
+    documentName: documentName.trim(),
+    agency: agency.trim(),
+  };
+}
+
+/** One plain sentence a reviewer can act on, built from the parsed requirement. */
+export function requirementSentence(summary: RequirementSummary): string {
+  const agency = summary.agency === "기관 미상" ? "요건승인기관" : summary.agency;
+  return fixParticles(
+    `HSK ${summary.hsCode} 품목을 ${summary.direction}하려면 「${summary.lawName}」에 따라 ${agency}이 확인한 ${summary.documentName}를 세관에 제출해야 합니다.`,
+  );
+}
+
+/** "대상 품목 · 확인 법령 · …" rows for the requirement card and the printed report. */
+export function requirementRows(summary: RequirementSummary): readonly { label: string; value: string }[] {
+  return [
+    { label: "대상 품목", value: `HSK ${summary.hsCode} · ${summary.direction} 요건` },
+    { label: "확인 법령", value: summary.lawName },
+    { label: "필요 확인서류", value: summary.documentName },
+    { label: "요건승인기관", value: summary.agency },
+  ];
+}
+
 /* ── Agent 3.3 · 그래프 트레이스 · 신뢰도 · 권고 판정 ───────────── */
 
 export function graphNodeLabel(value: string): string {
