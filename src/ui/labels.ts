@@ -487,6 +487,27 @@ export function sourceForOperand(run: ReviewRun, operand: ReviewComparison["left
   return null;
 }
 
+/**
+ * The finding's fact that belongs to the chosen document, with its line item.
+ * A fact from another document would make the proposal target inconsistent, and
+ * a line-item fact needs its item so a reordered child extraction still finds it.
+ */
+export function correctionTargetForFinding(
+  run: ReviewRun,
+  finding: ReviewFinding,
+  documentId: string,
+): { fact_id: string; item_id: string | null } | null {
+  const analysis = run.document_analyses.find((value) => value.document_id === documentId);
+  if (!analysis) return null;
+  const fact = analysis.facts.find((value) => finding.fact_ids.includes(value.fact_id));
+  if (fact) return { fact_id: fact.fact_id, item_id: null };
+  for (const item of analysis.line_items) {
+    const itemFact = item.facts.find((value) => finding.fact_ids.includes(value.fact_id));
+    if (itemFact) return { fact_id: itemFact.fact_id, item_id: item.item_id };
+  }
+  return null;
+}
+
 export function findFact(run: ReviewRun, factId: string): DocumentFact | null {
   for (const analysis of run.document_analyses) {
     for (const fact of [...analysis.facts, ...analysis.line_items.flatMap((item) => item.facts)]) {

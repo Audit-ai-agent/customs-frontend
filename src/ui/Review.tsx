@@ -11,7 +11,7 @@ import type {
   ReviewerDecision,
   SourceReference,
 } from "../api/v1/types";
-import { DECISION_REASON_OPTIONS, citationLabel, comparisonStatusLabel, decisionReasonLabel, decisionStatusLabel, display, displayComparisonValue, displayValue, documentAnalysisLabel, documentTypeLabel, evidenceSourceTypeLabel, findingDisplayTitle, findingKindLabel, focusDataTarget, formatDate, groundedCitations, reportSectionDescription, reviewerSentence, ruleTitle, severityWeight, errorCategoryLabel, engineKindLabel, parseRequirementEvidence, percentLabel, reviewTrackLabel, verdictLabel } from "./labels";
+import { DECISION_REASON_OPTIONS, citationLabel, comparisonStatusLabel, correctionTargetForFinding, decisionReasonLabel, decisionStatusLabel, display, displayComparisonValue, displayValue, documentAnalysisLabel, documentTypeLabel, evidenceSourceTypeLabel, findingDisplayTitle, findingKindLabel, focusDataTarget, formatDate, groundedCitations, reportSectionDescription, reviewerSentence, ruleTitle, severityWeight, errorCategoryLabel, engineKindLabel, parseRequirementEvidence, percentLabel, reviewTrackLabel, verdictLabel } from "./labels";
 import {
   CollapsibleSection,
   EmptyCopy,
@@ -453,7 +453,7 @@ function FindingCard({
             ) : null}
           </div>
           <DecisionPanel finding={finding} decision={decision} />
-          <CorrectionProposalPanel finding={finding} source={source} />
+          <CorrectionProposalPanel finding={finding} run={run} source={source} />
         </>
       </Collapsible>
     </article>
@@ -643,7 +643,15 @@ function DecisionPanel({ finding, decision }: { finding: ReviewFinding; decision
   );
 }
 
-function CorrectionProposalPanel({ finding, source }: { finding: ReviewFinding; source: SourceReference | null }) {
+function CorrectionProposalPanel({
+  finding,
+  run,
+  source,
+}: {
+  finding: ReviewFinding;
+  run: ReviewRun;
+  source: SourceReference | null;
+}) {
   const store = useStore();
   const state = useWorkbenchState();
   const draft = state.correctionDraft;
@@ -685,8 +693,11 @@ function CorrectionProposalPanel({ finding, source }: { finding: ReviewFinding; 
     );
   }
 
-  const factId = target?.fact_id ?? finding.fact_ids[0] ?? "";
-  const itemId = target?.item_id ?? "";
+  // Without an assistant draft, target the finding's fact in the selected document
+  // (never another document's fact) and carry its line item along.
+  const findingTarget = target ? null : correctionTargetForFinding(run, finding, documentId);
+  const factId = target ? (target.fact_id ?? "") : (findingTarget?.fact_id ?? "");
+  const itemId = target ? (target.item_id ?? "") : (findingTarget?.item_id ?? "");
 
   return (
     <details className="correction-proposal-panel" open={matchesDraft}>

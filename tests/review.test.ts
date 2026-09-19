@@ -2,6 +2,7 @@ import { act } from "react";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { LightweightWorkbench } from "../src/workbench";
 import {
+  correctionTargetForFinding,
   displayComparisonValue,
   evidenceSourceHref,
   evidenceSourceLabel,
@@ -454,5 +455,23 @@ describe("통관 심사 · 보고서 PDF 저장", () => {
     await flush();
     expect(document.body.querySelector(".report-print")).toBeNull();
     dispose();
+  });
+});
+
+describe("correctionTargetForFinding", () => {
+  it("targets the selected document's fact and carries its line item", () => {
+    const run = reviewRun();
+    const packing = {
+      ...run.document_analyses[0]!,
+      document_id: "document-2",
+      facts: [],
+      line_items: [{ item_id: "document-2:item:1", source: SOURCE, facts: [{ ...run.document_analyses[0]!.facts[0]!, fact_id: "document-2:item:1:field:quantity:2" }] }],
+    };
+    const withPacking = { ...run, document_analyses: [run.document_analyses[0]!, packing] } as unknown as Parameters<typeof correctionTargetForFinding>[0];
+    const finding = { ...run.findings[0]!, fact_ids: ["fact-1", "document-2:item:1:field:quantity:2"] } as unknown as Parameters<typeof correctionTargetForFinding>[1];
+
+    expect(correctionTargetForFinding(withPacking, finding, "document-1")).toEqual({ fact_id: "fact-1", item_id: null });
+    expect(correctionTargetForFinding(withPacking, finding, "document-2")).toEqual({ fact_id: "document-2:item:1:field:quantity:2", item_id: "document-2:item:1" });
+    expect(correctionTargetForFinding(withPacking, finding, "document-3")).toBeNull();
   });
 });
