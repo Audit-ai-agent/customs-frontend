@@ -1131,6 +1131,54 @@ export interface LlmSettingsUpdate {
   timeout_seconds?: number;
 }
 
+/* ── Demo fallback (hidden #/admin): pre-registered review results replayed when the LLM is down ── */
+
+export type DemoFallbackMode = "off" | "auto" | "always";
+
+export interface DemoFallbackDocument {
+  document_id: string;
+  filename: string;
+  document_type: string;
+  content_sha256: string;
+}
+
+export interface DemoFallbackSet {
+  fallback_id: string;
+  name: string;
+  source_case_id: string;
+  source_case_title: string;
+  source_review_run_id: string;
+  documents: DemoFallbackDocument[];
+  has_hs_ranking: boolean;
+  finding_count: number;
+  created_by: string;
+  created_at: string;
+  used_count: number;
+  last_used_at: string | null;
+}
+
+export interface DemoFallbackSettings {
+  mode: DemoFallbackMode;
+  delay_seconds: number;
+  updated_by: string | null;
+  updated_at: string | null;
+}
+
+export interface DemoFallbackView {
+  settings: DemoFallbackSettings;
+  sets: DemoFallbackSet[];
+}
+
+export interface DemoFallbackSettingsUpdate {
+  mode?: DemoFallbackMode;
+  delay_seconds?: number;
+}
+
+export interface DemoFallbackRegister {
+  name: string;
+  review_run_id: string;
+}
+
 export interface LlmConnectionTest {
   ok: boolean;
   provider: string | null;

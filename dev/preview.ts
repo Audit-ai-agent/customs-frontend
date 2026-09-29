@@ -275,6 +275,37 @@ const api = {
     const entry = { status: payload.status, reason_code: payload.reason_code ?? null, reason, decided_by: "local-reviewer", decided_at: NOW };
     return { finding_id: findingId, ...entry, history: [entry] };
   },
+  getDemoFallback: async () => ({
+    settings: { mode: "auto" as const, delay_seconds: 4, updated_by: "local-approver", updated_at: NOW },
+    sets: [
+      {
+        fallback_id: "fallback-001", name: "시연 1 · 티셔츠 수입", source_case_id: "case-1", source_case_title: "입항 서류 검토 · 티셔츠",
+        source_review_run_id: "run-001",
+        documents: [
+          { document_id: "doc-1", filename: "C0001_INV.pdf", document_type: "CI", content_sha256: "a".repeat(64) },
+          { document_id: "doc-2", filename: "C0001_PL.pdf", document_type: "PL", content_sha256: "b".repeat(64) },
+          { document_id: "doc-3", filename: "C0001_BL.pdf", document_type: "BL", content_sha256: "c".repeat(64) },
+          { document_id: "doc-4", filename: "C0001_CO.pdf", document_type: "CO", content_sha256: "d".repeat(64) },
+        ],
+        has_hs_ranking: true, finding_count: 4, created_by: "local-approver", created_at: NOW, used_count: 2, last_used_at: NOW,
+      },
+      {
+        fallback_id: "fallback-002", name: "시연 2 · 다품목", source_case_id: "case-2", source_case_title: "다품목 송장",
+        source_review_run_id: "run-002",
+        documents: [
+          { document_id: "doc-5", filename: "M0001_INV.pdf", document_type: "CI", content_sha256: "e".repeat(64) },
+          { document_id: "doc-6", filename: "M0001_PL.pdf", document_type: "PL", content_sha256: "f".repeat(64) },
+        ],
+        has_hs_ranking: false, finding_count: 6, created_by: "local-approver", created_at: NOW, used_count: 0, last_used_at: null,
+      },
+    ],
+  }),
+  updateDemoFallback: async (update: { mode?: "off" | "auto" | "always"; delay_seconds?: number }) => ({
+    settings: { mode: update.mode ?? ("auto" as const), delay_seconds: update.delay_seconds ?? 4, updated_by: "local-approver", updated_at: NOW },
+    sets: [],
+  }),
+  registerDemoFallbackSet: async () => ({ settings: { mode: "auto" as const, delay_seconds: 4, updated_by: null, updated_at: null }, sets: [] }),
+  deleteDemoFallbackSet: async () => ({ settings: { mode: "auto" as const, delay_seconds: 4, updated_by: null, updated_at: null }, sets: [] }),
   getCaseHsClassification: async () => ({
     case_id: "case-1",
     basis_kind: "agent_ranked" as const,

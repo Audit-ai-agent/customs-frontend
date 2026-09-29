@@ -249,3 +249,82 @@ describe("hidden admin page (#/admin)", () => {
     dispose();
   });
 });
+
+
+describe("demo fallback on the hidden admin page", () => {
+  const fallbackView = (mode: "off" | "auto" | "always", sets: unknown[] = []) => ({
+    settings: { mode, delay_seconds: 4, updated_by: null, updated_at: null },
+    sets,
+  });
+  const registeredSet = {
+    fallback_id: "fallback-1",
+    name: "시연 1",
+    source_case_id: "case-1",
+    source_case_title: "티셔츠 수입",
+    source_review_run_id: "run-1",
+    documents: [
+      { document_id: "d1", filename: "C0001_INV.pdf", document_type: "CI", content_sha256: "a".repeat(64) },
+      { document_id: "d2", filename: "C0001_PL.pdf", document_type: "PL", content_sha256: "b".repeat(64) },
+    ],
+    has_hs_ranking: true,
+    finding_count: 3,
+    created_by: "admin",
+    created_at: "2026-09-30T02:00:00Z",
+    used_count: 0,
+    last_used_at: null,
+  };
+
+  it("lets an approver switch the mode and register a completed run of a chosen case", async () => {
+    window.location.hash = "#/admin";
+    const getDemoFallback = vi.fn(async () => fallbackView("off"));
+    const updateDemoFallback = vi.fn(async (update: { mode?: string }) => fallbackView(update.mode as "auto"));
+    const listReviewRuns = vi.fn(async () => [
+      { review_run_id: "run-1", case_id: "case-1", job_id: "job-1", review_as_of: "2026-09-30", trade_type: "import", execution_status: "completed", assessment: "needs_review", review_disposition: "human_review_required", result_digest: "c".repeat(64), finding_count: 3, reviewer_decision_count: 0, created_at: "2026-09-30T01:00:00Z" },
+    ]);
+    const registerDemoFallbackSet = vi.fn(async () => fallbackView("auto", [registeredSet]));
+    const { root, dispose } = await mount(
+      {
+        getLlmSettings: async () => llmSettings(),
+        listCases: async () => ({ items: [{ case_id: "case-1", org_id: "local-org", title: "티셔츠 수입", status: "in_review", revision: 1, updated_at: "2026-09-30T00:00:00Z" }] }),
+        getDemoFallback,
+        updateDemoFallback,
+        listReviewRuns,
+        registerDemoFallbackSet,
+      },
+      ["reviewer", "approver"],
+    );
+
+    expect(getDemoFallback).toHaveBeenCalledTimes(1);
+    const card = root.querySelector("[data-admin-fallback]");
+    expect(card?.textContent).toContain("등록된 세트가 없습니다");
+
+    // Mode radios save immediately.
+    await click(card?.querySelector('input[name="demo-fallback-mode"][value="auto"]'));
+    expect(updateDemoFallback).toHaveBeenCalledWith({ mode: "auto" });
+
+    // Choosing a case lists its runs; the form registers the selected one.
+    const form = card?.querySelector<HTMLFormElement>("[data-admin-fallback-register]");
+    setValue(form?.querySelector<HTMLInputElement>('input[type="text"]') ?? null, "시연 1");
+    const selects = form?.querySelectorAll<HTMLSelectElement>("select") ?? [];
+    setValue(selects[0] ?? null, "case-1");
+    await flush();
+    expect(listReviewRuns).toHaveBeenCalledWith("case-1");
+    expect(selects[1]?.value).toBe("run-1");
+    await submit(form);
+    expect(registerDemoFallbackSet).toHaveBeenCalledWith({ name: "시연 1", review_run_id: "run-1" });
+    const row = root.querySelector('[data-admin-fallback-set="fallback-1"]');
+    expect(row?.textContent).toContain("티셔츠 수입");
+    expect(row?.textContent).toContain("C0001_INV.pdf");
+    expect(row?.textContent).toContain("있음");
+    dispose();
+  });
+
+  it("shows only the role note to a reviewer-only session and never asks the Backend", async () => {
+    window.location.hash = "#/admin";
+    const getDemoFallback = vi.fn(async () => fallbackView("off"));
+    const { root, dispose } = await mount({ getLlmSettings: async () => llmSettings(), getDemoFallback }, ["reviewer"]);
+    expect(getDemoFallback).not.toHaveBeenCalled();
+    expect(root.querySelector("[data-admin-fallback]")?.textContent).toContain("승인자 역할에서만");
+    dispose();
+  });
+});

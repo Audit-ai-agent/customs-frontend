@@ -19,6 +19,7 @@ import {
   decodeJob,
   decodeLawCatalog,
   decodeLawSearch,
+  decodeDemoFallback,
   decodeLlmConnectionTest,
   decodeLlmSettings,
   decodeOperationsMetrics,
@@ -66,6 +67,9 @@ import type {
   LawCatalog,
   LawSearch,
   LlmConnectionTest,
+  DemoFallbackRegister,
+  DemoFallbackSettingsUpdate,
+  DemoFallbackView,
   LlmSettingsUpdate,
   LlmSettingsView,
   OperationsMetrics,
@@ -524,6 +528,40 @@ export class ApiClient {
 
   getOperationsMetrics(): Promise<OperationsMetrics> {
     return this.request("/operations-metrics", { method: "GET" }, decodeOperationsMetrics);
+  }
+
+  /* ── admin: demo fallback (approver only; hidden #/admin page) ── */
+
+  getDemoFallback(): Promise<DemoFallbackView> {
+    return this.request("/admin/demo-fallback", { method: "GET" }, decodeDemoFallback);
+  }
+
+  updateDemoFallback(update: DemoFallbackSettingsUpdate): Promise<DemoFallbackView> {
+    const payload: Record<string, unknown> = {};
+    if (update.mode !== undefined) payload.mode = update.mode;
+    if (update.delay_seconds !== undefined) {
+      if (!Number.isFinite(update.delay_seconds) || update.delay_seconds < 0 || update.delay_seconds > 60) {
+        throw new ContractError("demo fallback delay is invalid");
+      }
+      payload.delay_seconds = update.delay_seconds;
+    }
+    if (Object.keys(payload).length === 0) throw new ContractError("demo fallback update is empty");
+    return this.request("/admin/demo-fallback", this.json("PUT", payload), decodeDemoFallback);
+  }
+
+  registerDemoFallbackSet(payload: DemoFallbackRegister): Promise<DemoFallbackView> {
+    const name = payload.name.trim();
+    if (!name || name.length > 120) throw new ContractError("demo fallback set name is invalid");
+    if (!payload.review_run_id) throw new ContractError("demo fallback run is invalid");
+    return this.request(
+      "/admin/demo-fallback/sets",
+      this.json("POST", { name, review_run_id: payload.review_run_id }),
+      decodeDemoFallback,
+    );
+  }
+
+  deleteDemoFallbackSet(fallbackId: string): Promise<DemoFallbackView> {
+    return this.request(`/admin/demo-fallback/sets/${segment(fallbackId)}`, { method: "DELETE" }, decodeDemoFallback);
   }
 
   /* ── admin: LLM settings (approver only; reached from the hidden #/admin page) ── */

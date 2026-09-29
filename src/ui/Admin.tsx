@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from "react";
-import type { LlmProvider, LlmSettingsUpdate, LlmSettingsView } from "../api/v1/types";
+import type { DemoFallbackMode, LlmProvider, LlmSettingsUpdate, LlmSettingsView, ReviewRunSummary } from "../api/v1/types";
 import { formatDate, providerLabel } from "./labels";
 import { EmptyCopy, Field, RoleBoundaryNote, SectionHeading, Submit } from "./primitives";
 import { useStore, useWorkbenchState } from "./useStore";
@@ -111,6 +111,244 @@ export function AdminPage() {
         </section>
       )}
       <ConnectionTestCard />
+      <DemoFallbackCard />
+    </section>
+  );
+}
+
+/* ── 시연 폴백 ───────────────────────────────────────────────────
+ * 현장 시연 중 LLM 제공자가 죽어도 심사가 멈추지 않도록, 완료된 심사
+ * 실행을 Case별로 여러 개 미리 등록해 둔다. 같은 서류(내용 해시가 같은
+ * 확정 문서 집합)로 심사를 걸면 모드에 따라 Agent 대신 등록된 결과를
+ * 그대로 재사용한다. 자동: Agent 호출이 실패했을 때만. 항상: 무조건. */
+
+const MODE_LABELS: Record<DemoFallbackMode, { label: string; help: string }> = {
+  off: { label: "끄기", help: "항상 Agent(LLM)를 호출합니다." },
+  auto: { label: "자동", help: "Agent 호출이 실패하면 같은 서류로 등록된 결과를 대신 씁니다." },
+  always: { label: "항상", help: "같은 서류가 등록돼 있으면 Agent를 부르지 않고 등록된 결과를 씁니다(리허설용)." },
+};
+
+function DemoFallbackCard() {
+  const store = useStore();
+  const state = useWorkbenchState();
+  const view = state.demoFallback;
+  const isApprover = store.hasRole("approver");
+  const [delay, setDelay] = useState("");
+  const [name, setName] = useState("");
+  const [caseId, setCaseId] = useState("");
+  const [runs, setRuns] = useState<ReviewRunSummary[]>([]);
+  const [runId, setRunId] = useState("");
+  const [runsError, setRunsError] = useState<string | null>(null);
+  const [formError, setFormError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (view !== null) setDelay(String(view.settings.delay_seconds));
+  }, [view]);
+
+  // Picking a case lists its completed runs; the newest one is preselected.
+  useEffect(() => {
+    if (!caseId) {
+      setRuns([]);
+      setRunId("");
+      return;
+    }
+    let cancelled = false;
+    store
+      .listRunsForDemoFallback(caseId)
+      .then((items) => {
+        if (cancelled) return;
+        const completed = items.filter((item) => !item.parent_review_run_id);
+        setRuns(completed);
+        setRunId(completed[0]?.review_run_id ?? "");
+        setRunsError(completed.length ? null : "이 Case에는 등록할 수 있는 완료된 심사 실행이 없습니다.");
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setRuns([]);
+        setRunId("");
+        setRunsError("심사 실행 목록을 불러오지 못했습니다.");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [caseId, store]);
+
+  if (!isApprover) {
+    return (
+      <section className="surface" data-admin-fallback>
+        <SectionHeading title="시연 폴백" description="LLM 제공자 장애에 대비해 미리 등록한 심사 결과를 재사용하는 설정입니다." />
+        <RoleBoundaryNote>시연 폴백 설정은 승인자 역할에서만 볼 수 있습니다.</RoleBoundaryNote>
+      </section>
+    );
+  }
+  if (state.demoFallbackError !== null && view === null) {
+    return (
+      <section className="surface" data-admin-fallback>
+        <SectionHeading title="시연 폴백" description="LLM 제공자 장애에 대비해 미리 등록한 심사 결과를 재사용하는 설정입니다." />
+        <p className="unsupported-inline">{state.demoFallbackError}</p>
+        <button className="btn" type="button" onClick={() => void store.refreshDemoFallback()}>다시 시도</button>
+      </section>
+    );
+  }
+  if (view === null) {
+    return (
+      <section className="surface" data-admin-fallback>
+        <SectionHeading title="시연 폴백" description="LLM 제공자 장애에 대비해 미리 등록한 심사 결과를 재사용하는 설정입니다." />
+        <EmptyCopy>시연 폴백 설정을 불러오는 중…</EmptyCopy>
+      </section>
+    );
+  }
+
+  const busy = state.demoFallbackSaving;
+  const onSaveDelay = () => {
+    const value = Number(delay);
+    if (delay.trim() === "" || !Number.isFinite(value) || value < 0 || value > 60) {
+      setFormError("재생 대기 시간은 0초 이상 60초 이하로 입력해 주십시오.");
+      return;
+    }
+    setFormError(null);
+    void store.saveDemoFallbackSettings({ delay_seconds: value });
+  };
+  const onRegister = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!name.trim()) {
+      setFormError("세트 이름을 입력해 주십시오.");
+      return;
+    }
+    if (!runId) {
+      setFormError("등록할 심사 실행을 선택해 주십시오.");
+      return;
+    }
+    setFormError(null);
+    void store.registerDemoFallbackSet({ name, review_run_id: runId }).then(() => setName(""));
+  };
+
+  return (
+    <section className="surface" data-admin-fallback>
+      <div className="dash-head">
+        <SectionHeading
+          title="시연 폴백"
+          description="LLM 제공자가 응답하지 않아도 시연이 멈추지 않도록, 완료된 심사 실행을 Case별로 여러 개 등록해 두고 같은 서류로 심사할 때 그 결과를 재사용합니다. AI HSK 추출 결과도 함께 재사용됩니다."
+        />
+        <button className="btn" type="button" disabled={state.demoFallbackLoading} onClick={() => void store.refreshDemoFallback()}>
+          {state.demoFallbackLoading ? "불러오는 중…" : "새로 고침"}
+        </button>
+      </div>
+      {state.demoFallbackError !== null ? <p className="unsupported-inline">{state.demoFallbackError}</p> : null}
+      <fieldset className="admin-fallback__modes" data-admin-fallback-mode>
+        <legend>모드</legend>
+        {(Object.keys(MODE_LABELS) as DemoFallbackMode[]).map((mode) => (
+          <label key={mode} className={`admin-fallback__mode${view.settings.mode === mode ? " on" : ""}`}>
+            <input
+              type="radio"
+              name="demo-fallback-mode"
+              value={mode}
+              checked={view.settings.mode === mode}
+              disabled={busy}
+              onChange={() => void store.saveDemoFallbackSettings({ mode })}
+            />
+            <b>{MODE_LABELS[mode].label}</b>
+            <span>{MODE_LABELS[mode].help}</span>
+          </label>
+        ))}
+      </fieldset>
+      <div className="admin-form admin-fallback__delay">
+        <Field label="재생 대기 시간 (초, 0–60)">
+          <input type="number" inputMode="decimal" min={0} max={60} step={1} value={delay} disabled={busy} onChange={(event) => setDelay(event.target.value)} />
+        </Field>
+        <div className="admin-form__actions">
+          <button className="btn" type="button" disabled={busy} onClick={onSaveDelay} data-admin-fallback-delay>
+            대기 시간 저장
+          </button>
+        </div>
+      </div>
+      <p className="form-hint">
+        {`현재 모드 ${MODE_LABELS[view.settings.mode].label} · 마지막 변경 ${view.settings.updated_at === null ? "—" : `${formatDate(view.settings.updated_at)} (${view.settings.updated_by ?? ""})`}`}
+      </p>
+
+      <SectionHeading title="등록된 세트" description="같은 서류(확정 문서 집합)로 새 Case를 만들어 심사하면 이 결과가 재사용됩니다. 여러 Case를 등록할 수 있습니다." />
+      {view.sets.length === 0 ? (
+        <EmptyCopy>등록된 세트가 없습니다. 아래에서 완료된 심사 실행을 골라 등록하십시오.</EmptyCopy>
+      ) : (
+        <table className="admin-fallback__table" data-admin-fallback-sets>
+          <thead>
+            <tr>
+              <th>이름</th>
+              <th>원본 Case</th>
+              <th>서류</th>
+              <th>확인 사항</th>
+              <th>AI HSK</th>
+              <th>사용</th>
+              <th>등록</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {view.sets.map((set) => (
+              <tr key={set.fallback_id} data-admin-fallback-set={set.fallback_id}>
+                <td>{set.name}</td>
+                <td>
+                  {set.source_case_title || set.source_case_id}
+                  <small className="mono">{set.source_review_run_id}</small>
+                </td>
+                <td>
+                  {set.documents.length}건
+                  <small>{set.documents.map((document) => `${document.document_type} ${document.filename}`).join(", ")}</small>
+                </td>
+                <td className="mono">{set.finding_count}</td>
+                <td>{set.has_hs_ranking ? "있음" : "없음"}</td>
+                <td className="mono">
+                  {set.used_count}회{set.last_used_at === null ? "" : ` · ${formatDate(set.last_used_at)}`}
+                </td>
+                <td>{formatDate(set.created_at)}</td>
+                <td>
+                  <button
+                    className="btn"
+                    type="button"
+                    disabled={busy}
+                    onClick={() => {
+                      if (window.confirm(`세트 「${set.name}」를 삭제합니다. 계속하시겠습니까?`)) void store.deleteDemoFallbackSet(set.fallback_id);
+                    }}
+                  >
+                    삭제
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+
+      <form className="admin-form admin-fallback__register" onSubmit={onRegister} data-admin-fallback-register>
+        <Field label="세트 이름">
+          <input type="text" value={name} maxLength={120} disabled={busy} placeholder="예: 시연 1 · 티셔츠 수입" onChange={(event) => setName(event.target.value)} />
+        </Field>
+        <Field label="Case">
+          <select value={caseId} disabled={busy} onChange={(event) => setCaseId(event.target.value)}>
+            <option value="">Case 선택</option>
+            {state.cases.map((item) => (
+              <option key={item.case_id} value={item.case_id}>
+                {item.title}
+              </option>
+            ))}
+          </select>
+        </Field>
+        <Field label="심사 실행">
+          <select value={runId} disabled={busy || runs.length === 0} onChange={(event) => setRunId(event.target.value)}>
+            {runs.length === 0 ? <option value="">Case를 먼저 선택</option> : null}
+            {runs.map((run) => (
+              <option key={run.review_run_id} value={run.review_run_id}>
+                {`${formatDate(run.created_at)} · 확인 사항 ${run.finding_count}건 · ${run.review_run_id}`}
+              </option>
+            ))}
+          </select>
+        </Field>
+        {runsError !== null ? <p className="unsupported-inline admin-form__error">{runsError}</p> : null}
+        {formError !== null ? <p className="unsupported-inline admin-form__error">{formError}</p> : null}
+        <div className="admin-form__actions">
+          <Submit label={busy ? "저장 중…" : "세트 등록"} disabled={busy} />
+        </div>
+      </form>
     </section>
   );
 }

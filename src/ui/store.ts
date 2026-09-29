@@ -22,6 +22,9 @@ import type {
   JobRecord,
   LawCatalog,
   LawSearch,
+  DemoFallbackRegister,
+  DemoFallbackSettingsUpdate,
+  DemoFallbackView,
   LlmConnectionTest,
   LlmSettingsUpdate,
   LlmSettingsView,
@@ -128,6 +131,11 @@ export interface WorkbenchState {
   llmSettingsError: string | null;
   llmSettingsSaving: boolean;
   llmTestResult: LlmConnectionTest | null;
+  /** Demo fallback (hidden #/admin page); null until first load. */
+  demoFallback: DemoFallbackView | null;
+  demoFallbackLoading: boolean;
+  demoFallbackError: string | null;
+  demoFallbackSaving: boolean;
   llmTestRunning: boolean;
   cases: CaseSummary[];
   selectedCase: CaseDetail | null;
@@ -220,6 +228,10 @@ const INITIAL_STATE: WorkbenchState = {
   llmSettingsError: null,
   llmSettingsSaving: false,
   llmTestResult: null,
+  demoFallback: null,
+  demoFallbackLoading: false,
+  demoFallbackError: null,
+  demoFallbackSaving: false,
   llmTestRunning: false,
   cases: [],
   selectedCase: null,
@@ -551,7 +563,10 @@ export class WorkbenchStore {
         await this.ensureLawsLoaded();
       }
       if (route.page === "metrics") await this.ensureMetricsLoaded();
-      if (route.page === "admin") await this.ensureLlmSettingsLoaded();
+      if (route.page === "admin") {
+        await this.ensureLlmSettingsLoaded();
+        await this.ensureDemoFallbackLoaded();
+      }
       return;
     }
     // A route change is a navigation: the source overlay must not survive it.
@@ -657,6 +672,71 @@ export class WorkbenchStore {
     } finally {
       this.patch({ metricsLoading: false });
     }
+  }
+
+  /* ── admin: demo fallback (hidden #/admin page, approver only) ── */
+
+  async ensureDemoFallbackLoaded(): Promise<void> {
+    // The Backend answers approvers only; a reviewer session sees the role note instead.
+    if (!this.hasRole("approver")) return;
+    if (this.state.demoFallback !== null || this.state.demoFallbackLoading) return;
+    await this.loadDemoFallback();
+  }
+
+  async refreshDemoFallback(): Promise<void> {
+    if (this.state.demoFallbackLoading) return;
+    await this.loadDemoFallback();
+  }
+
+  private async loadDemoFallback(): Promise<void> {
+    this.patch({ demoFallbackLoading: true, demoFallbackError: null });
+    try {
+      this.patch({ demoFallback: await this.api.getDemoFallback() });
+    } catch (error) {
+      this.patch({ demoFallbackError: userMessage(error, "시연 폴백 설정을 불러오지 못했습니다.") });
+    } finally {
+      this.patch({ demoFallbackLoading: false });
+    }
+  }
+
+  private async demoFallbackAction(action: () => Promise<DemoFallbackView>, notice: string): Promise<void> {
+    if (!this.hasRole("approver")) {
+      this.patch({ demoFallbackError: "시연 폴백 변경은 승인자 역할에서만 가능합니다." });
+      return;
+    }
+    if (this.state.demoFallbackSaving) return;
+    this.patch({ demoFallbackSaving: true, demoFallbackError: null, notice: null });
+    try {
+      this.patch({ demoFallback: await action(), notice });
+    } catch (error) {
+      this.patch({ demoFallbackError: userMessage(error, "시연 폴백 설정을 저장하지 못했습니다.") });
+    } finally {
+      this.patch({ demoFallbackSaving: false });
+    }
+  }
+
+  saveDemoFallbackSettings(update: DemoFallbackSettingsUpdate): Promise<void> {
+    const label = update.mode === "off" ? "끄기" : update.mode === "auto" ? "자동" : update.mode === "always" ? "항상" : null;
+    return this.demoFallbackAction(
+      () => this.api.updateDemoFallback(update),
+      label === null ? "시연 폴백 설정을 저장했습니다." : `시연 폴백 모드를 '${label}'으로 저장했습니다.`,
+    );
+  }
+
+  registerDemoFallbackSet(payload: DemoFallbackRegister): Promise<void> {
+    return this.demoFallbackAction(
+      () => this.api.registerDemoFallbackSet(payload),
+      `시연 폴백 세트 「${payload.name.trim()}」를 등록했습니다.`,
+    );
+  }
+
+  deleteDemoFallbackSet(fallbackId: string): Promise<void> {
+    return this.demoFallbackAction(() => this.api.deleteDemoFallbackSet(fallbackId), "시연 폴백 세트를 삭제했습니다.");
+  }
+
+  /** Completed runs of one case, for picking the run to register (read-only, not stored). */
+  listRunsForDemoFallback(caseId: string): Promise<ReviewRunSummary[]> {
+    return this.api.listReviewRuns(caseId);
   }
 
   /* ── admin: LLM settings (hidden #/admin page, approver only) ──── */

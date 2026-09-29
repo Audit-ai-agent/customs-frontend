@@ -39,6 +39,7 @@ import type {
   HsCandidate,
   CaseHsClassification,
   CaseHsItem,
+  DemoFallbackView,
   HsClassification,
   HsReferenceEntry,
   HsReferenceSearch,
@@ -1361,6 +1362,50 @@ export function decodeLlmSettings(value: unknown): LlmSettingsView {
         provider: oneOf(entry.provider, LLM_PROVIDERS, `${context}.providers[${index}].provider`),
         credential_present: booleanValue(entry.credential_present, `${context}.providers[${index}].credential_present`),
         default_model: llmModelName(entry.default_model, `${context}.providers[${index}].default_model`),
+      };
+    }),
+  };
+}
+
+export function decodeDemoFallback(value: unknown): DemoFallbackView {
+  const context = "demo fallback";
+  const raw = record(value, context);
+  const settings = record(raw.settings, `${context}.settings`);
+  const delay = Number(settings.delay_seconds);
+  if (!Number.isFinite(delay) || delay < 0) throw new ContractError(`${context}.settings.delay_seconds is invalid`);
+  return {
+    settings: {
+      mode: oneOf(settings.mode, ["off", "auto", "always"] as const, `${context}.settings.mode`),
+      delay_seconds: delay,
+      updated_by: settings.updated_by === undefined || settings.updated_by === null ? null : requiredString(settings.updated_by, `${context}.settings.updated_by`),
+      updated_at: settings.updated_at === undefined || settings.updated_at === null ? null : requiredString(settings.updated_at, `${context}.settings.updated_at`),
+    },
+    sets: array(raw.sets, `${context}.sets`).map((item, index) => {
+      const set = record(item, `${context}.sets[${index}]`);
+      const setContext = `${context}.sets[${index}]`;
+      const usedCount = Number(set.used_count);
+      const findingCount = Number(set.finding_count);
+      return {
+        fallback_id: requiredString(set.fallback_id, `${setContext}.fallback_id`),
+        name: displayText(set.name, `${setContext}.name`),
+        source_case_id: requiredString(set.source_case_id, `${setContext}.source_case_id`),
+        source_case_title: typeof set.source_case_title === "string" ? set.source_case_title : "",
+        source_review_run_id: requiredString(set.source_review_run_id, `${setContext}.source_review_run_id`),
+        documents: array(set.documents, `${setContext}.documents`).map((entry, position) => {
+          const document = record(entry, `${setContext}.documents[${position}]`);
+          return {
+            document_id: requiredString(document.document_id, `${setContext}.documents[${position}].document_id`),
+            filename: displayText(document.filename, `${setContext}.documents[${position}].filename`),
+            document_type: requiredString(document.document_type, `${setContext}.documents[${position}].document_type`),
+            content_sha256: requiredString(document.content_sha256, `${setContext}.documents[${position}].content_sha256`),
+          };
+        }),
+        has_hs_ranking: set.has_hs_ranking === true,
+        finding_count: Number.isInteger(findingCount) && findingCount >= 0 ? findingCount : 0,
+        created_by: requiredString(set.created_by, `${setContext}.created_by`),
+        created_at: requiredString(set.created_at, `${setContext}.created_at`),
+        used_count: Number.isInteger(usedCount) && usedCount >= 0 ? usedCount : 0,
+        last_used_at: set.last_used_at === undefined || set.last_used_at === null ? null : requiredString(set.last_used_at, `${setContext}.last_used_at`),
       };
     }),
   };
