@@ -38,6 +38,7 @@ import type {
   HsAncestor,
   HsCandidate,
   CaseHsClassification,
+  CaseHsItem,
   HsClassification,
   HsReferenceEntry,
   HsReferenceSearch,
@@ -1155,6 +1156,10 @@ export function decodeHsSelection(value: unknown, context = "HS selection"): HsS
     reason: displayText(raw.reason, `${context}.reason`),
     selected_by: requiredString(raw.selected_by, `${context}.selected_by`),
     selected_at: requiredString(raw.selected_at, `${context}.selected_at`),
+    ...(raw.item_id === undefined || raw.item_id === null ? {} : { item_id: requiredString(raw.item_id, `${context}.item_id`) }),
+    ...(raw.description === undefined || raw.description === null
+      ? {}
+      : { description: displayText(raw.description, `${context}.description`) }),
     history: array(raw.history, `${context}.history`).map((item, index) => {
       const entry = record(item, `${context}.history[${index}]`);
       return {
@@ -1475,6 +1480,26 @@ export function decodeHsClassification(value: unknown): HsClassification {
   };
 }
 
+function decodeCaseHsItem(value: unknown, context: string): CaseHsItem {
+  const raw = record(value, context);
+  return {
+    item_id: requiredString(raw.item_id, `${context}.item_id`),
+    description: displayText(raw.description, `${context}.description`),
+    document_ids: (raw.document_ids === undefined ? [] : array(raw.document_ids, `${context}.document_ids`)).map(
+      (item, index) => requiredString(item, `${context}.document_ids[${index}]`),
+    ),
+    cited_hs_codes: (raw.cited_hs_codes === undefined ? [] : array(raw.cited_hs_codes, `${context}.cited_hs_codes`)).map(
+      (item, index) => requiredString(item, `${context}.cited_hs_codes[${index}]`),
+    ),
+    candidates: (raw.candidates === undefined ? [] : array(raw.candidates, `${context}.candidates`)).map((item, index) =>
+      decodeHsCandidate(item, `${context}.candidates[${index}]`),
+    ),
+    ...(raw.selection === undefined || raw.selection === null
+      ? {}
+      : { selection: decodeHsSelection(raw.selection, `${context}.selection`) }),
+  };
+}
+
 export function decodeCaseHsClassification(value: unknown): CaseHsClassification {
   const context = "case HS classification";
   const raw = record(value, context);
@@ -1491,6 +1516,10 @@ export function decodeCaseHsClassification(value: unknown): CaseHsClassification
     },
     candidates: array(raw.candidates, `${context}.candidates`).map((item, index) =>
       decodeHsCandidate(item, `${context}.candidates[${index}]`),
+    ),
+    // Older Backends send no items; the card then shows the whole-case list.
+    items: (raw.items === undefined ? [] : array(raw.items, `${context}.items`)).map((item, index) =>
+      decodeCaseHsItem(item, `${context}.items[${index}]`),
     ),
     ...(raw.agent_ranked_at === undefined || raw.agent_ranked_at === null
       ? {}

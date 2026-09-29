@@ -277,7 +277,11 @@ export function StartReviewButton() {
   const startLabel = state.runs.length ? "AI 심사 다시 실행" : "AI 심사 시작";
   // Law evidence is retrieved per confirmed HSK code; without one the first
   // run can only cross-check documents. Warn, never block.
-  const hsConfirmed = Boolean(state.caseHsClassification?.selection ?? state.hsClassification?.selection);
+  const hsItems = state.caseHsClassification?.items ?? [];
+  const unconfirmedItems = hsItems.filter((item) => !item.selection).length;
+  const hsConfirmed = hsItems.length
+    ? unconfirmedItems === 0 || Boolean(state.caseHsClassification?.selection)
+    : Boolean(state.caseHsClassification?.selection ?? state.hsClassification?.selection);
   // Only after the case-level HSK state has loaded, so the hint does not flash on every case open.
   const hsStateLoaded = state.caseHsLoadedKey !== null;
   const warnUnconfirmedHs = canReview && !running && hsStateLoaded && store.activeDocuments().length > 0 && !hsConfirmed;
@@ -294,7 +298,9 @@ export function StartReviewButton() {
       </button>
       {warnUnconfirmedHs ? (
         <span className="form-hint" data-hsk-unconfirmed>
-          HSK 코드가 아직 확정되지 않았습니다. 서류 등록 화면의 HSK 분류에서 확정하면 첫 심사부터 법령 근거를 조회합니다.
+          {hsItems.length > 1
+            ? `품목 ${hsItems.length}개 중 ${unconfirmedItems}개의 HSK 코드가 아직 확정되지 않았습니다. 서류 등록 화면의 HSK 분류에서 품목마다 확정하면 첫 심사부터 품목별 법령 근거를 조회합니다.`
+            : "HSK 코드가 아직 확정되지 않았습니다. 서류 등록 화면의 HSK 분류에서 확정하면 첫 심사부터 법령 근거를 조회합니다."}
         </span>
       ) : null}
     </>

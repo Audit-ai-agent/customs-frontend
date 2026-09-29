@@ -626,11 +626,71 @@ describe("case-level HSK classification", () => {
     expect(view.basis_kind).toBe("document_text");
     expect(view.candidates[0]?.code).toBe("0303540000");
     expect(view.selection).toBeUndefined();
+    // An older Backend sends no items; the view still decodes.
+    expect(view.items).toEqual([]);
     const recorded = await api.recordCaseHsSelection("case-1", { code: "0303540000", reason: "서류 기재 코드 확인" });
     expect(recorded.history).toHaveLength(1);
     expect(calls.map((call) => call.url)).toEqual([
       "/api/v1/cases/case-1/hs-classification",
       "/api/v1/cases/case-1/hs-classification",
     ]);
+    expect(JSON.parse(String(calls[1]?.init?.body))).toEqual({ code: "0303540000", reason: "서류 기재 코드 확인" });
+  });
+
+  it("decodes per-item candidates and sends a per-item confirmation with its description", async () => {
+    const calls: { url: string; init: RequestInit | undefined }[] = [];
+    const candidate = {
+      code: "6109101000", name_ko: "티셔츠", ancestors: [], confidence: 0.9, in_reference: true, recommended: true,
+      origin: "llm_match", explanation: "면 티셔츠", basis: [],
+    };
+    const classification = {
+      case_id: "case-1",
+      basis_kind: "agent_ranked",
+      agent_ranked_at: "2026-09-30T01:00:00Z",
+      reference: { as_of: "2026-01-01", source: "관세청 HS부호 단위별 품목명" },
+      candidates: [candidate],
+      items: [
+        { item_id: "item-shirts", description: "MEN'S COTTON T-SHIRTS", document_ids: ["d1"], cited_hs_codes: [], candidates: [candidate] },
+        {
+          item_id: "item-fish", description: "FROZEN MACKEREL", document_ids: ["d1"], cited_hs_codes: ["030354"], candidates: [],
+          selection: {
+            code: "0303540000", reason: "확정", selected_by: "reviewer", selected_at: "2026-09-30T00:00:00Z",
+            history: [{ code: "0303540000", reason: "확정", selected_by: "reviewer", selected_at: "2026-09-30T00:00:00Z" }],
+            item_id: "item-fish", description: "FROZEN MACKEREL",
+          },
+        },
+      ],
+    };
+    const selection = {
+      code: "6109101000", reason: "AI 추천 확정", selected_by: "reviewer", selected_at: "2026-09-30T01:05:00Z",
+      history: [{ code: "6109101000", reason: "AI 추천 확정", selected_by: "reviewer", selected_at: "2026-09-30T01:05:00Z" }],
+      item_id: "item-shirts", description: "MEN'S COTTON T-SHIRTS",
+    };
+    const fetcher: typeof fetch = async (input, init) => {
+      const url = String(input);
+      calls.push({ url, init });
+      if (url.endsWith("/cases/case-1/hs-classification") && init?.method === "GET") {
+        return new Response(JSON.stringify(classification), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (url.endsWith("/cases/case-1/hs-classification") && init?.method === "POST") {
+        return new Response(JSON.stringify(selection), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      return new Response(JSON.stringify({ detail: "unexpected request" }), { status: 500, headers: { "content-type": "application/json" } });
+    };
+    const api = new ApiClient(fetcher, async () => "local-token");
+    const view = await api.getCaseHsClassification("case-1");
+    expect(view.items.map((item) => item.item_id)).toEqual(["item-shirts", "item-fish"]);
+    expect(view.items[0]?.candidates[0]?.explanation).toBe("면 티셔츠");
+    expect(view.items[1]?.selection?.item_id).toBe("item-fish");
+    const recorded = await api.recordCaseHsSelection("case-1", {
+      code: "6109101000", reason: "AI 추천 확정", item_id: "item-shirts", description: "  MEN'S COTTON T-SHIRTS ",
+    });
+    expect(recorded.item_id).toBe("item-shirts");
+    expect(JSON.parse(String(calls[1]?.init?.body))).toEqual({
+      code: "6109101000", reason: "AI 추천 확정", item_id: "item-shirts", description: "MEN'S COTTON T-SHIRTS",
+    });
+    expect(() =>
+      api.recordCaseHsSelection("case-1", { code: "6109101000", reason: "x", item_id: "item-shirts", description: " " }),
+    ).toThrow("HS selection item description is invalid");
   });
 });

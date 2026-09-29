@@ -485,9 +485,18 @@ export class ApiClient {
     const reason = payload.reason.trim();
     if (!reason || reason.length > 4_000) throw new ContractError("HS selection reason is invalid");
     if (!/^[0-9]{10}$/u.test(payload.code)) throw new ContractError("HS selection code is invalid");
+    const body: Record<string, string> = { code: payload.code, reason };
+    if (payload.item_id !== undefined) {
+      // A per-item confirmation names the item and the description it was shown with.
+      const description = (payload.description ?? "").trim();
+      if (!payload.item_id || payload.item_id.length > 64) throw new ContractError("HS selection item is invalid");
+      if (!description || description.length > 300) throw new ContractError("HS selection item description is invalid");
+      body.item_id = payload.item_id;
+      body.description = description;
+    }
     return this.request(
       `/cases/${segment(caseId)}/hs-classification`,
-      this.json("POST", { code: payload.code, reason }),
+      this.json("POST", body),
       (value) => decodeHsSelection(value),
     );
   }

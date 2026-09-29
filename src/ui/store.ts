@@ -1787,7 +1787,15 @@ export class WorkbenchStore {
     await this.loadCaseHsClassification(caseId, this.caseHsKey(caseId), { agent: true });
   }
 
-  async recordCaseHsSelection(code: string, reason: string): Promise<void> {
+  /**
+   * Confirm a code for the whole case or, with `item`, for one goods item of
+   * a multi-item case (each item keeps its own confirmation).
+   */
+  async recordCaseHsSelection(
+    code: string,
+    reason: string,
+    item: { item_id: string; description: string } | null = null,
+  ): Promise<void> {
     if (!this.hasRole("reviewer")) {
       this.showError(new Error("HSK 분류 확정은 심사자 역할에서만 할 수 있습니다."));
       return;
@@ -1795,12 +1803,23 @@ export class WorkbenchStore {
     const caseId = this.state.selectedCase?.case_id ?? null;
     if (!caseId) return;
     await this.withBusy(async () => {
-      const selection = await this.api.recordCaseHsSelection(caseId, { code, reason });
+      const selection = await this.api.recordCaseHsSelection(caseId, {
+        code,
+        reason,
+        ...(item ? { item_id: item.item_id, description: item.description } : {}),
+      });
+      const view = this.state.caseHsClassification;
       this.patch({
-        ...(this.state.caseHsClassification === null
+        ...(view === null
           ? {}
-          : { caseHsClassification: { ...this.state.caseHsClassification, selection } }),
-        notice: "HSK 코드를 확정했습니다. 다음 AI 심사부터 법령 근거 조회에 사용됩니다.",
+          : {
+              caseHsClassification: item
+                ? { ...view, items: view.items.map((entry) => (entry.item_id === item.item_id ? { ...entry, selection } : entry)) }
+                : { ...view, selection },
+            }),
+        notice: item
+          ? `품목 「${item.description}」의 HSK 코드를 확정했습니다. 다음 AI 심사부터 품목별 법령 근거 조회에 사용됩니다.`
+          : "HSK 코드를 확정했습니다. 다음 AI 심사부터 법령 근거 조회에 사용됩니다.",
       });
     });
   }

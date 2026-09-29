@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type {
+  CaseHsItem,
   DutyRate,
   HsCandidate,
   HsClassification,
@@ -20,7 +21,11 @@ function formatMoney(amount: number, currency: string): string {
 
 /* ── 단계 1 · HSK 분류 카드 ──────────────────────────────────── */
 
-type HsPickerView = Pick<HsClassification, "reference" | "candidates" | "selection"> & { agent_ranked_at?: string | null };
+type HsPickerView = Pick<HsClassification, "reference" | "candidates" | "selection"> & {
+  agent_ranked_at?: string | null;
+  /** Case level only: the same reading split per goods item. */
+  items?: CaseHsItem[];
+};
 
 /** The recorded reason says how the code was picked; the reviewer does not type it. */
 function hsSelectionReason(code: string, candidates: HsCandidate[], searchPick: HsReferenceSearchResult | null): string {
@@ -29,6 +34,7 @@ function hsSelectionReason(code: string, candidates: HsCandidate[], searchPick: 
     const documents = new Set(candidate.basis.map((item) => item.document_id)).size;
     return documents ? `서류 기재 코드 확정 (문서 ${documents}건 근거)` : "서류 기재 코드 확정";
   }
+  if (candidate?.origin === "llm_match") return candidate.recommended ? "AI 추천 1순위 확정" : "AI 추천 후보에서 확정";
   if (candidate?.origin === "description_match") return "품명 매칭 후보에서 확정";
   if (searchPick?.code === code) return "HSK 참조 검색으로 확정";
   return "담당자 확정";
@@ -54,6 +60,9 @@ export function HsClassificationCard() {
         emptyCopy="서류 텍스트에서 HS 코드와 품명을 찾지 못했습니다. 서류를 모두 등록·확정한 뒤 'AI로 HSK 후보 추출'을 누르거나, 아래 검색창에서 코드나 품명으로 찾아 확정할 수 있습니다."
         onRefresh={() => void store.refreshCaseHsClassification()}
         onConfirm={(code, reason) => store.recordCaseHsSelection(code, reason)}
+        onConfirmItem={(item, code, reason) =>
+          store.recordCaseHsSelection(code, reason, { item_id: item.item_id, description: item.description })
+        }
       />
     );
   }
@@ -81,6 +90,7 @@ function HsPickerCard({
   priorSelection = null,
   onRefresh,
   onConfirm,
+  onConfirmItem,
 }: {
   view: HsPickerView | null;
   loading: boolean;
@@ -91,18 +101,11 @@ function HsPickerCard({
   priorSelection?: HsSelection | null;
   onRefresh?: () => void;
   onConfirm: (code: string, reason: string) => Promise<void>;
+  onConfirmItem?: (item: CaseHsItem, code: string, reason: string) => Promise<void>;
 }) {
   const agentRankedAt = view && "agent_ranked_at" in view ? (view.agent_ranked_at ?? null) : null;
   const store = useStore();
   const state = useWorkbenchState();
-  const [chosen, setChosen] = useState<string | null>(null);
-  const [searchPick, setSearchPick] = useState<HsReferenceSearchResult | null>(null);
-  // A different candidate set (another run, or another document set) must not
-  // keep a pick made against the previous one.
-  useEffect(() => {
-    setChosen(null);
-    setSearchPick(null);
-  }, [resetKey]);
 
   const refreshButton =
     onRefresh && store.hasRole("reviewer") ? (
@@ -138,14 +141,12 @@ function HsPickerCard({
     );
   }
 
-  const selection = view.selection ?? null;
-  const activeCode = chosen ?? selection?.code ?? null;
-  const recommended = view.candidates.find((item) => item.recommended) ?? null;
-  const manualOverride = selection !== null && recommended !== null && selection.code !== recommended.code;
+  const items = onConfirmItem ? (view.items ?? []) : [];
+  const allCandidates = items.length ? items.flatMap((item) => item.candidates) : view.candidates;
   const descriptionOnly =
-    view.candidates.length > 0 &&
-    view.candidates.every((item) => item.origin === "description_match");
-  const agentRanked = view.candidates.some((item) => item.origin === "llm_match");
+    allCandidates.length > 0 && allCandidates.every((item) => item.origin === "description_match");
+  const agentRanked = allCandidates.some((item) => item.origin === "llm_match");
+  const confirmedItems = items.filter((item) => item.selection).length;
 
   return (
     <section className="surface" data-hsk-card>
@@ -167,11 +168,96 @@ function HsPickerCard({
           대조한 결과일 뿐이므로 반드시 담당자가 검토 후 확정하십시오.
         </div>
       ) : null}
-      {view.candidates.length === 0 ? (
+      {items.length ? (
+        <>
+          <p className="hsk-summary" data-hsk-items-summary>
+            {items.length > 1
+              ? `서류에서 품목 ${items.length}개를 구분했습니다. 품목마다 HSK 코드를 확정하십시오 (${confirmedItems}/${items.length} 확정).`
+              : "서류에서 품목 1개를 읽었습니다. 다른 품목이 더 있으면 서류를 확인한 뒤 'AI로 HSK 후보 추출'을 다시 누르십시오."}
+          </p>
+          <div className="hsk-items">
+            {items.map((item, index) => (
+              <section className="hsk-item" key={item.item_id} data-hsk-item={item.item_id}>
+                <div className="hsk-item__head">
+                  <h4 className="hsk-item__name">
+                    <span className="idx">{`품목 ${index + 1}`}</span>
+                    {item.description}
+                  </h4>
+                  <span className={`hsk-item__state${item.selection ? " done" : ""}`}>
+                    {item.selection ? `확정 ${item.selection.code}` : "미확정"}
+                  </span>
+                </div>
+                <p className="hsk-item__meta">
+                  {[
+                    item.document_ids.length ? `근거 문서 ${item.document_ids.length}건` : null,
+                    item.cited_hs_codes.length ? `서류 기재 코드 ${item.cited_hs_codes.join(", ")}` : null,
+                  ]
+                    .filter(Boolean)
+                    .join(" · ") || "서류에 기재된 코드 없음"}
+                </p>
+                <HsChoicePanel
+                  candidates={item.candidates}
+                  selection={item.selection ?? null}
+                  resetKey={`${resetKey ?? ""}:${item.item_id}`}
+                  emptyCopy="이 품목의 후보를 찾지 못했습니다. 아래 검색창에서 코드나 품명으로 찾아 확정할 수 있습니다."
+                  onConfirm={(code, reason) => onConfirmItem!(item, code, reason)}
+                />
+              </section>
+            ))}
+          </div>
+        </>
+      ) : (
+        <HsChoicePanel
+          candidates={view.candidates}
+          selection={view.selection ?? null}
+          resetKey={resetKey}
+          emptyCopy={emptyCopy}
+          priorSelection={priorSelection}
+          onConfirm={onConfirm}
+        />
+      )}
+    </section>
+  );
+}
+
+/** Candidate rows, the reference search and the one-click confirmation for one code choice. */
+function HsChoicePanel({
+  candidates,
+  selection,
+  resetKey,
+  emptyCopy,
+  priorSelection = null,
+  onConfirm,
+}: {
+  candidates: HsCandidate[];
+  selection: HsSelection | null;
+  resetKey: string | null;
+  emptyCopy: string;
+  priorSelection?: HsSelection | null;
+  onConfirm: (code: string, reason: string) => Promise<void>;
+}) {
+  const store = useStore();
+  const state = useWorkbenchState();
+  const [chosen, setChosen] = useState<string | null>(null);
+  const [searchPick, setSearchPick] = useState<HsReferenceSearchResult | null>(null);
+  // A different candidate set (another run, another document set or another
+  // item) must not keep a pick made against the previous one.
+  useEffect(() => {
+    setChosen(null);
+    setSearchPick(null);
+  }, [resetKey]);
+
+  const activeCode = chosen ?? selection?.code ?? null;
+  const recommended = candidates.find((item) => item.recommended) ?? null;
+  const manualOverride = selection !== null && recommended !== null && selection.code !== recommended.code;
+
+  return (
+    <div className="hsk-choice" data-hsk-choice>
+      {candidates.length === 0 ? (
         <EmptyCopy>{emptyCopy}</EmptyCopy>
       ) : (
         <div className="hsk">
-          {view.candidates.map((candidate) => (
+          {candidates.map((candidate) => (
             <HsCandidateRow
               key={candidate.code}
               candidate={candidate}
@@ -233,7 +319,7 @@ function HsPickerCard({
               event.preventDefault();
               // The Backend keeps a reason with every selection; it is derived
               // from how the code was picked so the reviewer confirms in one click.
-              void onConfirm(activeCode, hsSelectionReason(activeCode, view.candidates, searchPick)).then(() => {
+              void onConfirm(activeCode, hsSelectionReason(activeCode, candidates, searchPick)).then(() => {
                 setChosen(null);
                 setSearchPick(null);
               });
@@ -246,7 +332,7 @@ function HsPickerCard({
       ) : (
         <RoleBoundaryNote>HSK 분류 확정은 심사자 역할에서만 할 수 있습니다.</RoleBoundaryNote>
       )}
-    </section>
+    </div>
   );
 }
 

@@ -342,6 +342,16 @@ a{color:inherit}
 .hsk-note.on{display:block}
 .hsk-note--info{background:var(--krds-primary-bg-soft);border-left-color:var(--krds-primary)}
 .hsk-actions{margin:8px 0 12px;display:flex;gap:8px;flex-wrap:wrap}
+/* one goods item of a multi-item case: its own candidates, search and confirmation */
+.hsk-items{display:flex;flex-direction:column;gap:18px;margin-top:6px}
+.hsk-item{border:1px solid var(--krds-line-2);border-radius:var(--r);padding:12px 14px 14px;background:var(--krds-surface-2)}
+.hsk-item__head{display:flex;align-items:baseline;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:10px}
+.hsk-item__name{margin:0;font-size:14px;font-weight:800;color:var(--krds-ink);min-width:0;overflow-wrap:anywhere}
+.hsk-item__name .idx{display:inline-block;margin-right:8px;padding:1px 8px;border-radius:999px;background:var(--krds-primary);color:#fff;font-size:11px;font-weight:700;vertical-align:middle}
+.hsk-item__meta{font-size:11.5px;color:var(--krds-muted)}
+.hsk-item__state{font-size:11px;font-weight:700;padding:3px 10px;border-radius:999px;border:1px solid var(--krds-line-2);background:var(--krds-surface);color:var(--krds-muted);flex:none}
+.hsk-item__state.done{background:var(--krds-success);border-color:var(--krds-success);color:#fff}
+.hsk-summary{margin:0 0 10px;font-size:12.5px;color:var(--krds-text)}
 
 /* HSK reference typeahead (code prefix + item-name reverse search) */
 .hsk-search{position:relative;margin-top:14px}

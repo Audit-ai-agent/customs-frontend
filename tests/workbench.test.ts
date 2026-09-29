@@ -765,4 +765,66 @@ describe("stage-1 HSK candidates before any review", () => {
     expect(root.querySelector("[data-hsk-agent-note]")?.textContent).toContain("AI 추출");
     dispose();
   });
+
+  it("shows one panel per goods item and confirms a code for that item only", async () => {
+    window.location.hash = "#/cases/case-1/documents";
+    const caseDetail = { case_id: "case-1", org_id: "local-org", title: "입항 서류", status: "in_review" as const, revision: 1, updated_at: "2026-08-05T00:00:00Z" };
+    const candidate = (code: string, name_ko: string, explanation: string) => ({
+      code, name_ko, name_en: null, ancestors: [], confidence: 0.9, in_reference: true, recommended: true,
+      origin: "llm_match" as const, explanation,
+      basis: [{ document_id: "document-1", fact_id: "agent-item-1", fact_name: "description", raw_value: name_ko }],
+    });
+    const view = {
+      case_id: "case-1",
+      basis_kind: "agent_ranked" as const,
+      agent_ranked_at: "2026-09-30T01:00:00Z",
+      reference: { as_of: "2026-01-01", source: "관세청 HS부호 단위별 품목명" },
+      candidates: [candidate("6109101000", "티셔츠", "면 티셔츠"), candidate("0303540000", "고등어", "냉동 고등어")],
+      items: [
+        { item_id: "item-shirts", description: "MEN'S COTTON T-SHIRTS", document_ids: ["document-1"], cited_hs_codes: [], candidates: [candidate("6109101000", "티셔츠", "면 티셔츠")] },
+        { item_id: "item-fish", description: "FROZEN MACKEREL", document_ids: ["document-1"], cited_hs_codes: ["030354"], candidates: [candidate("0303540000", "고등어", "냉동 고등어")] },
+      ],
+    };
+    const recordCaseHsSelection = vi.fn(async (_caseId: string, payload: { code: string; reason: string; item_id?: string; description?: string }) => ({
+      code: payload.code, reason: payload.reason, selected_by: "local-reviewer", selected_at: "2026-09-30T01:05:00Z",
+      history: [{ code: payload.code, reason: payload.reason, selected_by: "local-reviewer", selected_at: "2026-09-30T01:05:00Z" }],
+      item_id: payload.item_id, description: payload.description,
+    }));
+    const api = {
+      getSession: vi.fn(async () => ({ subject: "local-reviewer", org_id: "local-org", roles: ["reviewer"] })),
+      listCases: vi.fn(async () => ({ items: [caseDetail] })),
+      getCase: vi.fn(async () => caseDetail),
+      listDocuments: vi.fn(async () => [DOCUMENT]),
+      listDocumentAssets: vi.fn(async () => []),
+      listReviewRuns: vi.fn(async () => []),
+      getCaseHsClassification: vi.fn(async () => view),
+      recordCaseHsSelection,
+    };
+    const { root, dispose } = await mount(api, AUTH, "functional-uat");
+
+    const panels = root.querySelectorAll("[data-hsk-item]");
+    expect(panels).toHaveLength(2);
+    expect(root.querySelector("[data-hsk-items-summary]")?.textContent).toContain("품목 2개");
+    expect(root.querySelector("[data-hsk-items-summary]")?.textContent).toContain("0/2 확정");
+    expect(panels[1]?.textContent).toContain("FROZEN MACKEREL");
+    expect(panels[1]?.textContent).toContain("서류 기재 코드 030354");
+    // The header warns per item until every item is confirmed.
+    expect(root.querySelector("[data-hsk-unconfirmed]")?.textContent).toContain("품목 2개 중 2개");
+
+    // Picking and confirming inside the second panel confirms that item alone.
+    await click(panels[1]?.querySelector('[data-hsk-candidate-code="0303540000"]'));
+    await submit(panels[1]?.querySelector<HTMLFormElement>("form.hsk-confirm"));
+    expect(recordCaseHsSelection).toHaveBeenCalledWith("case-1", {
+      code: "0303540000",
+      reason: "AI 추천 1순위 확정",
+      item_id: "item-fish",
+      description: "FROZEN MACKEREL",
+    });
+    const after = root.querySelectorAll("[data-hsk-item]");
+    expect(after[1]?.textContent).toContain("확정 0303540000");
+    expect(after[0]?.textContent).toContain("미확정");
+    expect(root.querySelector("[data-hsk-items-summary]")?.textContent).toContain("1/2 확정");
+    expect(root.querySelector("[data-hsk-unconfirmed]")?.textContent).toContain("품목 2개 중 1개");
+    dispose();
+  });
 });

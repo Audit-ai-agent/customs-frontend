@@ -275,6 +275,65 @@ const api = {
     const entry = { status: payload.status, reason_code: payload.reason_code ?? null, reason, decided_by: "local-reviewer", decided_at: NOW };
     return { finding_id: findingId, ...entry, history: [entry] };
   },
+  getCaseHsClassification: async () => ({
+    case_id: "case-1",
+    basis_kind: "agent_ranked" as const,
+    agent_ranked_at: NOW,
+    reference: { as_of: "2026-01-01", source: "관세청 HS부호 단위별 품목명 (미리보기 고정값)" },
+    candidates: [],
+    items: [
+      {
+        item_id: "item-tshirts",
+        description: "MEN'S COTTON T-SHIRTS",
+        document_ids: ["doc-1"],
+        cited_hs_codes: [],
+        candidates: [
+          {
+            code: "6109101000", name_ko: "티셔츠·싱글리트와 그 밖의 조끼(면으로 만든 것)", name_en: "T-shirts, of cotton",
+            ancestors: [{ level: 2, code: "61", name_ko: "의류와 그 부속품(메리야스 편물이나 뜨개질 편물로 한정한다)" }, { level: 4, code: "6109", name_ko: "티셔츠·싱글리트와 그 밖의 조끼" }],
+            confidence: 0.93, in_reference: true, recommended: true, origin: "llm_match" as const,
+            explanation: "면 소재의 남성용 티셔츠로 메리야스 편물 의류에 해당합니다.",
+            basis: [{ document_id: "doc-1", fact_id: "agent-item-1", fact_name: "description", raw_value: "MEN'S COTTON T-SHIRTS" }],
+          },
+          {
+            code: "6105100000", name_ko: "셔츠(면으로 만든 것)", name_en: "Shirts, of cotton",
+            ancestors: [{ level: 2, code: "61", name_ko: "의류와 그 부속품" }, { level: 4, code: "6105", name_ko: "남자용이나 소년용 셔츠" }],
+            confidence: 0.31, in_reference: true, recommended: false, origin: "llm_match" as const,
+            explanation: "칼라·단추가 있는 셔츠라면 해당하나 서류 품명은 티셔츠입니다.",
+            basis: [{ document_id: "doc-1", fact_id: "agent-item-1", fact_name: "description", raw_value: "MEN'S COTTON T-SHIRTS" }],
+          },
+        ],
+      },
+      {
+        item_id: "item-mackerel",
+        description: "FROZEN MACKEREL, WHOLE",
+        document_ids: ["doc-1"],
+        cited_hs_codes: ["030354"],
+        candidates: [
+          {
+            code: "0303540000", name_ko: "고등어(냉동한 것)", name_en: "Mackerel, frozen",
+            ancestors: [{ level: 2, code: "03", name_ko: "어류·갑각류·연체동물" }, { level: 4, code: "0303", name_ko: "냉동 어류" }],
+            confidence: 0.97, in_reference: true, recommended: true, origin: "llm_match" as const,
+            explanation: "통째로 냉동한 고등어입니다.",
+            basis: [{ document_id: "doc-1", fact_id: "agent-item-2", fact_name: "description", raw_value: "FROZEN MACKEREL, WHOLE" }],
+          },
+        ],
+        selection: {
+          code: "0303540000", reason: "AI 추천 1순위 확정", selected_by: "local-reviewer", selected_at: NOW,
+          history: [{ code: "0303540000", reason: "AI 추천 1순위 확정", selected_by: "local-reviewer", selected_at: NOW }],
+          item_id: "item-mackerel", description: "FROZEN MACKEREL, WHOLE",
+        },
+      },
+    ],
+  }),
+  recordCaseHsSelection: async (_caseId: string, payload: { code: string; reason: string; item_id?: string; description?: string }) => ({
+    code: payload.code,
+    reason: payload.reason,
+    selected_by: "local-reviewer",
+    selected_at: NOW,
+    history: [{ code: payload.code, reason: payload.reason, selected_by: "local-reviewer", selected_at: NOW }],
+    ...(payload.item_id ? { item_id: payload.item_id, description: payload.description ?? "" } : {}),
+  }),
   getHsClassification: async () => ({
     review_run_id: "run-001",
     case_id: "case-1",

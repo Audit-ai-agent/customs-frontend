@@ -887,6 +887,19 @@ export interface HsSelection {
   selected_by: string;
   selected_at: string;
   history: HsSelectionHistoryEntry[];
+  /** Set on a per-item confirmation of a multi-item case. */
+  item_id?: string | null;
+  description?: string | null;
+}
+
+/** One goods item of the case (several commodities on one document each get their own). */
+export interface CaseHsItem {
+  item_id: string;
+  description: string;
+  document_ids: string[];
+  cited_hs_codes: string[];
+  candidates: HsCandidate[];
+  selection?: HsSelection | null;
 }
 
 export interface HsClassification {
@@ -903,6 +916,8 @@ export interface CaseHsClassification {
   reference: { as_of: string; source: string };
   candidates: HsCandidate[];
   selection?: HsSelection | null;
+  /** The same reading split per goods item; empty when the documents yield no item. */
+  items: CaseHsItem[];
   /** When the Agent ranked these candidates; the Backend keeps that ranking per case until the documents change. */
   agent_ranked_at?: string | null;
 }
@@ -910,6 +925,9 @@ export interface CaseHsClassification {
 export interface HsSelectionRequest {
   code: string;
   reason: string;
+  /** Confirm the code for one goods item (with its description as shown) instead of the whole case. */
+  item_id?: string;
+  description?: string;
 }
 
 // ── Law reference (statute search proxied Browser→Backend→Agent→Data) ──
