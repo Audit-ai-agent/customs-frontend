@@ -121,9 +121,9 @@ export function assistantSuggestions(run: ReviewRun, messages: AssistantMessage[
   const fromLatestAnswer = [...messages].reverse().find((item) => item.role === "assistant")?.suggested_questions ?? [];
   if (fromLatestAnswer.length) return fromLatestAnswer;
   const suggestions: string[] = [];
-  if (run.findings.length) suggestions.push("가장 우선해서 확인할 항목과 그 근거를 알려줘");
+  if (run.findings.length) suggestions.push("이 사건에서 가장 먼저 확인할 항목은 뭐야?");
   if (run.comparisons.length) suggestions.push("문서 간 비교에서 확인이 필요한 값은 무엇이야?");
-  if (run.evidence.length) suggestions.push("연결된 법령정보가 이 Case와 어떻게 관련되는지 알려줘");
+  if (run.evidence.length) suggestions.push("연결된 법령 근거가 이 사건과 어떻게 관련되는지 알려줘");
   return suggestions.slice(0, 3);
 }
 
