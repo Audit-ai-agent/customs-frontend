@@ -31,13 +31,10 @@ export function showLoginScreen(root: HTMLElement, mode: FrontendRuntimeMode): P
 
     const brand = el("div", "login-brand");
     const mark = el("div", "seal-mark");
-    mark.append(el("span", "", "通"));
+    mark.setAttribute("aria-hidden", "true");
     const titles = el("div", "login-title");
     const heading = el("h1", "", "통관 AI 사전심사");
-    titles.append(
-      heading,
-      el("p", "", mode === "functional-uat" ? "실제 기능 UAT 환경" : "팀 개발 환경"),
-    );
+    titles.append(heading);
     brand.append(mark, titles);
 
     const copy = el(

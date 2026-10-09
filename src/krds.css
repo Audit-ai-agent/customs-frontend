@@ -71,10 +71,9 @@ a{color:inherit}
 .brand{display:flex;align-items:center;gap:12px;cursor:pointer;min-width:0}
 .brand-txt{min-width:0}
 .seal-mark{width:38px;height:38px;border-radius:var(--r-sm);border:0;display:grid;place-items:center;position:relative;
-  background:linear-gradient(135deg,#4a8af6,var(--krds-primary-strong));box-shadow:0 3px 8px rgb(37 110 244 / 28%)}
+  background:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M11 19.5H5V4.5h9l3 3V10'/%3E%3Ccircle cx='15' cy='15' r='3.3'/%3E%3Cpath d='M17.4 17.4L20 20' stroke-width='2.2'/%3E%3Cpath d='M8 9h4M8 12h2.5' stroke-opacity='.7'/%3E%3C/svg%3E") center/22px no-repeat,linear-gradient(135deg,#4a8af6,var(--krds-primary-strong));box-shadow:0 3px 8px rgb(37 110 244 / 28%)}
 .seal-mark::after{display:none}
-/* CF 모노그램. 라틴 대문자 2자라 자간을 좁히지 않습니다. */
-.seal-mark span{font-family:var(--ui);font-weight:800;font-size:15px;color:#fff;letter-spacing:.02em}
+/* 로고: 서류 위 돋보기(통관 서류 사전심사). */
 .brand-txt h1{font-size:16px;font-weight:700;letter-spacing:-.01em;color:var(--krds-ink)}
 .brand-txt p{font-size:11.5px;color:var(--krds-muted);margin-top:1px}
 .topbar .spacer{flex:1}

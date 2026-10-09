@@ -89,12 +89,9 @@ export function Topbar({ right }: { right?: ReactNode }) {
   return (
     <div className="topbar">
       <button className="brand" type="button" onClick={() => store.goToPage("home")} aria-label="홈으로 이동">
-        <div className="seal-mark">
-          <span>通</span>
-        </div>
+        <div className="seal-mark" aria-hidden="true" />
         <div className="brand-txt">
           <h1>통관 AI 사전심사</h1>
-          <p>{store.mode === "functional-uat" ? "실제 기능 UAT 환경" : "팀 개발 환경"}</p>
         </div>
       </button>
       <div className="spacer" />
