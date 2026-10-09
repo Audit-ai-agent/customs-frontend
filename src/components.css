@@ -354,6 +354,20 @@ small { color: var(--krds-muted); }
 .login-notes__ai { --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linejoin='round'%3E%3Cpath d='M12 3l7 3v5c0 4.5-3 8-7 10-4-2-7-5.5-7-10V6z'/%3E%3C/svg%3E"); }
 .login-notes__help { --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round'%3E%3Ccircle cx='12' cy='12' r='9'/%3E%3Cpath d='M12 8v5M12 16h.01'/%3E%3C/svg%3E"); }
 
+/* 앱 로그인 화면 → Keycloak 로그인 창 전환(같은 origin의 문서 간 View Transition).
+   왼쪽 소개 영역은 이름을 붙여 제자리에 두고, 오른쪽만 살짝 떠오르며 바뀝니다.
+   지원하지 않는 브라우저는 그냥 페이지가 바뀝니다. 앱 components.css와 Keycloak 테마 CSS에 같은 블록이 있습니다. */
+@view-transition { navigation: auto; }
+.login-hero { view-transition-name: login-hero; }
+::view-transition-old(root) { animation: .18s ease-in both login-vt-out; }
+::view-transition-new(root) { animation: .32s cubic-bezier(.2, .7, .2, 1) both login-vt-in; }
+::view-transition-group(login-hero) { animation-duration: 0s; }
+@keyframes login-vt-out { to { opacity: 0; } }
+@keyframes login-vt-in { from { opacity: 0; transform: translateY(10px); } }
+@media (prefers-reduced-motion: reduce) {
+  @view-transition { navigation: none; }
+}
+
 @media (min-width: 961px) {
   .login-screen { height: 100vh; min-height: 0; }
   .login-hero, .login-side { min-height: 0; }
