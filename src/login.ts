@@ -23,24 +23,83 @@ function el<K extends keyof HTMLElementTagNameMap>(
   return node;
 }
 
+/** Element with children; strings become text nodes (no HTML parsing). */
+function h(tag: keyof HTMLElementTagNameMap, className: string, ...children: (Node | string)[]): HTMLElement {
+  const node = el(tag, className);
+  node.append(...children);
+  return node;
+}
+
+/**
+ * Static product introduction on the left half. The preview card is an
+ * illustration of the workbench (fixed sample values), not live data.
+ */
+function buildHero(): HTMLElement {
+  const row = (label: string, value: string, tag: string, tone: string) =>
+    h("div", "login-preview__row", h("span", "", label), h("b", "", value), h("em", `is-${tone}`, tag));
+  const doc = (name: string) => h("div", "", h("b", "", name), h("span", "", "추출 완료"));
+  const feat = (title: string, text: string) => h("li", "", h("b", "", title), h("span", "", text));
+
+  const mark = el("div", "login-hero__mark");
+  mark.setAttribute("aria-hidden", "true");
+  const headline = h("p", "login-hero__headline", "수입 통관 서류,", el("br", ""), "AI가 먼저 살피고", el("br", ""), "담당자가 확정합니다.");
+  const preview = h(
+    "div",
+    "login-preview",
+    h("div", "login-preview__top", h("span", "login-preview__dots", el("i", ""), el("i", ""), el("i", "")), h("b", "", "심사 작업대"), h("span", "", "예시 Case · 냉동 새우")),
+    h(
+      "div",
+      "login-preview__body",
+      h("div", "login-preview__docs", doc("B/L"), doc("Invoice"), doc("P/L"), doc("C/O")),
+      row("교차검증", "6개 필드 대조", "중량 불일치 1건", "bad"),
+      row("HS 분류", "0306.17-0000", "근거 3건", "ok"),
+      row("통관 요건", "검역 대상 품목", "확인 필요", "warn"),
+      h(
+        "div",
+        "login-preview__verdict",
+        h("div", "", h("b", "", "AI 권고 · 검토 필요"), h("small", "", "불일치 1건과 요건 1건을 담당자가 확인해 주세요.")),
+        h("span", "", "검토 열기"),
+      ),
+    ),
+  );
+  preview.setAttribute("aria-hidden", "true");
+
+  return h(
+    "section",
+    "login-hero",
+    h("div", "login-hero__brand", mark, h("div", "", h("strong", "", "통관 AI 사전심사"), h("small", "", "Customs-Fit 업무시스템"))),
+    h(
+      "div",
+      "login-hero__copy",
+      headline,
+      h("p", "", "B/L·Invoice·Packing List·원산지증명서를 Case 단위로 올리면 필드 추출, 서류 간 교차검증, HS 분류 후보와 근거 법령까지 한 화면에 정리됩니다."),
+    ),
+    preview,
+    h(
+      "ul",
+      "login-hero__feats",
+      feat("서류 자동 추출", "양식이 달라도 품목·중량·금액을 정형 데이터로 정리"),
+      feat("서류 간 교차검증", "같은 항목의 값이 서류마다 다르면 바로 표시"),
+      feat("근거 있는 권고", "HS 분류와 요건마다 법령·해설서 출처 연결"),
+    ),
+  );
+}
+
 export function showLoginScreen(root: HTMLElement, mode: FrontendRuntimeMode): Promise<LoginChoice> {
   return new Promise((resolve) => {
     const screen = el("div", "login-screen");
-    const card = el("main", "login-card");
-    card.id = "main-content";
+    const hero = buildHero();
 
-    const brand = el("div", "login-brand");
-    const mark = el("div", "seal-mark");
-    mark.setAttribute("aria-hidden", "true");
-    const titles = el("div", "login-title");
-    const heading = el("h1", "", "통관 AI 사전심사");
-    titles.append(heading);
-    brand.append(mark, titles);
-
+    const side = el("main", "login-side");
+    side.id = "main-content";
+    const panel = el("div", "login-panel");
+    const heading = el("h1", "", "로그인");
     const copy = el(
       "p",
       "login-copy",
-      "수입 통관 서류를 Case 단위로 등록하면 AI가 근거를 갖춰 사전심사하고, 판단은 항상 담당자가 확정하는 업무시스템입니다.",
+      mode === "functional-uat"
+        ? "기관 계정으로 로그인해 배정된 Case를 확인하세요."
+        : "팀 개발 환경입니다. 시작할 역할을 고르세요.",
     );
 
     const actions = el("div", "login-actions");
@@ -56,7 +115,7 @@ export function showLoginScreen(root: HTMLElement, mode: FrontendRuntimeMode): P
       login.type = "button";
       login.addEventListener("click", () => finish({}, login, "인증 화면으로 이동 중…"));
       actions.append(login);
-      hint.textContent = "기관 통합 인증(OIDC)으로 이동해 본인 계정으로 로그인합니다.";
+      hint.textContent = "기관 통합 인증(OIDC) 페이지로 이동합니다.";
     } else {
       const reviewer = el("button", "btn primary login-button", "심사자로 시작");
       reviewer.type = "button";
@@ -68,9 +127,14 @@ export function showLoginScreen(root: HTMLElement, mode: FrontendRuntimeMode): P
       hint.textContent = "팀 개발 세션은 이 PC의 Backend가 loopback 호출에만 발급하며, 역할은 이용 중에도 바꿀 수 있습니다.";
     }
 
-    const contact = el("p", "login-hint login-contact", "계정 문제는 시스템 관리자에게 문의하십시오.");
-    card.append(brand, copy, actions, hint, contact);
-    screen.append(card);
+    const notes = el("ul", "login-notes");
+    notes.append(
+      el("li", "login-notes__ai", "AI는 권고만 하고, 최종 판단은 항상 담당자가 확정합니다."),
+      el("li", "login-notes__help", "계정 문제는 시스템 관리자에게 문의하십시오."),
+    );
+    panel.append(heading, copy, actions, hint, notes);
+    side.append(panel);
+    screen.append(hero, side);
     root.replaceChildren(screen);
     heading.focus?.();
   });

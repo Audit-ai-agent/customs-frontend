@@ -253,24 +253,107 @@ small { color: var(--krds-muted); }
 .home-card span { color: var(--krds-muted); font-size: .82rem; line-height: 1.55; }
 .home-card__go { position: absolute; top: .9rem; right: 1rem; color: var(--krds-primary-strong); font-weight: 700; }
 
-/* ── 로그인 화면 (FRAME 00 · KRDS 로그인 서비스 패턴) ─────────── */
+/* ── 로그인 화면 (FRAME 00) — 왼쪽 제품 소개, 오른쪽 로그인 ──────── */
 .login-screen {
-  min-height: 100vh; display: grid; place-items: center; padding: 2rem 1rem;
-  background: linear-gradient(180deg, #e9f1fe 0%, #f7f8fa 60%);
+  min-height: 100vh; display: grid; grid-template-columns: 1.25fr 1fr; background: var(--krds-bg);
 }
-.login-card {
-  width: min(30rem, 100%); display: grid; gap: 1.15rem; padding: 2.2rem 2rem;
-  background: var(--krds-surface); border: 1px solid var(--krds-line-2);
-  border-radius: 1rem; box-shadow: 0 14px 44px rgb(30 33 36 / 10%);
-  animation: card-rise var(--mo-enter, .3s) var(--mo-ease-out, ease-out) both;
+.login-hero {
+  position: relative; overflow: hidden; display: flex; flex-direction: column; gap: 1.9rem;
+  padding: 2.25rem 3.5rem; color: #fff;
+  background:
+    radial-gradient(1200px 600px at 10% 0%, #3b82f6 0%, transparent 60%),
+    linear-gradient(160deg, var(--krds-primary-strong) 0%, var(--krds-primary-active) 70%, #062a6e 100%);
 }
-.login-brand { display: flex; align-items: center; gap: .85rem; }
-.login-title h1 { margin: 0; font-size: 1.35rem; font-weight: 700; letter-spacing: -.02em; }
-.login-title p { margin: .15rem 0 0; color: var(--krds-muted); font-size: .82rem; }
-.login-copy { margin: 0; color: var(--krds-text); font-size: .92rem; line-height: 1.7; }
+.login-hero::after {
+  content: ""; position: absolute; inset: 0; pointer-events: none; opacity: .12;
+  background-image: linear-gradient(#fff 1px, transparent 1px), linear-gradient(90deg, #fff 1px, transparent 1px);
+  background-size: 40px 40px; mask-image: linear-gradient(180deg, #000, transparent 75%);
+}
+.login-hero > * { position: relative; z-index: 1; }
+.login-hero__brand { display: flex; align-items: center; gap: .75rem; }
+.login-hero__mark {
+  width: 40px; height: 40px; flex: none; border-radius: .625rem;
+  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M11 19.5H5V4.5h9l3 3V10'/%3E%3Ccircle cx='15' cy='15' r='3.3'/%3E%3Cpath d='M17.4 17.4L20 20' stroke-width='2.2'/%3E%3Cpath d='M8 9h4M8 12h2.5' stroke-opacity='.7'/%3E%3C/svg%3E") center / 24px no-repeat, rgb(255 255 255 / 16%);
+  border: 1px solid rgb(255 255 255 / 28%);
+}
+.login-hero__brand strong { display: block; font-size: 1.06rem; font-weight: 700; letter-spacing: -.01em; }
+.login-hero__brand small { display: block; margin-top: 1px; color: rgb(255 255 255 / 75%); font-size: .75rem; }
+.login-hero__copy { max-width: 32rem; }
+.login-hero__headline { margin: 0; font-size: 2.1rem; line-height: 1.3; font-weight: 800; letter-spacing: -.03em; }
+.login-hero__copy p:not(.login-hero__headline) { margin: .9rem 0 0; font-size: .97rem; line-height: 1.7; opacity: .86; }
+
+.login-preview {
+  max-width: 35rem; overflow: hidden; color: var(--krds-ink); background: var(--krds-surface);
+  border-radius: .875rem; box-shadow: 0 30px 60px rgb(3 20 60 / 45%);
+}
+.login-preview__top {
+  display: flex; align-items: center; gap: .6rem; padding: .75rem 1rem;
+  background: var(--krds-surface-2); border-bottom: 1px solid var(--krds-line); font-size: .8rem;
+}
+.login-preview__top > span:last-child { margin-left: auto; color: var(--krds-muted); font-size: .72rem; }
+.login-preview__dots { display: flex; gap: 5px; }
+.login-preview__dots i { width: 9px; height: 9px; border-radius: 50%; background: var(--krds-line-2); }
+.login-preview__body { display: grid; gap: .85rem; padding: 1rem; }
+.login-preview__docs { display: grid; grid-template-columns: repeat(4, 1fr); gap: .5rem; }
+.login-preview__docs > div { padding: .55rem .6rem; border: 1px solid var(--krds-line); border-radius: .5rem; font-size: .75rem; }
+.login-preview__docs b { display: block; margin-bottom: .2rem; font-size: .8rem; }
+.login-preview__docs span { color: var(--krds-success); font-weight: 600; }
+.login-preview__row {
+  display: flex; align-items: center; gap: .6rem; padding: .6rem .75rem;
+  background: var(--krds-bg); border-radius: .5rem; font-size: .8rem;
+}
+.login-preview__row > span { width: 4.75rem; flex: none; color: var(--krds-muted); }
+.login-preview__row em { margin-left: auto; padding: 3px 8px; border-radius: 999px; font-size: .72rem; font-style: normal; font-weight: 700; }
+.login-preview__row .is-ok { color: var(--krds-success); background: var(--krds-success-bg); }
+.login-preview__row .is-warn { color: var(--krds-warning); background: var(--krds-warning-bg); }
+.login-preview__row .is-bad { color: var(--krds-danger); background: var(--krds-danger-bg); }
+.login-preview__verdict {
+  display: flex; align-items: center; gap: .75rem; padding: .75rem .9rem;
+  background: var(--krds-primary-bg); border: 1px solid var(--krds-primary-line); border-radius: .625rem;
+}
+.login-preview__verdict b { font-size: .87rem; }
+.login-preview__verdict small { display: block; margin-top: 2px; color: var(--krds-text); font-size: .75rem; }
+.login-preview__verdict > span {
+  margin-left: auto; padding: .45rem .75rem; color: #fff; background: var(--krds-primary);
+  border-radius: .5rem; font-size: .78rem; font-weight: 700; white-space: nowrap;
+}
+.login-hero__feats {
+  display: grid; grid-template-columns: repeat(3, 1fr); gap: 1.1rem; max-width: 37.5rem;
+  margin: auto 0 0; padding: 0; list-style: none;
+}
+.login-hero__feats li::before { content: ""; display: block; width: 24px; height: 3px; margin-bottom: .6rem; border-radius: 2px; background: #7fb0ff; }
+.login-hero__feats b { display: block; margin-bottom: .25rem; font-size: .87rem; }
+.login-hero__feats span { font-size: .78rem; line-height: 1.6; opacity: .78; }
+
+.login-side { display: grid; place-items: center; padding: 2.5rem 3.5rem; }
+.login-panel { width: 100%; max-width: 24rem; display: grid; gap: 1rem; }
+.login-panel h1 { margin: 0; font-size: 1.65rem; font-weight: 800; letter-spacing: -.02em; }
+.login-copy { margin: -.4rem 0 .75rem; color: var(--krds-text); font-size: .92rem; line-height: 1.6; }
 .login-actions { display: grid; gap: .6rem; }
-.login-button { width: 100%; padding: .85rem 1rem; font-size: .95rem; font-weight: 700; border-radius: .625rem; }
-.login-hint { margin: 0; color: var(--krds-muted); font-size: .8rem; line-height: 1.6; }
+.btn.login-button {
+  width: 100%; justify-content: center; padding: .95rem 1rem; font-size: .97rem; font-weight: 700; border-radius: .625rem;
+}
+.btn.login-button.primary { box-shadow: 0 6px 16px rgb(37 110 244 / 28%); }
+.login-hint { margin: 0; color: var(--krds-muted); font-size: .8rem; line-height: 1.6; text-align: center; }
+.login-notes {
+  display: grid; gap: .6rem; margin: .75rem 0 0; padding: 1.5rem 0 0; list-style: none;
+  border-top: 1px solid var(--krds-line); color: var(--krds-text); font-size: .82rem; line-height: 1.55;
+}
+.login-notes li { position: relative; padding-left: 1.5rem; }
+.login-notes li::before {
+  content: ""; position: absolute; left: 0; top: .2rem; width: 1rem; height: 1rem;
+  background: var(--krds-primary); -webkit-mask: var(--icon) center / contain no-repeat; mask: var(--icon) center / contain no-repeat;
+}
+.login-notes__ai { --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linejoin='round'%3E%3Cpath d='M12 3l7 3v5c0 4.5-3 8-7 10-4-2-7-5.5-7-10V6z'/%3E%3C/svg%3E"); }
+.login-notes__help { --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round'%3E%3Ccircle cx='12' cy='12' r='9'/%3E%3Cpath d='M12 8v5M12 16h.01'/%3E%3C/svg%3E"); }
+
+@media (max-width: 960px) {
+  .login-screen { grid-template-columns: 1fr; }
+  .login-hero { gap: 1.5rem; padding: 1.75rem 1rem; }
+  .login-hero__headline { font-size: 1.6rem; }
+  .login-preview, .login-hero__feats { display: none; }
+  .login-side { padding: 2rem 1rem; place-items: start center; }
+}
 
 /* ── 운영 지표 — 단일 색조 막대·미터·일별 컬럼 ────────────────── */
 .mbar-list { display: grid; gap: .55rem; max-width: 40rem; }
@@ -1343,7 +1426,6 @@ textarea { min-height: 7rem; resize: vertical; line-height: 1.6; }
 .sheet--text .row { justify-content: flex-start; gap: 1.2rem; }
 .sheet--text .row .k { flex: 0 0 7rem; }
 .sheet--text .row .v { flex: 1 1 auto; font-family: inherit; font-weight: 500; text-align: left; line-height: 1.6; }
-.login-contact { margin-top: .4rem !important; color: var(--krds-muted-2); }
 
 @media (max-width: 760px) {
   .topbar__tools { flex: 1 1 100%; }
