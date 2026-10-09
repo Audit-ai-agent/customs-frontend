@@ -62,6 +62,7 @@ import {
   type WorkspaceView,
 } from "./constants";
 import {
+  extractionPreviewText,
   extractionUnavailableMessage,
   findFact,
   mergeAssistantMessages,
@@ -136,6 +137,8 @@ export interface WorkbenchState {
   demoFallbackLoading: boolean;
   demoFallbackError: string | null;
   demoFallbackSaving: boolean;
+  /** The current step while a set is prepared from uploaded files; null when idle. */
+  demoFallbackPrepStep: string | null;
   llmTestRunning: boolean;
   cases: CaseSummary[];
   selectedCase: CaseDetail | null;
@@ -232,6 +235,7 @@ const INITIAL_STATE: WorkbenchState = {
   demoFallbackLoading: false,
   demoFallbackError: null,
   demoFallbackSaving: false,
+  demoFallbackPrepStep: null,
   llmTestRunning: false,
   cases: [],
   selectedCase: null,
@@ -732,6 +736,73 @@ export class WorkbenchStore {
 
   deleteDemoFallbackSet(fallbackId: string): Promise<void> {
     return this.demoFallbackAction(() => this.api.deleteDemoFallbackSet(fallbackId), "시연 폴백 세트를 삭제했습니다.");
+  }
+
+  /**
+   * Builds a set straight from source files: a scratch case runs the normal
+   * flow (upload → extraction → confirm the pre-filled text unchanged → AI HSK
+   * → review), the run is registered, and the scratch case is deleted. A demo
+   * upload of the same files and unedited text then replays everything.
+   */
+  async prepareDemoFallbackSet(input: { name: string; files: { file: File; documentType: DocumentType }[] }): Promise<void> {
+    if (!this.hasRole("approver") || !this.hasRole("reviewer")) {
+      this.patch({ demoFallbackError: "파일로 세트를 만들려면 심사자와 승인자 역할이 모두 필요합니다." });
+      return;
+    }
+    if (this.state.demoFallbackSaving) return;
+    const step = (text: string) => this.patch({ demoFallbackPrepStep: text });
+    this.patch({ demoFallbackSaving: true, demoFallbackError: null, notice: null });
+    let caseId: string | null = null;
+    try {
+      step("준비용 Case 만드는 중…");
+      caseId = (await this.api.createCase({ title: `[시연 폴백 준비] ${input.name.trim()}` })).case_id;
+      for (const [index, entry] of input.files.entries()) {
+        const label = `${index + 1}/${input.files.length} ${entry.file.name}`;
+        const mediaType = assetMediaType(entry.file);
+        if (!mediaType) throw new Error(`PDF·JPG·PNG 파일만 쓸 수 있습니다: ${entry.file.name}`);
+        step(`파일 업로드 중… (${label})`);
+        const asset = await this.api.addDocumentAsset(caseId, {
+          documentType: entry.documentType,
+          filename: entry.file.name,
+          mediaType,
+          body: entry.file,
+        });
+        step(`텍스트 추출 중… (${label})`);
+        let envelope = await this.api.startExtraction(caseId, asset.asset_id);
+        for (let attempts = 0; envelope.job.status === "queued" && attempts < 30; attempts += 1) {
+          await delay(700);
+          envelope = await this.api.getExtraction(caseId, asset.asset_id, envelope.job.extraction_job_id);
+        }
+        const preview = envelope.job.result;
+        if ((envelope.job.status !== "preview_ready" && envelope.job.status !== "needs_review") || !preview) {
+          throw new Error(`텍스트를 추출하지 못했습니다: ${entry.file.name}`);
+        }
+        await this.api.confirmExtractedText(caseId, asset.asset_id, {
+          extraction_job_id: envelope.job.extraction_job_id,
+          content_text: extractionPreviewText(preview),
+          filename: entry.file.name.replace(/\.(pdf|jpe?g|png)$/iu, "") + ".txt",
+        });
+      }
+      step("AI HSK 후보 추출 중…");
+      await this.api.getCaseHsClassification(caseId, { agent: true });
+      step("AI 심사 실행 중… (몇 분 걸릴 수 있습니다)");
+      let job = await this.api.enqueueReview(caseId, { trade_type: "import" }, crypto.randomUUID());
+      while (ACTIVE_JOB_STATES.has(job.status)) {
+        await delay(2_000);
+        job = await this.api.getJob(job.job_id);
+      }
+      if (job.status !== "succeeded") throw new Error("AI 심사가 완료되지 않았습니다. Agent·LLM 상태를 확인하십시오.");
+      step("세트 등록 중…");
+      const view = await this.api.registerDemoFallbackSet({ name: input.name, review_run_id: job.review_run_id });
+      this.patch({ demoFallback: view, notice: `시연 폴백 세트 「${input.name.trim()}」를 파일로 만들었습니다.` });
+    } catch (error) {
+      this.patch({ demoFallbackError: userMessage(error, "파일로 시연 폴백 세트를 만들지 못했습니다.") });
+    } finally {
+      // The set keeps its own copy of everything; the scratch case is not needed either way.
+      if (caseId !== null) await this.api.deleteCase(caseId).catch(() => undefined);
+      this.patch({ demoFallbackSaving: false, demoFallbackPrepStep: null });
+      this.invalidateCaseAggregates();
+    }
   }
 
   /** Completed runs of one case, for picking the run to register (read-only, not stored). */

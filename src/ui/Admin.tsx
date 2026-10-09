@@ -1,6 +1,7 @@
 import { useEffect, useState, type FormEvent } from "react";
-import type { DemoFallbackMode, LlmProvider, LlmSettingsUpdate, LlmSettingsView, ReviewRunSummary } from "../api/v1/types";
-import { formatDate, providerLabel } from "./labels";
+import type { DemoFallbackMode, DocumentType, LlmProvider, LlmSettingsUpdate, LlmSettingsView, ReviewRunSummary } from "../api/v1/types";
+import { DOCUMENT_TYPES } from "./constants";
+import { documentTypeLabel, formatDate, providerLabel } from "./labels";
 import { EmptyCopy, Field, RoleBoundaryNote, SectionHeading, Submit } from "./primitives";
 import { useStore, useWorkbenchState } from "./useStore";
 
@@ -128,6 +129,17 @@ const MODE_LABELS: Record<DemoFallbackMode, { label: string; help: string }> = {
   always: { label: "항상", help: "같은 서류가 등록돼 있으면 Agent를 부르지 않고 등록된 결과를 씁니다(리허설용)." },
 };
 
+/** A first guess from names like C0001_INV.pdf; the select can change it. */
+function guessDocumentType(filename: string): DocumentType {
+  const name = filename.toUpperCase();
+  if (/(^|[^A-Z])(INV|CI)([^A-Z]|$)|INVOICE/u.test(name)) return "CI";
+  if (/(^|[^A-Z])PL([^A-Z]|$)|PACKING/u.test(name)) return "PL";
+  if (/(^|[^A-Z])BL([^A-Z]|$)|LADING/u.test(name)) return "BL";
+  if (/(^|[^A-Z])CO([^A-Z]|$)|ORIGIN/u.test(name)) return "CO";
+  if (/(^|[^A-Z])AWB([^A-Z]|$)|AIRWAY/u.test(name)) return "AWB";
+  return "UNKNOWN";
+}
+
 function DemoFallbackCard() {
   const store = useStore();
   const state = useWorkbenchState();
@@ -140,6 +152,9 @@ function DemoFallbackCard() {
   const [runId, setRunId] = useState("");
   const [runsError, setRunsError] = useState<string | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
+  const [prepName, setPrepName] = useState("");
+  const [prepFiles, setPrepFiles] = useState<{ file: File; documentType: DocumentType }[]>([]);
+  const [prepError, setPrepError] = useState<string | null>(null);
 
   useEffect(() => {
     if (view !== null) setDelay(String(view.settings.delay_seconds));
@@ -221,6 +236,22 @@ function DemoFallbackCard() {
     }
     setFormError(null);
     void store.registerDemoFallbackSet({ name, review_run_id: runId }).then(() => setName(""));
+  };
+  const onPrepare = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!prepName.trim()) {
+      setPrepError("세트 이름을 입력해 주십시오.");
+      return;
+    }
+    if (prepFiles.length === 0) {
+      setPrepError("서류 파일을 하나 이상 고르십시오.");
+      return;
+    }
+    setPrepError(null);
+    void store.prepareDemoFallbackSet({ name: prepName, files: prepFiles }).then(() => {
+      setPrepName("");
+      setPrepFiles([]);
+    });
   };
 
   return (
@@ -347,6 +378,49 @@ function DemoFallbackCard() {
         {formError !== null ? <p className="unsupported-inline admin-form__error">{formError}</p> : null}
         <div className="admin-form__actions">
           <Submit label={busy ? "저장 중…" : "세트 등록"} disabled={busy} />
+        </div>
+      </form>
+
+      <SectionHeading
+        title="서류 파일로 세트 만들기"
+        description="서류 파일만 올리면 준비용 Case에서 텍스트 추출·AI HSK·AI 심사를 한 번 실제로 돌려 세트로 등록하고 준비용 Case는 지웁니다. 준비할 때는 Agent(LLM)가 정상이어야 합니다. 시연 때는 같은 파일을 올리고 추출 텍스트를 고치지 않고 확정해야 재생됩니다."
+      />
+      <form className="admin-form admin-fallback__prepare" onSubmit={onPrepare} data-admin-fallback-prepare>
+        <Field label="세트 이름">
+          <input type="text" value={prepName} maxLength={120} disabled={busy} placeholder="예: 시연 2 · C0001" onChange={(event) => setPrepName(event.target.value)} />
+        </Field>
+        <Field label="서류 파일 (PDF·JPG·PNG, 여러 개)">
+          <input
+            type="file"
+            multiple
+            accept=".pdf,.jpg,.jpeg,.png,application/pdf,image/jpeg,image/png"
+            disabled={busy}
+            onChange={(event) =>
+              setPrepFiles(Array.from(event.target.files ?? []).map((file) => ({ file, documentType: guessDocumentType(file.name) })))
+            }
+          />
+        </Field>
+        {prepFiles.map((entry, index) => (
+          <Field key={`${entry.file.name}-${index}`} label={entry.file.name}>
+            <select
+              value={entry.documentType}
+              disabled={busy}
+              onChange={(event) =>
+                setPrepFiles(prepFiles.map((item, at) => (at === index ? { ...item, documentType: event.target.value as DocumentType } : item)))
+              }
+            >
+              {DOCUMENT_TYPES.map((type) => (
+                <option key={type} value={type}>
+                  {documentTypeLabel(type)}
+                </option>
+              ))}
+            </select>
+          </Field>
+        ))}
+        {state.demoFallbackPrepStep !== null ? <p className="form-hint" data-admin-fallback-prep-step>{state.demoFallbackPrepStep}</p> : null}
+        {prepError !== null ? <p className="unsupported-inline admin-form__error">{prepError}</p> : null}
+        <div className="admin-form__actions">
+          <Submit label={state.demoFallbackPrepStep !== null ? "만드는 중…" : "파일로 세트 만들기"} disabled={busy} />
         </div>
       </form>
     </section>

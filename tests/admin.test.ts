@@ -319,6 +319,53 @@ describe("demo fallback on the hidden admin page", () => {
     dispose();
   });
 
+  it("builds a set from uploaded files through a scratch case and deletes the case afterwards", async () => {
+    window.location.hash = "#/admin";
+    const preview = {
+      pages: [
+        { page_number: 1, spans: [{ ordinal: 2, reading_order: 2, text: "64,444 PCS" }, { ordinal: 1, reading_order: 1, text: "COMMERCIAL INVOICE" }] },
+      ],
+      warnings: [],
+    };
+    const calls: string[] = [];
+    const api = {
+      getLlmSettings: async () => llmSettings(),
+      getDemoFallback: async () => fallbackView("auto"),
+      createCase: vi.fn(async () => (calls.push("createCase"), { case_id: "case-prep" })),
+      addDocumentAsset: vi.fn(async () => (calls.push("upload"), { asset_id: "asset-1" })),
+      startExtraction: vi.fn(async () => (calls.push("extract"), { job: { extraction_job_id: "ext-1", status: "preview_ready", result: preview } })),
+      confirmExtractedText: vi.fn(async () => (calls.push("confirm"), {})),
+      getCaseHsClassification: vi.fn(async () => (calls.push("hs"), {})),
+      enqueueReview: vi.fn(async () => (calls.push("review"), { job_id: "job-1", review_run_id: "run-prep", status: "succeeded" })),
+      registerDemoFallbackSet: vi.fn(async () => (calls.push("register"), fallbackView("auto", [registeredSet]))),
+      deleteCase: vi.fn(async () => void calls.push("deleteCase")),
+    };
+    const { root, dispose } = await mount(api, ["reviewer", "approver"]);
+    const form = root.querySelector<HTMLFormElement>("[data-admin-fallback-prepare]");
+    setValue(form?.querySelector<HTMLInputElement>('input[type="text"]') ?? null, "시연 2");
+    const input = form?.querySelector<HTMLInputElement>('input[type="file"]');
+    if (!input) throw new Error("file input is unavailable");
+    Object.defineProperty(input, "files", { value: [new File(["%PDF"], "C0001_INV.pdf", { type: "application/pdf" })] });
+    await act(async () => {
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    expect(form?.querySelector("select")?.value).toBe("CI");
+    await submit(form);
+    await flush();
+
+    expect(calls).toEqual(["createCase", "upload", "extract", "confirm", "hs", "review", "register", "deleteCase"]);
+    expect(api.addDocumentAsset).toHaveBeenCalledWith("case-prep", expect.objectContaining({ documentType: "CI", filename: "C0001_INV.pdf" }));
+    // The pre-filled text is confirmed unchanged, so a demo upload hashes the same.
+    expect(api.confirmExtractedText).toHaveBeenCalledWith("case-prep", "asset-1", {
+      extraction_job_id: "ext-1",
+      content_text: "COMMERCIAL INVOICE\n64,444 PCS",
+      filename: "C0001_INV.txt",
+    });
+    expect(api.registerDemoFallbackSet).toHaveBeenCalledWith({ name: "시연 2", review_run_id: "run-prep" });
+    expect(root.querySelector('[data-admin-fallback-set="fallback-1"]')).not.toBeNull();
+    dispose();
+  });
+
   it("shows only the role note to a reviewer-only session and never asks the Backend", async () => {
     window.location.hash = "#/admin";
     const getDemoFallback = vi.fn(async () => fallbackView("off"));
