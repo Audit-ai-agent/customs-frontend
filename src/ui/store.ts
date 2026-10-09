@@ -799,7 +799,10 @@ export class WorkbenchStore {
       this.patch({ demoFallbackError: userMessage(error, "파일로 시연 폴백 세트를 만들지 못했습니다.") });
     } finally {
       // The set keeps its own copy of everything; the scratch case is not needed either way.
-      if (caseId !== null) await this.api.deleteCase(caseId).catch(() => undefined);
+      if (caseId !== null) {
+        await this.api.deleteCase(caseId).catch(() => undefined);
+        await this.refreshCases().catch(() => undefined);
+      }
       this.patch({ demoFallbackSaving: false, demoFallbackPrepStep: null });
       this.invalidateCaseAggregates();
     }
@@ -1880,9 +1883,17 @@ export class WorkbenchStore {
       return;
     }
     await this.withBusy(async () => {
-      await this.api.deleteCase(caseId);
+      // The server list is the truth: a row can be stale (deleted in another tab,
+      // or a demo-fallback scratch case), and the DELETE then answers 409.
+      let failure: unknown = null;
+      await this.api.deleteCase(caseId).catch((error: unknown) => {
+        failure = error;
+      });
+      await this.refreshCases();
+      if (this.state.cases.some((item) => item.case_id === caseId)) {
+        throw failure ?? new Error("Case가 삭제되지 않았습니다. 잠시 후 다시 시도해 주십시오.");
+      }
       this.patch({
-        cases: this.state.cases.filter((item) => item.case_id !== caseId),
         ...(this.state.selectedCase?.case_id === caseId ? { selectedCase: null } : {}),
         notice: "Case를 삭제했습니다. 문서·심사 기록이 함께 제거되었습니다.",
       });

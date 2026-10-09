@@ -828,3 +828,52 @@ describe("stage-1 HSK candidates before any review", () => {
     dispose();
   });
 });
+
+describe("case deletion", () => {
+  const at = "2026-08-05T00:00:00Z";
+  const row = (id: string, title: string) => ({ case_id: id, org_id: "local-org", title, status: "open" as const, revision: 1, updated_at: at });
+  const session = async () => ({ subject: "local-reviewer", org_id: "local-org", roles: ["reviewer"] });
+  const deleteButton = (root: HTMLElement, title: string) => root.querySelector(`[aria-label="${title} 삭제"]`);
+
+  it("reloads the list from the server, so a row already gone elsewhere disappears without an error", async () => {
+    window.location.hash = "#/cases";
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    let server = [row("case-a", "남은 건"), row("case-b", "이미 지워진 건")];
+    const api = {
+      getSession: session,
+      listCases: vi.fn(async () => ({ items: server })),
+      // Deleted in another tab: the server already dropped it and answers 409.
+      deleteCase: vi.fn(async () => {
+        throw new Error("case does not exist");
+      }),
+    };
+    const { root, dispose } = await mount(api, AUTH, "local-development");
+    server = [row("case-a", "남은 건")];
+
+    await click(deleteButton(root, "이미 지워진 건"));
+    expect(api.listCases).toHaveBeenCalledTimes(2);
+    expect(root.textContent).not.toContain("이미 지워진 건");
+    expect(root.textContent).toContain("남은 건");
+    expect(root.querySelector(".notice--error")).toBeNull();
+    expect(root.querySelector(".notice--notice")?.textContent).toContain("Case를 삭제했습니다");
+    dispose();
+  });
+
+  it("keeps the row and shows an error when the server still has the case", async () => {
+    window.location.hash = "#/cases";
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    const api = {
+      getSession: session,
+      listCases: vi.fn(async () => ({ items: [row("case-a", "지우려는 건")] })),
+      deleteCase: vi.fn(async () => {
+        throw new Error("일시적인 오류");
+      }),
+    };
+    const { root, dispose } = await mount(api, AUTH, "local-development");
+
+    await click(deleteButton(root, "지우려는 건"));
+    expect(root.querySelector(".case-row")?.textContent).toContain("지우려는 건");
+    expect(root.querySelector(".notice--error")).not.toBeNull();
+    dispose();
+  });
+});
