@@ -132,8 +132,19 @@ export function showLoginScreen(root: HTMLElement, mode: FrontendRuntimeMode): P
       el("li", "login-notes__ai", "AI는 권고만 하고, 최종 판단은 항상 담당자가 확정합니다."),
       el("li", "login-notes__help", "계정 문제는 시스템 관리자에게 문의하십시오."),
     );
-    panel.append(heading, copy, actions, hint, notes);
-    side.append(panel);
+    // Shown only after the runtime config loaded, i.e. the Backend answered.
+    const status = h("p", "login-status", el("i", ""), "시스템 정상 운영 중");
+    panel.append(heading, copy, actions, hint, notes, status);
+    const link = (text: string) => {
+      const a = el("a", "", text);
+      a.href = "#";
+      return a;
+    };
+    side.append(
+      h("nav", "login-side__top", link("이용 안내"), link("문의")),
+      panel,
+      h("footer", "login-side__foot", h("span", "", "© Customs-Fit"), link("개인정보 처리방침")),
+    );
     screen.append(hero, side);
     root.replaceChildren(screen);
     heading.focus?.();

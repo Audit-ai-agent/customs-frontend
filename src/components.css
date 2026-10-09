@@ -325,8 +325,15 @@ small { color: var(--krds-muted); }
 .login-hero__feats b { display: block; margin-bottom: .25rem; font-size: .87rem; }
 .login-hero__feats span { font-size: .78rem; line-height: 1.6; opacity: .78; }
 
-.login-side { display: grid; place-items: center; padding: 2.5rem 3.5rem; }
-.login-panel { width: 100%; max-width: 24rem; display: grid; gap: 1rem; }
+.login-side { display: flex; flex-direction: column; gap: 1.5rem; padding: 2.25rem 3.5rem; }
+.login-side__top { display: flex; justify-content: flex-end; gap: 1rem; font-size: .82rem; }
+.login-side a { color: var(--krds-muted); text-decoration: none; }
+.login-side a:hover { color: var(--krds-primary-strong); text-decoration: underline; }
+.login-side__foot { display: flex; justify-content: space-between; color: var(--krds-muted-2); font-size: .75rem; }
+.login-side__foot a { color: inherit; }
+.login-panel { width: 100%; max-width: 24rem; margin: auto; display: grid; gap: 1rem; }
+.login-status { display: inline-flex; align-items: center; gap: .5rem; margin: .5rem 0 0; color: var(--krds-muted); font-size: .78rem; }
+.login-status i { width: 8px; height: 8px; border-radius: 50%; background: var(--krds-success); box-shadow: 0 0 0 4px var(--krds-success-bg); }
 .login-panel h1 { margin: 0; font-size: 1.65rem; font-weight: 800; letter-spacing: -.02em; }
 .login-copy { margin: -.4rem 0 .75rem; color: var(--krds-text); font-size: .92rem; line-height: 1.6; }
 .login-actions { display: grid; gap: .6rem; }
@@ -347,12 +354,32 @@ small { color: var(--krds-muted); }
 .login-notes__ai { --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linejoin='round'%3E%3Cpath d='M12 3l7 3v5c0 4.5-3 8-7 10-4-2-7-5.5-7-10V6z'/%3E%3C/svg%3E"); }
 .login-notes__help { --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round'%3E%3Ccircle cx='12' cy='12' r='9'/%3E%3Cpath d='M12 8v5M12 16h.01'/%3E%3C/svg%3E"); }
 
+@media (min-width: 961px) {
+  .login-screen { height: 100vh; min-height: 0; }
+  .login-hero, .login-side { min-height: 0; }
+}
+/* 노트북 높이(약 650~880px): 문구·카드를 줄이고 기능 3개를 숨겨 한 화면에 맞춥니다. */
+@media (min-width: 961px) and (max-height: 880px) {
+  .login-hero { gap: 1.25rem; padding-block: 1.75rem; }
+  .login-hero__headline { font-size: 1.75rem; }
+  .login-hero__copy p:not(.login-hero__headline) { margin-top: .6rem; font-size: .9rem; }
+  .login-hero__feats { display: none; }
+  .login-preview__body { gap: .55rem; padding: .75rem 1rem; }
+  .login-preview__row { padding: .45rem .75rem; }
+  .login-preview__verdict { padding: .55rem .9rem; }
+  .login-side { padding-block: 1.75rem; }
+}
+@media (min-width: 961px) and (max-height: 660px) {
+  .login-preview { display: none; }
+}
+
 @media (max-width: 960px) {
   .login-screen { grid-template-columns: 1fr; }
   .login-hero { gap: 1.5rem; padding: 1.75rem 1rem; }
   .login-hero__headline { font-size: 1.6rem; }
   .login-preview, .login-hero__feats { display: none; }
-  .login-side { padding: 2rem 1rem; place-items: start center; }
+  .login-side { padding: 1.25rem 1rem 1.5rem; }
+  .login-panel { margin: 0 auto; }
 }
 
 /* ── 운영 지표 — 단일 색조 막대·미터·일별 컬럼 ────────────────── */
