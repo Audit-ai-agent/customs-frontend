@@ -72,7 +72,7 @@ function buildHero(): HTMLElement {
       "div",
       "login-hero__copy",
       headline,
-      h("p", "", "B/L·Invoice·Packing List·원산지증명서를 Case 단위로 올리면 필드 추출, 서류 간 교차검증, HS 분류 후보와 근거 법령까지 한 화면에 정리됩니다."),
+      h("p", "", "서류 대조와 근거 찾기는 AI가 먼저 끝내 둡니다. 담당자는 판단에만 집중하세요."),
     ),
     preview,
     h(
